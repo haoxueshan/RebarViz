@@ -10,6 +10,8 @@ import { validateDimension } from '@/lib/validate';
 import { ShearWallCrossSection } from '@/components/CrossSection';
 import { ShearWallExplain } from '@/components/NotationExplain';
 import { WeightCalc } from '@/components/WeightCalc';
+import { ConcreteCalc } from '@/components/ConcreteCalc';
+import { calcShearWallConcrete } from '@/lib/calc-concrete';
 import { ShareButton } from '@/components/ShareButton';
 import { Field, NumField, Legend, ResetButton, SelectField, Section } from '@/components/FormControls';
 import { ViewerSkeleton } from '@/components/ViewerSkeleton';
@@ -23,6 +25,7 @@ import { Sparkles } from 'lucide-react';
 const DATA_TABS = [
   { key: 'section', label: '截面图' },
   { key: 'weight', label: '用量估算' },
+  { key: 'concrete', label: '混凝土量' },
 ] as const;
 
 const ShearWallViewer = dynamic(() => import('@/components/ShearWallViewer'), {
@@ -55,6 +58,7 @@ export function ShearWallPageClient() {
 
   const update = (patch: Partial<ShearWallParams>) => setParams(p => ({ ...p, ...patch }));
   const calcResult = useMemo(() => calcShearWall(params), [params]);
+  const concreteResult = useMemo(() => calcShearWallConcrete(params), [params]);
   const aiContext = useMemo(() => buildShearWallContext(params), [params]);
 
   const errors = useMemo(() => ({
@@ -158,6 +162,7 @@ export function ShearWallPageClient() {
                 </>
               )}
               {dataTab === 'weight' && <WeightCalc result={calcResult} />}
+              {dataTab === 'concrete' && <ConcreteCalc result={concreteResult} />}
             </div>
           </div>
         </div>

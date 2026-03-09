@@ -675,7 +675,8 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
           ))}
 
           {/* Erection bars (架立筋) */}
-          {(leftR || rightR) && (() => {
+          {(leftR || rightR || params.erectionBar) && (() => {
+            const erUser = params.erectionBar ? parseRebar(params.erectionBar) : null;
             const LAP_LEN = 150 * S;
             const leftSupportLen = leftR ? calcSupportRebarLength(params.spanLength || 4000) * S : 0;
             const rightSupportLen = rightR ? calcSupportRebarLength(params.spanLength || 4000) * S : 0;
@@ -687,31 +688,42 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
             } else if (leftR) {
               erectionLen = BEAM_LEN - leftSupportLen + LAP_LEN;
               erectionX = (-BEAM_LEN / 2 + leftSupportLen - LAP_LEN + BEAM_LEN / 2) / 2;
-            } else {
+            } else if (rightR) {
               erectionLen = BEAM_LEN - rightSupportLen + LAP_LEN;
               erectionX = (-BEAM_LEN / 2 + BEAM_LEN / 2 - rightSupportLen + LAP_LEN) / 2;
+            } else {
+              erectionLen = BEAM_LEN;
+              erectionX = 0;
             }
             if (erectionLen <= 0.05) return null;
             const spanMm = params.spanLength || 4000;
             const minDia = spanMm <= 4000 ? 10 : 12;
-            const erectionDia = Math.max(minDia, 8);
-            const erectionCount = 2;
+            const erectionDia = erUser ? erUser.diameter : Math.max(minDia, 8);
+            const erectionCount = erUser ? erUser.count : 2;
             const refBars = leftBars.length > 0 ? leftBars : rightBars;
             let finalErZs: number[];
-            if (refBars.length >= 2) {
-              const sorted = [...refBars].sort((a, b) => a.z - b.z);
-              finalErZs = [
-                sorted[0].z + (supportDia / 2 + erectionDia * S / 2),
-                sorted[sorted.length - 1].z - (supportDia / 2 + erectionDia * S / 2),
-              ];
-            } else if (refBars.length === 1) {
-              finalErZs = [
-                refBars[0].z + (supportDia / 2 + erectionDia * S / 2),
-                refBars[0].z - (supportDia / 2 + erectionDia * S / 2),
-              ];
+            const erZRange = stirCenterW - STIR_D - erectionDia * S;
+            if (erectionCount <= 2) {
+              if (refBars.length >= 2) {
+                const sorted = [...refBars].sort((a, b) => a.z - b.z);
+                finalErZs = [
+                  sorted[0].z + (supportDia / 2 + erectionDia * S / 2),
+                  sorted[sorted.length - 1].z - (supportDia / 2 + erectionDia * S / 2),
+                ];
+              } else if (refBars.length === 1) {
+                finalErZs = [
+                  refBars[0].z + (supportDia / 2 + erectionDia * S / 2),
+                  refBars[0].z - (supportDia / 2 + erectionDia * S / 2),
+                ];
+              } else {
+                finalErZs = [-erZRange / 2, erZRange / 2];
+              }
             } else {
-              const erZRange = stirCenterW - STIR_D - erectionDia * S;
-              finalErZs = [-erZRange / 2, erZRange / 2];
+              // erectionCount > 2: distribute evenly across stirrup width
+              finalErZs = [];
+              for (let ei = 0; ei < erectionCount; ei++) {
+                finalErZs.push(-erZRange / 2 + (erZRange / Math.max(erectionCount - 1, 1)) * ei);
+              }
             }
             const lapLenMm = 150;
             const LAP_LEN_VIS = lapLenMm * S;
@@ -751,7 +763,7 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
               ...finalErZs.map((erZ, idx) => (
                 <RebarBar key={`erection-${idx}`} position={[erectionX, supportBarY1, erZ]} length={erectionLen} diameter={erectionDia}
                   color={COLOR_ERECTION} hiColor={COLOR_ERECTION_HI}
-                  info={{ type: 'erection', label: '架立筋', detail: `${erectionCount}Φ${erectionDia}，与支座负筋搭接${lapLenMm}mm(≥150mm)${leftR && rightR ? '，连接两侧支座负筋' : '，延伸至对侧柱面'}` }}
+                  info={{ type: 'erection', label: '架立筋', detail: `${params.erectionBar || `${erectionCount}Φ${erectionDia}`}${(leftR || rightR) ? `，与支座负筋搭接${lapLenMm}mm(≥150mm)${leftR && rightR ? '，连接两侧支座负筋' : '，延伸至对侧柱面'}` : '，通长布置'}` }}
                   selected={isSelected('erection')} onSelect={onSelect} />
               )),
               ...lapZones,

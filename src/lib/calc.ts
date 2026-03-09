@@ -229,11 +229,13 @@ export function calcBeam(p: BeamParams): CalcResult {
       rightR2.grade, rightR2.diameter, rightCount2, rLen2, '#8E44AD', rightFormula2);
   }
 
-  // 架立筋 (有支座负筋时)
-  if (leftR || rightR) {
-    const erDia = (beamLen <= 4000) ? 10 : 12;
-    const erGrade = 'C'; // HRB400
-    const erCount = 2;
+  // 架立筋 (有支座负筋时, 或用户手动指定)
+  const hasErectionBar = p.erectionBar ? true : (leftR || rightR);
+  if (hasErectionBar) {
+    const erUser = p.erectionBar ? parseRebar(p.erectionBar) : null;
+    const erDia = erUser ? erUser.diameter : ((beamLen <= 4000) ? 10 : 12);
+    const erGrade = erUser ? erUser.grade : 'C'; // HRB400
+    const erCount = erUser ? erUser.count : 2;
     const leftSupportLen = leftR ? calcSupportRebarLength(beamLen) : 0;
     const rightSupportLen = rightR ? calcSupportRebarLength(beamLen) : 0;
     const lap = 150;
@@ -245,17 +247,22 @@ export function calcBeam(p: BeamParams): CalcResult {
     } else if (leftR) {
       erLen = beamLen - leftSupportLen + lap;
       erFormulaSub = `= ${beamLen} - ${leftSupportLen} + ${lap}`;
-    } else {
+    } else if (rightR) {
       erLen = beamLen - rightSupportLen + lap;
       erFormulaSub = `= ${beamLen} - ${rightSupportLen} + ${lap}`;
+    } else {
+      // 用户指定架立筋但无支座负筋: 取全跨长
+      erLen = beamLen;
+      erFormulaSub = `= ${beamLen} (全跨)`;
     }
     if (erLen > 50) {
       const erLM = erLen / 1000;
       const erTotal = erCount * spanCount;
+      const erSpec = p.erectionBar || `${erCount}Φ${erDia}`;
       const erFormula: FormulaStep[] = [
         { label: '架立筋长度', formula: 'L = ln - 左支座伸入 - 右支座伸入 + 搭接', substitution: erFormulaSub, result: `= ${erLen} mm = ${erLM.toFixed(2)} m` },
       ];
-      push('架立筋', `${erCount}Φ${erDia}`, `${erLM.toFixed(2)}m × ${erTotal}${spanCount > 1 ? ` (${erCount}根×${spanCount}跨)` : ''} (搭接${lap}mm)`,
+      push('架立筋', erSpec, `${erLM.toFixed(2)}m × ${erTotal}${spanCount > 1 ? ` (${erCount}根×${spanCount}跨)` : ''} (搭接${lap}mm)`,
         erGrade, erDia, erTotal, erLM, '#F39C12', erFormula);
     }
   }

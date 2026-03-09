@@ -10,6 +10,8 @@ import { validateSlabRebar, validateDimension } from '@/lib/validate';
 import { SlabCrossSection } from '@/components/CrossSection';
 import { SlabExplain } from '@/components/NotationExplain';
 import { WeightCalc } from '@/components/WeightCalc';
+import { ConcreteCalc } from '@/components/ConcreteCalc';
+import { calcSlabConcrete } from '@/lib/calc-concrete';
 import { ShareButton } from '@/components/ShareButton';
 import { Field, NumField, Legend, ResetButton, SelectField, Section } from '@/components/FormControls';
 import { ViewerSkeleton } from '@/components/ViewerSkeleton';
@@ -23,6 +25,7 @@ import { Sparkles } from 'lucide-react';
 const DATA_TABS = [
   { key: 'section', label: '截面图' },
   { key: 'weight', label: '用量估算' },
+  { key: 'concrete', label: '混凝土量' },
 ] as const;
 
 const SlabViewer = dynamic(() => import('@/components/SlabViewer'), {
@@ -54,6 +57,7 @@ export function SlabPageClient() {
 
   const update = (patch: Partial<SlabParams>) => setParams(p => ({ ...p, ...patch }));
   const calcResult = useMemo(() => calcSlab(params), [params]);
+  const concreteResult = useMemo(() => calcSlabConcrete(params), [params]);
   const aiContext = useMemo(() => buildSlabContext(params), [params]);
 
   const errors = useMemo(() => ({
@@ -157,6 +161,7 @@ export function SlabPageClient() {
                 </>
               )}
               {dataTab === 'weight' && <WeightCalc result={calcResult} />}
+              {dataTab === 'concrete' && <ConcreteCalc result={concreteResult} />}
             </div>
           </div>
         </div>

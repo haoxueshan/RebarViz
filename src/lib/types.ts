@@ -42,6 +42,7 @@ export interface BeamParams {
   rightSupport2?: string; // 第二排右支座负筋
   sideBar?: string; // 腰筋/抗扭筋，如 G4C12（构造腰筋）、N2C16（抗扭筋）
   tieBar?: string;  // 拉筋，如 A6（HPB300 Φ6），留空时按22G101自动确定
+  erectionBar?: string; // 架立筋，如 2C12，留空时按规范自动确定
   spanCount?: number; // 跨数（多跨连续梁），默认1
 }
 

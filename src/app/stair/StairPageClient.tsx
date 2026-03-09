@@ -11,6 +11,8 @@ import { buildStairContext } from '@/lib/ai-context';
 import { StairCrossSection } from '@/components/CrossSection';
 import { StairExplain } from '@/components/NotationExplain';
 import { WeightCalc } from '@/components/WeightCalc';
+import { ConcreteCalc } from '@/components/ConcreteCalc';
+import { calcStairConcrete } from '@/lib/calc-concrete';
 import { RebarRatioCard } from '@/components/RebarRatioCard';
 import { CompliancePanel, ComplianceBadge } from '@/components/CompliancePanel';
 import { StairBarBendingSchedule } from '@/components/StairBarBendingSchedule';
@@ -27,6 +29,7 @@ const DATA_TABS = [
   { key: 'ratio', label: '配筋率' },
   { key: 'compliance', label: '规范校验' },
   { key: 'weight', label: '用量估算' },
+  { key: 'concrete', label: '混凝土量' },
   { key: 'bbs', label: '弯折详图' },
 ] as const;
 
@@ -61,6 +64,7 @@ export function StairPageClient() {
   const update = (patch: Partial<StairParams>) => setParams(p => ({ ...p, ...patch }));
 
   const calcResult = useMemo(() => calcStair(params), [params]);
+  const concreteResult = useMemo(() => calcStairConcrete(params), [params]);
   const ratioResult = useMemo(() => calcStairRebarRatios(params), [params]);
   const complianceResults = useMemo(() => checkStairCompliance(params), [params]);
   const aiContext = useMemo(() => buildStairContext(params), [params]);
@@ -213,6 +217,7 @@ export function StairPageClient() {
               {dataTab === 'ratio' && <RebarRatioCard ratios={ratioResult} />}
               {dataTab === 'compliance' && <CompliancePanel results={complianceResults} />}
               {dataTab === 'weight' && <WeightCalc result={calcResult} beamId={params.id} meta={{ id: params.id }} />}
+              {dataTab === 'concrete' && <ConcreteCalc result={concreteResult} />}
               {dataTab === 'bbs' && <StairBarBendingSchedule params={params} />}
             </div>
           </div>

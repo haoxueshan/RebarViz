@@ -10,6 +10,8 @@ import { validateRebar, validateStirrup, validateDimension } from '@/lib/validat
 import { ColumnCrossSection } from '@/components/CrossSection';
 import { ColumnExplain } from '@/components/NotationExplain';
 import { WeightCalc } from '@/components/WeightCalc';
+import { ConcreteCalc } from '@/components/ConcreteCalc';
+import { calcColumnConcrete } from '@/lib/calc-concrete';
 import { ShareButton } from '@/components/ShareButton';
 import { Field, NumField, Legend, ResetButton, SelectField, Section } from '@/components/FormControls';
 import { ViewerSkeleton } from '@/components/ViewerSkeleton';
@@ -23,6 +25,7 @@ import { Sparkles } from 'lucide-react';
 const DATA_TABS = [
   { key: 'section', label: '截面图' },
   { key: 'weight', label: '用量估算' },
+  { key: 'concrete', label: '混凝土量' },
 ] as const;
 
 const ColumnViewer = dynamic(() => import('@/components/ColumnViewer'), {
@@ -55,6 +58,7 @@ export function ColumnPageClient() {
 
   const update = (patch: Partial<ColumnParams>) => setParams(p => ({ ...p, ...patch }));
   const calcResult = useMemo(() => calcColumn(params), [params]);
+  const concreteResult = useMemo(() => calcColumnConcrete(params), [params]);
   const aiContext = useMemo(() => buildColumnContext(params), [params]);
 
   const errors = useMemo(() => ({
@@ -149,6 +153,7 @@ export function ColumnPageClient() {
                 </>
               )}
               {dataTab === 'weight' && <WeightCalc result={calcResult} />}
+              {dataTab === 'concrete' && <ConcreteCalc result={concreteResult} />}
             </div>
           </div>
         </div>

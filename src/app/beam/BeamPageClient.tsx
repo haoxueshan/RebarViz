@@ -10,6 +10,8 @@ import { validateRebar, validateStirrup, validateDimension } from '@/lib/validat
 import { BeamCrossSection } from '@/components/CrossSection';
 import { BeamExplain } from '@/components/NotationExplain';
 import { WeightCalc } from '@/components/WeightCalc';
+import { ConcreteCalc } from '@/components/ConcreteCalc';
+import { calcBeamConcrete } from '@/lib/calc-concrete';
 import { BarBendingSchedule } from '@/components/BarBendingSchedule';
 import { ShareButton } from '@/components/ShareButton';
 import { Field, NumField, Legend, ResetButton, SelectField, Section } from '@/components/FormControls';
@@ -33,6 +35,7 @@ const DATA_TABS = [
   { key: 'ratio', label: '配筋率' },
   { key: 'compliance', label: '规范校验' },
   { key: 'weight', label: '用量估算' },
+  { key: 'concrete', label: '混凝土量' },
   { key: 'bbs', label: '弯折详图' },
   { key: 'compare', label: '方案对比' },
 ] as const;
@@ -68,6 +71,7 @@ export function BeamPageClient() {
 
   const update = (patch: Partial<BeamParams>) => setParams(p => ({ ...p, ...patch }));
   const calcResult = useMemo(() => calcBeam(params), [params]);
+  const concreteResult = useMemo(() => calcBeamConcrete(params), [params]);
   const ratioResult = useMemo(() => calcBeamRebarRatios(params), [params]);
   const complianceResults = useMemo(() => checkBeamCompliance(params), [params]);
   const aiContext = useMemo(() => buildBeamContext(params), [params]);
@@ -209,6 +213,11 @@ export function BeamPageClient() {
               )}
             </Section>
 
+            <Section title="架立筋">
+              <p className="text-[11px] text-muted -mt-1">留空时按规范自动确定（有支座负筋时: 净跨≤4m用2Φ10，&gt;4m用2Φ12）</p>
+              <Field label="架立筋" value={params.erectionBar || ''} onChange={v => update({ erectionBar: v || undefined })} placeholder="如: 2C12（留空=自动）" />
+            </Section>
+
             <Section title="腰筋/抗扭筋">
               <p className="text-[11px] text-muted -mt-1">G前缀=构造腰筋，N前缀=抗扭筋，留空表示无</p>
               <Field label="腰筋/抗扭筋" value={params.sideBar || ''} onChange={v => update({ sideBar: v || undefined })} placeholder="如: G4C12 或 N2C16" />
@@ -310,6 +319,7 @@ export function BeamPageClient() {
               {dataTab === 'ratio' && <RebarRatioCard ratios={ratioResult} />}
               {dataTab === 'compliance' && <CompliancePanel results={complianceResults} />}
               {dataTab === 'weight' && <WeightCalc result={calcResult} beamId={params.id} />}
+              {dataTab === 'concrete' && <ConcreteCalc result={concreteResult} />}
               {dataTab === 'bbs' && <BarBendingSchedule params={params} />}
               {dataTab === 'compare' && (
                 <div className="space-y-4">
