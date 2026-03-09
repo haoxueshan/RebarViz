@@ -2,7 +2,7 @@
 
 import { useRef, useEffect, useState, useCallback, type RefObject } from 'react';
 import { Download } from 'lucide-react';
-import type { BeamParams, ColumnParams, SlabParams, ShearWallParams } from '@/lib/types';
+import type { BeamParams, ColumnParams, SlabParams, ShearWallParams, StairParams } from '@/lib/types';
 import { parseRebar, parseStirrup, parseSlabRebar, parseSideBar } from '@/lib/rebar';
 import {
   setupHiDPI, drawConcreteSection, drawRebarDot, drawRebarCross,
@@ -581,6 +581,98 @@ export function ShearWallCrossSection({ params }: { params: ShearWallParams }) {
   return (
     <div ref={containerRef} className="relative w-full">
       <ExportButton canvasRef={canvasRef} filename="shearwall-section.png" />
+      <canvas ref={canvasRef} className="max-w-full" />
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// STAIR (梯板横截面 — 垂直于行走方向)
+// ═══════════════════════════════════════════════════════════════════
+export function StairCrossSection({ params }: { params: StairParams }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const containerW = useContainerWidth(containerRef, 420);
+  const LW = Math.min(Math.max(containerW, 320), 560);
+  const LH = Math.round(LW * 0.55);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = setupHiDPI(canvas, LW, LH);
+    if (!ctx) return;
+    ctx.clearRect(0, 0, LW, LH);
+
+    const botR = parseSlabRebar(params.bottomBar);
+    const topR = parseSlabRebar(params.topBar);
+    const distR = parseSlabRebar(params.distBar);
+    const cover = params.cover || 15;
+
+    // 截面尺寸 (梯段宽 × 梯板厚)
+    const W = params.flightWidth;
+    const H = params.slabThickness;
+    const maxDim = Math.max(W, H);
+    const scale = Math.min((LW - 100) / W, (LH - 80) / H, (LW - 80) / maxDim);
+    const dw = W * scale;
+    const dh = H * scale;
+    const cx = LW / 2;
+    const cy = LH / 2;
+
+    // 截面矩形
+    drawConcreteSection(ctx, cx, cy, dw, dh);
+
+    const sectionLeft = cx - dw / 2;
+    const sectionRight = cx + dw / 2;
+    const sectionTop = cy - dh / 2;
+    const sectionBottom = cy + dh / 2;
+    const coverS = cover * scale;
+
+    // 下部纵筋
+    const botY = sectionBottom - coverS - botR.diameter * scale / 2;
+    const botSpacing = botR.spacing * scale;
+    const startX = sectionLeft + coverS + botR.diameter * scale / 2;
+    const endX = sectionRight - coverS - botR.diameter * scale / 2;
+    for (let x = startX; x <= endX + 0.5; x += botSpacing) {
+      drawRebarDot(ctx, x, botY, Math.max(botR.diameter * scale * 0.5, 4), '#C0392B');
+    }
+
+    // 上部纵筋
+    const topY = sectionTop + coverS + topR.diameter * scale / 2;
+    const topSpacing = topR.spacing * scale;
+    const tStartX = sectionLeft + coverS + topR.diameter * scale / 2;
+    const tEndX = sectionRight - coverS - topR.diameter * scale / 2;
+    for (let x = tStartX; x <= tEndX + 0.5; x += topSpacing) {
+      drawRebarDot(ctx, x, topY, Math.max(topR.diameter * scale * 0.5, 4), '#8E44AD');
+    }
+
+    // 分布筋 (截面方向是圆点标记 — 垂直于纵筋)
+    const distBotY = sectionBottom - coverS - botR.diameter * scale - distR.diameter * scale / 2;
+    const distTopY = sectionTop + coverS + topR.diameter * scale + distR.diameter * scale / 2;
+    const distX = cx;
+    drawRebarCross(ctx, distX - 30, distBotY, Math.max(distR.diameter * scale * 0.4, 3), '#27AE60');
+    drawRebarCross(ctx, distX, distBotY, Math.max(distR.diameter * scale * 0.4, 3), '#27AE60');
+    drawRebarCross(ctx, distX + 30, distBotY, Math.max(distR.diameter * scale * 0.4, 3), '#27AE60');
+    drawRebarCross(ctx, distX - 30, distTopY, Math.max(distR.diameter * scale * 0.4, 3), '#27AE60');
+    drawRebarCross(ctx, distX, distTopY, Math.max(distR.diameter * scale * 0.4, 3), '#27AE60');
+    drawRebarCross(ctx, distX + 30, distTopY, Math.max(distR.diameter * scale * 0.4, 3), '#27AE60');
+
+    // 保护层标注
+    drawCoverDim(ctx, sectionLeft, sectionBottom, coverS, cover);
+
+    // 尺寸标注
+    drawDimLine(ctx, sectionLeft, sectionBottom, sectionRight, sectionBottom, `${W}`, 'bottom', 16);
+    drawDimLine(ctx, sectionLeft, sectionTop, sectionLeft, sectionBottom, `${H}`, 'left', 18);
+
+    // 钢筋标注
+    const labelX = sectionRight + 8;
+    drawLabel(ctx, `底筋: ${params.bottomBar}`, labelX, cy - 14, '#C0392B', LW);
+    drawLabel(ctx, `面筋: ${params.topBar}`, labelX, cy + 2, '#8E44AD', LW);
+    drawLabel(ctx, `分布: ${params.distBar}`, labelX, cy + 18, '#27AE60', LW);
+  }, [params, LW, LH]);
+
+  return (
+    <div ref={containerRef} className="relative w-full">
+      <ExportButton canvasRef={canvasRef} filename="stair-section.png" />
       <canvas ref={canvasRef} className="max-w-full" />
     </div>
   );

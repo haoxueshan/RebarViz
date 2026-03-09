@@ -1,7 +1,6 @@
 import { parseRebar, parseStirrup, parseSlabRebar, parseSideBar, parseTieBar, autoTieBar } from './rebar';
-import { calcLaE, calcSupportRebarLength, calcLlE, calcSlabBottomAnchor, calcBeamEndAnchor, FT, FY } from './anchor';
-import type { BeamParams, ColumnParams, SlabParams, ShearWallParams } from './types';
-import type { ConcreteGrade } from './anchor';
+import { calcSupportRebarLength, calcLlE, calcSlabBottomAnchor, calcBeamEndAnchor, FT, FY } from './anchor';
+import type { BeamParams, ColumnParams, SlabParams, ShearWallParams, StairParams } from './types';
 
 const WEIGHT_PER_M: Record<number, number> = {
   6: 0.222, 8: 0.395, 10: 0.617, 12: 0.888,
@@ -700,4 +699,199 @@ export function calcShearWall(p: ShearWallParams): CalcResult {
   total += bStirW;
 
   return { items, total: `${total.toFixed(2)} kg` };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 楼梯用量计算 (22G101-2 AT型)
+// ═══════════════════════════════════════════════════════════════════
+
+export function calcStair(p: StairParams): CalcResult {
+  const botR = parseSlabRebar(p.bottomBar);
+  const topR = parseSlabRebar(p.topBar);
+  const distR = parseSlabRebar(p.distBar);
+  const cover = p.cover || 15;
+
+  const totalRise = p.stepCount * p.stepHeight;
+  const totalRun = p.stepCount * p.stepWidth;
+  const slabLen = Math.sqrt(totalRise * totalRise + totalRun * totalRun);
+  const flightW = p.flightWidth;
+
+  const items: CalcItem[] = [];
+  let stairTotal = 0;
+
+  function pushStair(name: string, spec: string, length: string, grade: string, diameter: number, count: number, lengthM: number, color: string, formulaSteps?: FormulaStep[]) {
+    const weightKg = count * lengthM * w(diameter);
+    const steps = formulaSteps ? [...formulaSteps, weightSteps(name, count, lengthM, diameter)] : [weightSteps(name, count, lengthM, diameter)];
+    items.push({ name, spec, length, weight: `${weightKg.toFixed(2)} kg`, color, grade, diameter, count, lengthM, weightKg, formulaSteps: steps });
+    stairTotal += weightKg;
+  }
+
+  // 下部纵筋: 沿梯板斜面 + 两端锚入平台
+  const botAnc = Math.min(Math.round(p.botPlatformLen * 0.8), 300);
+  const topAnc = Math.min(Math.round(p.topPlatformLen * 0.8), 300);
+  const botBarLen = slabLen + botAnc + topAnc;
+  const botBarLenM = botBarLen / 1000;
+  const botBarCount = Math.floor((flightW - 2 * cover) / botR.spacing) + 1;
+  const botFormula: FormulaStep[] = [
+    { label: '梯板斜长', formula: 'L_slab = √(H² + B²)', substitution: `= √(${totalRise}² + ${totalRun}²)`, result: `= ${Math.round(slabLen)} mm` },
+    { label: '两端锚入', formula: 'L_anc = min(0.8×下平台, 300) + min(0.8×上平台, 300)', substitution: `= ${botAnc} + ${topAnc}`, result: `= ${botAnc + topAnc} mm` },
+    { label: '单根长度', formula: 'L = L_slab + L_anc', substitution: `= ${Math.round(slabLen)} + ${botAnc + topAnc}`, result: `= ${Math.round(botBarLen)} mm = ${botBarLenM.toFixed(2)} m` },
+    { label: '根数', formula: 'n = ⌊(w - 2c) / s⌋ + 1', substitution: `= ⌊(${flightW} - 2×${cover}) / ${botR.spacing}⌋ + 1`, result: `= ${botBarCount}` },
+  ];
+  pushStair('下部纵筋', p.bottomBar, `${botBarLenM.toFixed(2)}m × ${botBarCount}根`,
+    botR.grade, botR.diameter, botBarCount, botBarLenM, '#C0392B', botFormula);
+
+  // 上部纵筋
+  const topBarLen = slabLen + botAnc + topAnc;
+  const topBarLenM = topBarLen / 1000;
+  const topBarCount = Math.floor((flightW - 2 * cover) / topR.spacing) + 1;
+  const topFormula: FormulaStep[] = [
+    { label: '单根长度', formula: '同下部纵筋路径', substitution: `= ${Math.round(slabLen)} + ${botAnc + topAnc}`, result: `= ${Math.round(topBarLen)} mm = ${topBarLenM.toFixed(2)} m` },
+    { label: '根数', formula: 'n = ⌊(w - 2c) / s⌋ + 1', substitution: `= ⌊(${flightW} - 2×${cover}) / ${topR.spacing}⌋ + 1`, result: `= ${topBarCount}` },
+  ];
+  pushStair('上部纵筋', p.topBar, `${topBarLenM.toFixed(2)}m × ${topBarCount}根`,
+    topR.grade, topR.diameter, topBarCount, topBarLenM, '#8E44AD', topFormula);
+
+  // 分布筋 (沿斜面等间距，上下各一层)
+  const distBarLen = flightW - 2 * cover;
+  const distBarLenM = distBarLen / 1000;
+  const distCountPerLayer = Math.floor(slabLen / distR.spacing);
+  const distTotalCount = distCountPerLayer * 2;
+  const distFormula: FormulaStep[] = [
+    { label: '单根长度', formula: 'L = 梯段宽 - 2c', substitution: `= ${flightW} - 2×${cover}`, result: `= ${distBarLen} mm = ${distBarLenM.toFixed(2)} m` },
+    { label: '每层根数', formula: 'n = ⌊L_slab / s⌋', substitution: `= ⌊${Math.round(slabLen)} / ${distR.spacing}⌋`, result: `= ${distCountPerLayer}` },
+    { label: '总根数', formula: 'N = n × 2(上下两层)', substitution: `= ${distCountPerLayer} × 2`, result: `= ${distTotalCount}` },
+  ];
+  pushStair('分布筋', p.distBar, `${distBarLenM.toFixed(2)}m × ${distTotalCount}根 (上下各${distCountPerLayer})`,
+    distR.grade, distR.diameter, distTotalCount, distBarLenM, '#27AE60', distFormula);
+
+  return { items, total: `${stairTotal.toFixed(2)} kg` };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 楼梯配筋率计算 (22G101-2 AT型)
+// ═══════════════════════════════════════════════════════════════════
+
+export interface StairRatioResult {
+  bottom: RebarRatioResult;
+  top: RebarRatioResult;
+}
+
+export function calcStairRebarRatios(p: StairParams): StairRatioResult {
+  const botR = parseSlabRebar(p.bottomBar);
+  const topR = parseSlabRebar(p.topBar);
+  const cover = p.cover || 15;
+  const b = p.flightWidth; // 梯段宽度作为截面宽度
+
+  const ft = FT[p.concreteGrade] || 1.43;
+  const fyBot = FY[botR.grade] || 360;
+  const fyTop = FY[topR.grade] || 360;
+
+  // 板类构件: As = (b - 2c) / s + 1 根 × πd²/4
+  const botCount = Math.floor((b - 2 * cover) / botR.spacing) + 1;
+  const topCount = Math.floor((b - 2 * cover) / topR.spacing) + 1;
+  const AsBot = botCount * Math.PI * botR.diameter * botR.diameter / 4;
+  const AsTop = topCount * Math.PI * topR.diameter * topR.diameter / 4;
+
+  // h0 = slabThickness - cover - d/2
+  const h0Bot = p.slabThickness - cover - botR.diameter / 2;
+  const h0Top = p.slabThickness - cover - topR.diameter / 2;
+
+  // ρ = As / (b × h0)  — 按1000mm宽度换算
+  const rhoBot = AsBot / (b * h0Bot);
+  const rhoTop = AsTop / (b * h0Top);
+
+  // ρmin = max(0.2%, 0.45×ft/fy)
+  const rhoMinBot = Math.max(0.002, 0.45 * ft / fyBot);
+  const rhoMinTop = Math.max(0.002, 0.45 * ft / fyTop);
+  const rhoMax = 0.025;
+
+  function status(rho: number, rhoMin: number): 'ok' | 'low' | 'high' {
+    if (rho < rhoMin) return 'low';
+    if (rho > rhoMax) return 'high';
+    return 'ok';
+  }
+
+  function ratioSteps(pos: string, count: number, d: number, fy: number, h0: number, As: number, rho: number, rhoMin: number, spacing: number): FormulaStep[] {
+    return [
+      { label: `${pos}钢筋根数`, formula: 'n = ⌊(b-2c)/s⌋+1', substitution: `= ⌊(${b}-2×${cover})/${spacing}⌋+1`, result: `= ${count}` },
+      { label: `${pos}钢筋面积`, formula: 'As = n × π × d² / 4', substitution: `= ${count} × π × ${d}² / 4`, result: `= ${As.toFixed(0)} mm²` },
+      { label: '有效高度', formula: 'h₀ = t - c - d/2', substitution: `= ${p.slabThickness} - ${cover} - ${d}/2`, result: `= ${h0.toFixed(0)} mm` },
+      { label: '配筋率', formula: 'ρ = As / (b × h₀)', substitution: `= ${As.toFixed(0)} / (${b} × ${h0.toFixed(0)})`, result: `= ${(rho * 100).toFixed(3)}%` },
+      { label: '最小配筋率', formula: 'ρmin = max(0.2%, 0.45ft/fy)', substitution: `= max(0.2%, 0.45×${ft}/${fy})`, result: `= ${(rhoMin * 100).toFixed(3)}%` },
+    ];
+  }
+
+  return {
+    bottom: { As: AsBot, h0: h0Bot, rho: rhoBot, rhoMin: rhoMinBot, rhoMax, status: status(rhoBot, rhoMinBot), formulaSteps: ratioSteps('下部', botCount, botR.diameter, fyBot, h0Bot, AsBot, rhoBot, rhoMinBot, botR.spacing) },
+    top: { As: AsTop, h0: h0Top, rho: rhoTop, rhoMin: rhoMinTop, rhoMax, status: status(rhoTop, rhoMinTop), formulaSteps: ratioSteps('上部', topCount, topR.diameter, fyTop, h0Top, AsTop, rhoTop, rhoMinTop, topR.spacing) },
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 楼梯弯折详图数据 (22G101-2 AT型)
+// ═══════════════════════════════════════════════════════════════════
+
+export function calcStairBarShapes(p: StairParams): BarShape[] {
+  const shapes: BarShape[] = [];
+  const botR = parseSlabRebar(p.bottomBar);
+  const topR = parseSlabRebar(p.topBar);
+  const distR = parseSlabRebar(p.distBar);
+  const cover = p.cover || 15;
+
+  const totalRise = p.stepCount * p.stepHeight;
+  const totalRun = p.stepCount * p.stepWidth;
+  const slabLen = Math.sqrt(totalRise * totalRise + totalRun * totalRun);
+  const beamB = p.beamB; // 梯梁宽(=踏步宽)
+
+  // 下部纵筋锚固: 沿延长线伸入梁, 满足 ①过支座中线 ②≥5d, 取大值
+  // 沿斜面的锚固长度 = 水平投影 / cosA
+  const cosA = totalRun / slabLen;
+  const bot5d = 5 * botR.diameter;
+  const botAncHoriz = Math.max(beamB / 2, bot5d); // 水平投影
+  const botAncSlope = Math.round(botAncHoriz / cosA); // 沿斜面长度
+
+  // 上部纵筋: 沿延长线伸入梁至外侧边, 末端15d向下弯钩
+  // 伸入梁的斜面长度 ≈ beamB / cosA (cover可忽略)
+  const topAncSlope = Math.round((beamB - cover) / cosA);
+  const topHook = 15 * topR.diameter;
+  // 伸入梯板 ln/4 (斜面长度)
+  const topLn4 = Math.round(slabLen / 4);
+
+  const botBarCount = Math.floor((p.flightWidth - 2 * cover) / botR.spacing) + 1;
+  const topBarCount = Math.floor((p.flightWidth - 2 * cover) / topR.spacing) + 1;
+  const distCountPerLayer = Math.floor(slabLen / distR.spacing);
+
+  // 下部纵筋: 直线型，沿板底延长线伸入两端梯梁，无弯钩
+  const botBodyLen = Math.round(slabLen);
+  const botTotalLen = botBodyLen + botAncSlope * 2;
+  shapes.push({
+    name: '下部纵筋', spec: p.bottomBar, shapeType: 'straight',
+    count: botBarCount, color: '#C0392B',
+    totalLen: botTotalLen, bodyLen: botBodyLen,
+    anchorLen: botAncSlope,
+  });
+
+  // 上部纵筋: 弯折型 (两端各一段独立负筋)
+  // 路径: 15d弯钩↓ → 沿延长线穿过梁 → 沿板顶伸入梯板 ln/4
+  const topPieceLen = topAncSlope + topLn4 + topHook;
+  shapes.push({
+    name: '上部纵筋', spec: p.topBar, shapeType: 'bentAnchor',
+    count: topBarCount * 2, color: '#8E44AD',
+    totalLen: topPieceLen,
+    anchorLen: topAncSlope,
+    bodyLen: topLn4,
+    hookLen: topHook,
+    bendDir: 'down',
+  });
+
+  // 分布筋: 直线型，垂直纵筋
+  const distLen = p.flightWidth - 2 * cover;
+  shapes.push({
+    name: '分布筋', spec: p.distBar, shapeType: 'straight',
+    count: distCountPerLayer * 2, color: '#27AE60',
+    totalLen: distLen, bodyLen: distLen,
+  });
+
+  return shapes;
 }

@@ -87,8 +87,7 @@ interface SpacingIndicatorProps {
  */
 export function SpacingIndicator({ positions, y, z, label }: SpacingIndicatorProps) {
   if (positions.length < 2) return null;
-  
-  const firstSpacing = positions[1] - positions[0];
+
   const midIdx = Math.floor(positions.length / 2);
   
   return (

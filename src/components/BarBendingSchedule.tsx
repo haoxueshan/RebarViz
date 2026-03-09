@@ -241,7 +241,7 @@ function drawShape(ctx: CanvasRenderingContext2D, shape: BarShape, ox: number, o
 
       const cy = area.y + area.h * 0.40;
       const x0 = area.x + 5;
-      let cursor = x0;
+      const cursor = x0;
       let xBendEnd = x0, xAncEnd = x0, xEnd = x0;
 
       if (bend > 0) {

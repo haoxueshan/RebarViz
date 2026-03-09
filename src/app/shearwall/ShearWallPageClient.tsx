@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
+import { useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import type { ShearWallParams } from '@/lib/types';
 import { SHEAR_WALL_PRESETS } from '@/lib/rebar';
 import { calcShearWall } from '@/lib/calc';
-import { decodeShareParams } from '@/lib/useShareUrl';
 import { validateDimension } from '@/lib/validate';
 import { ShearWallCrossSection } from '@/components/CrossSection';
 import { ShearWallExplain } from '@/components/NotationExplain';
@@ -14,8 +14,10 @@ import { ShareButton } from '@/components/ShareButton';
 import { Field, NumField, Legend, ResetButton, SelectField, Section } from '@/components/FormControls';
 import { ViewerSkeleton } from '@/components/ViewerSkeleton';
 import { CONCRETE_GRADES, SEISMIC_GRADES } from '@/lib/anchor';
+import type { ConcreteGrade, SeismicGrade } from '@/lib/anchor';
 import { AISidebar } from '@/components/AISidebar';
 import { buildShearWallContext } from '@/lib/ai-context';
+import { decodeSharedParam } from '@/lib/share-params';
 import { Sparkles } from 'lucide-react';
 
 const DATA_TABS = [
@@ -36,16 +38,20 @@ const presetList = [
 const DEFAULT = { ...SHEAR_WALL_PRESETS.standard };
 
 export function ShearWallPageClient() {
-  const [params, setParams] = useState<ShearWallParams>(DEFAULT);
+  const searchParams = useSearchParams();
+  const [params, setParams] = useState<ShearWallParams>(() => {
+    const p = searchParams.get('p');
+    const shared = decodeSharedParam<Partial<ShearWallParams>>(p ?? undefined);
+    if (shared && shared.bw && shared.lw) {
+      return { ...DEFAULT, ...shared };
+    }
+    return DEFAULT;
+  });
   const [cutPosition, setCutPosition] = useState<number | null>(null);
   const [showCut, setShowCut] = useState(false);
   const [dataTab, setDataTab] = useState<typeof DATA_TABS[number]['key']>('section');
-  const [showAI, setShowAI] = useState(false);
-
-  useEffect(() => {
-    const shared = decodeShareParams<ShearWallParams>(window.location.search);
-    if (shared && shared.bw && shared.lw) setParams(shared);
-  }, []);
+  const aiMessage = searchParams.get('ai') || undefined;
+  const [showAI, setShowAI] = useState(!!aiMessage);
 
   const update = (patch: Partial<ShearWallParams>) => setParams(p => ({ ...p, ...patch }));
   const calcResult = useMemo(() => calcShearWall(params), [params]);
@@ -102,9 +108,9 @@ export function ShearWallPageClient() {
             </Section>
 
             <Section title="材料与构造">
-              <SelectField label="混凝土等级" value={params.concreteGrade} onChange={v => update({ concreteGrade: v as any })}
+              <SelectField label="混凝土等级" value={params.concreteGrade} onChange={v => update({ concreteGrade: v as ConcreteGrade })}
                 options={CONCRETE_GRADES.map(g => ({ value: g, label: g }))} />
-              <SelectField label="抗震等级" value={params.seismicGrade} onChange={v => update({ seismicGrade: v as any })}
+              <SelectField label="抗震等级" value={params.seismicGrade} onChange={v => update({ seismicGrade: v as SeismicGrade })}
                 options={SEISMIC_GRADES.map(g => ({ value: g, label: g }))} />
               <NumField label="保护层 (mm)" value={params.cover} onChange={v => update({ cover: v })} min={15} max={50} />
             </Section>
@@ -165,6 +171,7 @@ export function ShearWallPageClient() {
               onApplyParams={(p) => update(p as Partial<ShearWallParams>)}
               context={aiContext}
               notationSlot={<ShearWallExplain params={params} />}
+              initialMessage={aiMessage}
             />
           </div>
         )}

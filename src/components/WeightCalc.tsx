@@ -72,8 +72,8 @@ export function WeightCalc({ result, beamId, meta }: { result: CalcResult; beamI
   const maxWeight = useMemo(() => Math.max(...result.items.map(it => it.weightKg), 1), [result.items]);
   const maxSummaryWeight = useMemo(() => Math.max(...summary.map(r => r.totalWeightKg), 1), [summary]);
   const toggleExpand = useCallback((i: number) => setExpandedIdx(prev => prev === i ? null : i), []);
-  
-  const exportMeta: ExportMeta = meta || { id: beamId };
+
+  const exportMeta = useMemo<ExportMeta>(() => meta || { id: beamId }, [meta, beamId]);
   
   const handleCopy = useCallback(async () => {
     const ok = await copyToClipboard(result, exportMeta);

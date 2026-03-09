@@ -1,13 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import * as THREE from 'three';
 import type { RebarMeshInfo } from '@/lib/types';
 import { COLOR_TIEBAR, COLOR_TIEBAR_HI, REBAR_MATERIAL } from '@/lib/constants';
 
 export interface TieBarMeshProps {
   position: [number, number, number];
-  curve: THREE.CatmullRomCurve3;
+  points: THREE.Vector3[];
   radius: number;
   info: RebarMeshInfo;
   selected: boolean;
@@ -19,7 +19,7 @@ export interface TieBarMeshProps {
  */
 export function TieBarMesh({
   position,
-  curve,
+  points,
   radius,
   info,
   selected,
@@ -28,6 +28,15 @@ export function TieBarMesh({
   const [hovered, setHovered] = useState(false);
   const activeColor = selected ? COLOR_TIEBAR_HI : hovered ? COLOR_TIEBAR_HI : COLOR_TIEBAR;
   const scale = selected ? 1.3 : hovered ? 1.15 : 1;
+
+  // Build a CurvePath from line segments to preserve sharp bends
+  const curve = useMemo(() => {
+    const path = new THREE.CurvePath<THREE.Vector3>();
+    for (let i = 0; i < points.length - 1; i++) {
+      path.add(new THREE.LineCurve3(points[i], points[i + 1]));
+    }
+    return path;
+  }, [points]);
 
   return (
     <mesh
@@ -47,7 +56,7 @@ export function TieBarMesh({
         document.body.style.cursor = 'auto';
       }}
     >
-      <tubeGeometry args={[curve, 48, radius, 6, false]} />
+      <tubeGeometry args={[curve, 64, radius, 6, false]} />
       <meshStandardMaterial
         color={activeColor}
         roughness={REBAR_MATERIAL.roughness}

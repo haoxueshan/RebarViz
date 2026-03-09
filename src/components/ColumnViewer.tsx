@@ -1,8 +1,10 @@
 'use client';
 
-import { useMemo, useRef, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, Grid } from '@react-three/drei';
+import { Maximize2, Minimize2 } from 'lucide-react';
+import { useFullscreen } from '@/lib/useFullscreen';
 import * as THREE from 'three';
 import type { ColumnParams, RebarMeshInfo } from '@/lib/types';
 import { parseRebar, parseStirrup, gradeLabel } from '@/lib/rebar';
@@ -173,6 +175,7 @@ export default function ColumnViewer({ params, cutPosition, showCut, onCutPositi
   const [selected, setSelected] = useState<RebarMeshInfo | null>(null);
   const [concreteOpacity, setConcreteOpacity] = useState(0.15);
   const [cameraTarget, setCameraTarget] = useState<[number, number, number] | null>(null);
+  const { isFullscreen: fsActive, toggle: fsToggle, containerRef: fsContainerRef, containerClass: fsClass } = useFullscreen();
   const COL_H = (params.height || 3000) * S;
 
   return (
@@ -199,14 +202,14 @@ export default function ColumnViewer({ params, cutPosition, showCut, onCutPositi
         </div>
       )}
 
-      <div className="relative w-full h-[500px] lg:h-[600px] bg-surface rounded-xl border border-gray-200 overflow-hidden">
+      <div ref={fsContainerRef} className={`relative w-full bg-surface overflow-hidden ${fsClass}`}>
         {selected && <InfoTooltip info={selected} />}
 
         <div className="absolute top-3 left-3 z-10 flex items-center gap-1.5">
           {[
             { name: '正面', pos: [0, COL_H / 2, 4] as [number, number, number] },
             { name: '侧面', pos: [4, COL_H / 2, 0] as [number, number, number] },
-            { name: '俯视', pos: [0, 5, 0.1] as [number, number, number] },
+            { name: '俑视', pos: [0, 5, 0.1] as [number, number, number] },
             { name: '透视', pos: [2, 2, 3] as [number, number, number] },
           ].map(a => (
             <button key={a.name} onClick={() => setCameraTarget(a.pos)}
@@ -219,6 +222,11 @@ export default function ColumnViewer({ params, cutPosition, showCut, onCutPositi
             <input type="range" min={0} max={0.4} step={0.02} value={concreteOpacity}
               onChange={e => setConcreteOpacity(parseFloat(e.target.value))} className="w-12 accent-accent" />
           </div>
+          <button onClick={fsToggle}
+            className="ml-1 p-1 rounded-md bg-white/80 backdrop-blur-sm border border-gray-200/60 text-muted hover:bg-white hover:text-primary transition-colors cursor-pointer"
+            title={fsActive ? '退出全屏 (Esc)' : '全屏显示'}>
+            {fsActive ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+          </button>
         </div>
 
         <Canvas camera={{ position: [2, 2, 3], fov: 45 }} scene={{ background: new THREE.Color('#f8fafc') }}>

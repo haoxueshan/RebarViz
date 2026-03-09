@@ -3,10 +3,12 @@
 import { useMemo, useState, useEffect } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, Grid } from '@react-three/drei';
+import { Maximize2, Minimize2 } from 'lucide-react';
+import { useFullscreen } from '@/lib/useFullscreen';
 import * as THREE from 'three';
 import type { JointParams, RebarMeshInfo } from '@/lib/types';
 import { parseRebar, parseStirrup, gradeLabel } from '@/lib/rebar';
-import { calcLaE, calcBendLength } from '@/lib/anchor';
+import { calcBendLength } from '@/lib/anchor';
 import { S } from '@/lib/constants';
 
 /* ---- Clickable mesh wrapper ---- */
@@ -16,13 +18,12 @@ function Clickable({ info, selected, onSelect, children, ...props }: {
   children: React.ReactNode;
   [key: string]: unknown;
 }) {
-  const [hovered, setHovered] = useState(false);
   return (
     <group
       {...props}
       onClick={(e) => { e.stopPropagation(); onSelect(selected ? null : info); }}
-      onPointerOver={(e) => { e.stopPropagation(); setHovered(true); document.body.style.cursor = 'pointer'; }}
-      onPointerOut={() => { setHovered(false); document.body.style.cursor = 'auto'; }}
+      onPointerOver={(e) => { e.stopPropagation(); document.body.style.cursor = 'pointer'; }}
+      onPointerOut={() => { document.body.style.cursor = 'auto'; }}
     >
       {children}
     </group>
@@ -128,13 +129,9 @@ function JointScene({ params, selected, onSelect, concreteOpacity }: {
   const beamCenterY = colHeight / 2;
 
   const isMiddle = params.jointType === 'middle';
-  const isSide = params.jointType === 'side';
 
   // Anchor length - use actual calculation
-  const laEMm = calcLaE(beamTopR.grade, beamTopR.diameter, params.concreteGrade, params.seismicGrade);
-  const laE = laEMm * S;
-  const bendLenMm = calcBendLength(beamTopR.diameter);
-  const bendLen = bendLenMm * S;
+  const bendLen = calcBendLength(beamTopR.diameter) * S;
 
   // ---- Column rebars (vertical, full height) ----
   const colInnerW = cB - 2 * COVER;
@@ -199,7 +196,6 @@ function JointScene({ params, selected, onSelect, concreteOpacity }: {
   const beamTopInfo: RebarMeshInfo = { type: 'beamTop', label: '梁上部纵筋', detail: `${params.beamTop} · ${beamTopR.count}根 Φ${beamTopR.diameter}，${params.anchorType === 'bent' ? '弯锚入柱' : '直锚入柱'}` };
   const beamBotInfo: RebarMeshInfo = { type: 'beamBottom', label: '梁下部纵筋', detail: `${params.beamBottom} · ${beamBotR.count}根 Φ${beamBotR.diameter}，${params.anchorType === 'bent' ? '弯锚入柱' : '直锚入柱'}` };
   const beamStirInfo: RebarMeshInfo = { type: 'beamStirrup', label: '梁箍筋', detail: `${params.beamStirrup} · 加密区 ${beamStir.spacingDense}mm，非加密区 ${beamStir.spacingNormal}mm` };
-  const anchorInfo: RebarMeshInfo = { type: 'anchor', label: params.anchorType === 'bent' ? '弯锚构造' : '直锚构造', detail: params.anchorType === 'bent' ? `弯折段长度 12d = ${bendLenMm}mm，弯折角度 90°` : `直锚长度 laE = ${laEMm}mm` };
 
   const topY = beamCenterY + bH / 2 - COVER;
   const botY = beamCenterY - bH / 2 + COVER;
@@ -416,6 +412,7 @@ export default function JointViewer({ params }: { params: JointParams }) {
   const [selected, setSelected] = useState<RebarMeshInfo | null>(null);
   const [concreteOpacity, setConcreteOpacity] = useState(0.12);
   const [cameraTarget, setCameraTarget] = useState<[number, number, number] | null>(null);
+  const { isFullscreen: fsActive, toggle: fsToggle, containerRef: fsContainerRef, containerClass: fsClass } = useFullscreen();
 
   return (
     <div className="space-y-2">
@@ -432,7 +429,7 @@ export default function JointViewer({ params }: { params: JointParams }) {
         </span>
       </div>
 
-      <div className="relative w-full h-[500px] lg:h-[600px] bg-surface rounded-xl border border-gray-200 overflow-hidden">
+      <div ref={fsContainerRef} className={`relative w-full bg-surface overflow-hidden ${fsClass}`}>
         {selected && <InfoTooltip info={selected} />}
 
         <div className="absolute top-3 left-3 z-10 flex items-center gap-1.5">
@@ -452,6 +449,11 @@ export default function JointViewer({ params }: { params: JointParams }) {
             <input type="range" min={0} max={0.4} step={0.02} value={concreteOpacity}
               onChange={e => setConcreteOpacity(parseFloat(e.target.value))} className="w-12 accent-accent" />
           </div>
+          <button onClick={fsToggle}
+            className="ml-1 p-1 rounded-md bg-white/80 backdrop-blur-sm border border-gray-200/60 text-muted hover:bg-white hover:text-primary transition-colors cursor-pointer"
+            title={fsActive ? '退出全屏 (Esc)' : '全屏显示'}>
+            {fsActive ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+          </button>
         </div>
 
         <Canvas camera={{ position: [3, 2.5, 4], fov: 45 }} scene={{ background: new THREE.Color('#f8fafc') }}>

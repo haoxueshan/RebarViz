@@ -1,8 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import type { BeamParams, ColumnParams, SlabParams, ShearWallParams } from '@/lib/types';
-import { parseRebar, parseStirrup, parseSlabRebar, parseSideBar, GRADE_MAP, gradeLabel } from '@/lib/rebar';
+import type { BeamParams, ColumnParams, SlabParams, ShearWallParams, StairParams } from '@/lib/types';
+import { parseRebar, parseStirrup, parseSlabRebar, parseSideBar, gradeLabel } from '@/lib/rebar';
 import { calcAnchorAll, calcSupportRebarLength, calcSlabBottomAnchor, calcColumnLapZone, calcLaE, calcLlE, calcBendLength, calcBeamEndAnchor, calcBottomBarLapAtMiddleJoint } from '@/lib/anchor';
 
 function ExplainSection({ title, defaultOpen = false, children }: {
@@ -360,7 +360,6 @@ export function JointExplain({ params }: { params: import('@/lib/types').JointPa
   const colStir = parseStirrup(params.colStirrup);
   const beamTopR = parseRebar(params.beamTop);
   const beamBotR = parseRebar(params.beamBottom);
-  const beamStir = parseStirrup(params.beamStirrup);
   const laE = calcLaE(beamTopR.grade, beamTopR.diameter, params.concreteGrade, params.seismicGrade);
   const bendLen = calcBendLength(beamTopR.diameter);
 
@@ -511,6 +510,111 @@ export function ShearWallExplain({ params }: { params: ShearWallParams }) {
             <li>水平分布筋伸入边缘构件内锚固</li>
             <li>竖向分布筋搭接位置错开，同一截面 ≤ 50%</li>
             <li>墙身水平筋在边缘构件范围内的间距同墙身</li>
+          </ul>
+        </div>
+      </ExplainSection>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 楼梯标注解读 (22G101-2 AT型)
+// ═══════════════════════════════════════════════════════════════════
+
+export function StairExplain({ params }: { params: StairParams }) {
+  const botR = parseSlabRebar(params.bottomBar);
+  const topR = parseSlabRebar(params.topBar);
+  const distR = parseSlabRebar(params.distBar);
+  const totalRise = params.stepCount * params.stepHeight;
+  const totalRun = params.stepCount * params.stepWidth;
+  const angle = (Math.atan2(totalRise, totalRun) * 180 / Math.PI).toFixed(1);
+  const slabLen = Math.round(Math.sqrt(totalRise * totalRise + totalRun * totalRun));
+
+  return (
+    <div className="space-y-2 text-sm">
+      <div className="p-3 bg-blue-50 rounded-lg">
+        <p className="font-semibold text-primary">{params.id}</p>
+        <p className="text-xs text-muted mt-1">AT型板式楼梯 (22G101-2)</p>
+      </div>
+      <div className="p-3 bg-gray-50 rounded-lg">
+        <p className="font-medium">AT{params.stepCount}×{params.stepHeight}/{params.stepWidth}</p>
+        <p className="text-xs text-muted mt-1">
+          {params.stepCount}步 · 踏步高{params.stepHeight}mm · 踏步宽{params.stepWidth}mm
+        </p>
+        <p className="text-xs text-muted mt-0.5">
+          总升高 {totalRise}mm · 水平长 {totalRun}mm · 倾角 {angle}° · 斜长 {slabLen}mm
+        </p>
+      </div>
+
+      <ExplainSection title="标注解读" defaultOpen>
+        <div className="p-3 bg-red-50 rounded-lg">
+          <p className="font-medium text-red-800">下部纵筋: {params.bottomBar}</p>
+          <p className="text-xs text-red-600 mt-1">
+            {gradeLabel(botR.grade)} Φ{botR.diameter}@{botR.spacing}，沿梯板底面斜向布置
+          </p>
+          <p className="text-xs text-red-600 mt-0.5">
+            22G101-2: 纵筋从低端梯梁（梯板低端支座）处锚入，沿梯板底面至高端梯梁（梯板高端支座）锚入
+          </p>
+        </div>
+        <div className="p-3 bg-purple-50 rounded-lg">
+          <p className="font-medium text-purple-800">上部纵筋: {params.topBar}</p>
+          <p className="text-xs text-purple-600 mt-1">
+            {gradeLabel(topR.grade)} Φ{topR.diameter}@{topR.spacing}，沿梯板顶面（踏步面下方）布置
+          </p>
+        </div>
+        <div className="p-3 bg-green-50 rounded-lg">
+          <p className="font-medium text-green-800">分布筋: {params.distBar}</p>
+          <p className="text-xs text-green-600 mt-1">
+            {gradeLabel(distR.grade)} Φ{distR.diameter}@{distR.spacing}，垂直于纵筋方向
+          </p>
+          <p className="text-xs text-green-600 mt-0.5">
+            22G101-2: 上下两层分布筋，沿梯板斜面等间距布置
+          </p>
+        </div>
+      </ExplainSection>
+
+      <ExplainSection title="梯板与平台">
+        <div className="p-3 bg-gray-50 rounded-lg">
+          <p className="font-medium text-gray-800">梯板</p>
+          <p className="text-xs text-gray-600 mt-1">梯板厚 {params.slabThickness}mm · 梯段宽 {params.flightWidth}mm</p>
+        </div>
+        <div className="p-3 bg-gray-50 rounded-lg">
+          <p className="font-medium text-gray-800">平台板</p>
+          <p className="text-xs text-gray-600 mt-1">
+            上平台长 {params.topPlatformLen}mm · 下平台长 {params.botPlatformLen}mm · 厚 {params.platformThickness}mm
+          </p>
+        </div>
+        <div className="p-3 bg-gray-50 rounded-lg">
+          <p className="font-medium text-gray-800">梯梁（梯板端支座）</p>
+          <p className="text-xs text-gray-600 mt-1">
+            截面 {params.beamB}×{params.beamH}mm（低端/高端各一根）
+          </p>
+        </div>
+      </ExplainSection>
+
+      <ExplainSection title="构造要求">
+        <div className="p-3 bg-amber-50 rounded-lg">
+          <p className="font-medium text-amber-800">22G101-2 AT型构造要点</p>
+          <ul className="mt-1.5 space-y-1 text-xs text-amber-700 list-disc list-inside">
+            <li>梯板厚度一般取 L/25~L/30（L为梯板斜长）</li>
+            <li>下部纵筋锚入梯梁（梯板端支座）内 ≥ la（受拉锚固长度）</li>
+            <li>上部纵筋伸入平台 ≥ ln/4（ln为梯板净跨）</li>
+            <li>分布筋间距 ≤ 250mm，直径不小于 6mm</li>
+            <li>踏步高 h 宜为 150~175mm，2h+b ≈ 600mm</li>
+            <li>保护层厚度：室内环境 15mm，室外 20mm</li>
+          </ul>
+        </div>
+      </ExplainSection>
+
+      <ExplainSection title="识图要点">
+        <div className="p-3 bg-amber-50 rounded-lg">
+          <p className="font-medium text-amber-800">识图要点 (22G101-2)</p>
+          <ul className="mt-1.5 space-y-1 text-xs text-amber-700 list-disc list-inside">
+            <li>AT型: 板式楼梯，梯板为受弯构件</li>
+            <li>注写方式: AT+踏步数×踏步高/踏步宽</li>
+            <li>剖面注写: 标注梯板厚度和配筋</li>
+            <li>梯梁（梯板端支座梁）单独标注截面和配筋</li>
+            <li>梯板纵筋沿行走方向布置，分布筋垂直于纵筋</li>
           </ul>
         </div>
       </ExplainSection>

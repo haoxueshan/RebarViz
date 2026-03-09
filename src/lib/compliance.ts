@@ -2,7 +2,7 @@
  * 规范合规性校验 — 基于 GB50010-2010 和 22G101 图集
  * 在 AI 生成配筋参数后，自动检查是否满足规范要求
  */
-import type { BeamParams, ColumnParams, SlabParams, ShearWallParams, ComponentType } from './types';
+import type { BeamParams, ColumnParams, SlabParams, ShearWallParams, StairParams, ComponentType } from './types';
 import { parseRebar, parseStirrup, parseSlabRebar } from './rebar';
 import { FT, FY } from './anchor';
 import type { SeismicGrade } from './anchor';
@@ -386,17 +386,180 @@ export function checkShearWallCompliance(p: ShearWallParams): ComplianceResult[]
   return results;
 }
 
+// ─── 楼梯合规性校验 (22G101-2 AT型) ───
+
+export function checkStairCompliance(p: StairParams): ComplianceResult[] {
+  const results: ComplianceResult[] = [];
+  const botR = parseSlabRebar(p.bottomBar);
+  const distR = parseSlabRebar(p.distBar);
+  const cover = p.cover || 15;
+
+  const totalRise = p.stepCount * p.stepHeight;
+  const totalRun = p.stepCount * p.stepWidth;
+  const slabLen = Math.sqrt(totalRise * totalRise + totalRun * totalRun);
+
+  // 1. 踏步舒适度: 2h + b ≈ 600mm (550~650)
+  const comfortVal = 2 * p.stepHeight + p.stepWidth;
+  if (comfortVal < 550 || comfortVal > 650) {
+    results.push({
+      field: 'stepHeight/stepWidth',
+      rule: 'GB50352 §6.7.7',
+      status: comfortVal < 500 || comfortVal > 700 ? 'fail' : 'warn',
+      message: `踏步舒适度 2h+b = ${comfortVal}mm，宜在 550~650mm 范围`,
+      suggestion: `调整踏步高 h=${p.stepHeight}mm 或踏步宽 b=${p.stepWidth}mm，使 2h+b ≈ 600mm`,
+    });
+  }
+
+  // 2. 踏步高度限值: 住宅 ≤175mm，公共 ≤150mm (取宽松标准)
+  if (p.stepHeight > 200) {
+    results.push({
+      field: 'stepHeight', rule: 'GB50352 §6.7.7',
+      status: 'fail',
+      message: `踏步高 ${p.stepHeight}mm > 200mm (绝对上限)`,
+      suggestion: '住宅楼梯踏步高宜 ≤175mm，公建宜 ≤150mm',
+    });
+  } else if (p.stepHeight > 175) {
+    results.push({
+      field: 'stepHeight', rule: 'GB50352 §6.7.7',
+      status: 'warn',
+      message: `踏步高 ${p.stepHeight}mm > 175mm (住宅推荐上限)`,
+      suggestion: '建议踏步高 ≤175mm',
+    });
+  }
+
+  // 3. 踏步宽度最小值: 住宅 ≥260mm
+  if (p.stepWidth < 220) {
+    results.push({
+      field: 'stepWidth', rule: 'GB50352 §6.7.7',
+      status: 'fail',
+      message: `踏步宽 ${p.stepWidth}mm < 220mm (绝对下限)`,
+      suggestion: '住宅楼梯踏步宽宜 ≥260mm',
+    });
+  } else if (p.stepWidth < 260) {
+    results.push({
+      field: 'stepWidth', rule: 'GB50352 §6.7.7',
+      status: 'warn',
+      message: `踏步宽 ${p.stepWidth}mm < 260mm (住宅推荐下限)`,
+      suggestion: '建议踏步宽 ≥260mm',
+    });
+  }
+
+  // 4. 梯板厚度: 宜取 L/25 ~ L/30 (L为梯板斜长)
+  const tMin = Math.round(slabLen / 30);
+  const tMax = Math.round(slabLen / 25);
+  if (p.slabThickness < tMin * 0.85) {
+    results.push({
+      field: 'slabThickness', rule: '22G101-2 构造',
+      status: 'fail',
+      message: `梯板厚 ${p.slabThickness}mm 偏小，斜长 ${Math.round(slabLen)}mm，建议 ${tMin}~${tMax}mm (L/30~L/25)`,
+      suggestion: `建议梯板厚度 ≥ ${tMin}mm`,
+    });
+  } else if (p.slabThickness < tMin) {
+    results.push({
+      field: 'slabThickness', rule: '22G101-2 构造',
+      status: 'warn',
+      message: `梯板厚 ${p.slabThickness}mm 接近下限，建议 ${tMin}~${tMax}mm (L/30~L/25)`,
+    });
+  }
+
+  // 5. 下部纵筋直径检查: AT型板式楼梯受力筋宜 ≥8mm
+  if (botR.diameter < 8) {
+    results.push({
+      field: 'bottomBar', rule: 'GB50010 §8.5.1',
+      status: 'fail',
+      message: `下部纵筋 Φ${botR.diameter} < 8mm (板受力筋最小直径)`,
+      suggestion: '建议纵筋直径 ≥8mm',
+    });
+  }
+
+  // 6. 下部纵筋间距: ≤200mm 且 ≥70mm
+  if (botR.spacing > 200) {
+    results.push({
+      field: 'bottomBar', rule: 'GB50010 §9.1.3',
+      status: 'fail',
+      message: `下部纵筋间距 ${botR.spacing}mm > 200mm`,
+      suggestion: '板受力钢筋间距不应大于 200mm',
+    });
+  }
+  if (botR.spacing < 70) {
+    results.push({
+      field: 'bottomBar', rule: 'GB50010 §9.1.3',
+      status: 'warn',
+      message: `下部纵筋间距 ${botR.spacing}mm < 70mm，施工困难`,
+      suggestion: '建议间距不小于 70mm',
+    });
+  }
+
+  // 7. 分布筋要求: 直径 ≥6mm，间距 ≤250mm (22G101-2)
+  if (distR.diameter < 6) {
+    results.push({
+      field: 'distBar', rule: 'GB50010 §9.1.6',
+      status: 'fail',
+      message: `分布筋 Φ${distR.diameter} < 6mm (最小直径)`,
+      suggestion: '分布筋直径不应小于 6mm',
+    });
+  }
+  if (distR.spacing > 250) {
+    results.push({
+      field: 'distBar', rule: 'GB50010 §9.1.6',
+      status: 'fail',
+      message: `分布筋间距 ${distR.spacing}mm > 250mm`,
+      suggestion: '分布筋间距不应大于 250mm',
+    });
+  }
+
+  // 8. 保护层厚度: 室内 15mm，室外 20mm
+  if (cover < 15) {
+    results.push({
+      field: 'cover', rule: 'GB50010 §8.2.1',
+      status: 'fail',
+      message: `保护层 ${cover}mm < 15mm (板最小保护层)`,
+      suggestion: '室内环境板最小保护层 15mm',
+    });
+  }
+
+  // 9. 梯段宽度: 住宅 ≥1100mm (22G101-2 常用)
+  if (p.flightWidth < 1000) {
+    results.push({
+      field: 'flightWidth', rule: 'GB50352 §6.7.5',
+      status: 'warn',
+      message: `梯段宽 ${p.flightWidth}mm < 1000mm`,
+      suggestion: '住宅楼梯梯段净宽宜 ≥1100mm',
+    });
+  }
+
+  // 10. 上部纵筋伸入平台长度检查: 22G101-2 图示要求 ≥ ln/4
+  const ln = slabLen; // 梯板净跨近似取斜长
+  const topExtend = Math.round(ln / 4);
+  if (p.topPlatformLen < topExtend && p.botPlatformLen < topExtend) {
+    results.push({
+      field: 'topPlatformLen', rule: '22G101-2 页2-8',
+      status: 'warn',
+      message: `上部纵筋需伸入平台 ≥ ln/4 = ${topExtend}mm，请确保平台长度满足`,
+      suggestion: `22G101-2: 上部纵筋从梯板端部伸入平台 ≥ ln/4`,
+    });
+  }
+
+  if (results.length === 0) {
+    results.push({ field: '-', rule: '22G101-2 & GB50010', status: 'pass', message: 'AT型楼梯配筋满足规范要求' });
+  }
+
+  return results;
+}
+
 // ─── 统一入口 ───
 
 export function checkCompliance(
   componentType: ComponentType,
-  params: BeamParams | ColumnParams | SlabParams | ShearWallParams,
+  params: BeamParams | ColumnParams | SlabParams | ShearWallParams | StairParams,
 ): ComplianceResult[] {
   switch (componentType) {
     case 'beam': return checkBeamCompliance(params as BeamParams);
     case 'column': return checkColumnCompliance(params as ColumnParams);
     case 'slab': return checkSlabCompliance(params as SlabParams);
     case 'shearwall': return checkShearWallCompliance(params as ShearWallParams);
+    case 'stair': return checkStairCompliance(params as StairParams);
     case 'joint': return [{ field: '-', rule: 'GB50010', status: 'pass', message: '节点构造校验暂未实现' }];
+    default: return [{ field: '-', rule: '-', status: 'pass', message: '暂未实现' }];
   }
 }

@@ -1,7 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import type { ValidationError } from '@/lib/validate';
 
 export function Field({ label, value, onChange, placeholder, error }: {
   label: string; value: string; onChange: (v: string) => void; placeholder?: string; error?: string | null;
@@ -102,4 +101,3 @@ export function Section({ title, defaultOpen = false, children }: {
     </div>
   );
 }
-

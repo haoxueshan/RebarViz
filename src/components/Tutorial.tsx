@@ -84,18 +84,14 @@ export function Tutorial({ componentType = 'beam', onComplete, forceShow }: Tuto
   const currentStep = steps[step];
   
   useEffect(() => {
-    // 检查是否已完成教程
-    if (forceShow) {
-      setShow(true);
-      return;
-    }
-    
+    // 检查是否已完成教程（异步设置，避免 effect 内同步 setState）
+    if (typeof window === 'undefined') return;
     const completed = localStorage.getItem(STORAGE_KEY);
-    if (!completed) {
-      // 首次访问，延迟显示教程
-      const timer = setTimeout(() => setShow(true), 1000);
-      return () => clearTimeout(timer);
-    }
+    const shouldShow = forceShow || !completed;
+    if (!shouldShow) return;
+
+    const timer = setTimeout(() => setShow(true), forceShow ? 0 : 1000);
+    return () => clearTimeout(timer);
   }, [forceShow]);
   
   const handleComplete = useCallback(() => {

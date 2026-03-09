@@ -1,13 +1,14 @@
 'use client';
 
-import { useMemo, useRef, useState, useCallback, useEffect } from 'react';
-import { Canvas, useThree, ThreeEvent } from '@react-three/fiber';
-import { OrbitControls, Grid, Html, Line } from '@react-three/drei';
-import { Camera, Keyboard } from 'lucide-react';
+import { useMemo, useState, useCallback, useEffect } from 'react';
+import { Canvas, useThree } from '@react-three/fiber';
+import { OrbitControls, Grid } from '@react-three/drei';
+import { Camera, Maximize2, Minimize2 } from 'lucide-react';
+import { useFullscreen } from '@/lib/useFullscreen';
 import * as THREE from 'three';
 import type { BeamParams, RebarMeshInfo } from '@/lib/types';
 import { parseRebar, parseStirrup, parseSideBar, parseTieBar, autoTieBar, tieBarToString, gradeLabel } from '@/lib/rebar';
-import { calcSupportRebarLength, calcBeamEndAnchor, calcLaE, calcLlE } from '@/lib/anchor';
+import { calcSupportRebarLength, calcBeamEndAnchor, calcLaE } from '@/lib/anchor';
 import { RebarDetailPanel } from './RebarDetailPanel';
 import {
   S,
@@ -19,8 +20,6 @@ import {
   COLOR_ERECTION, COLOR_ERECTION_HI,
   COLOR_HAUNCH, COLOR_HAUNCH_HI,
   COLOR_SIDEBAR, COLOR_SIDEBAR_HI,
-  COLOR_TIEBAR, COLOR_TIEBAR_HI,
-  COLOR_COLUMN,
   BEAM_CONSTRUCTION_STEPS,
 } from '@/lib/constants';
 import { layoutBars, formatAnchorDesc } from '@/lib/layout';
@@ -36,7 +35,7 @@ import {
   ColumnStub,
   SectionCutPlane,
 } from './three';
-import { useKeyboard, createViewerBindings, formatShortcut } from '@/lib/useKeyboard';
+import { useKeyboard, createViewerBindings } from '@/lib/useKeyboard';
 import { KeyboardHelp } from './KeyboardHelp';
 
 /* Haunch (加腋) concrete geometry */
@@ -261,13 +260,31 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
 
 
   // ============ 钢筋 Y 坐标计算 (22G101 构造) ============
+  // 上部钢筋多排布置
   const topBarY1 = hm - COVER - STIR_D - topR.diameter * S / 2;
   const topClearV = Math.max(topR.diameter * S, 25 * S);
-  const topBarY2 = topBarY1 - topR.diameter * S / 2 - topClearV - topR.diameter * S / 2;
+  const topRowCount = topR.rows || (topR.perRow ? topR.perRow.length : 1);
+  const topBarYPositions = (() => {
+    const positions = [topBarY1];
+    for (let i = 1; i < topRowCount; i++) {
+      const prevY = positions[i - 1];
+      positions.push(prevY - topR.diameter * S / 2 - topClearV - topR.diameter * S / 2);
+    }
+    return positions;
+  })();
 
+  // 下部钢筋多排布置
   const botBarY1 = COVER + STIR_D + botR.diameter * S / 2;
   const botClear = Math.max(botR.diameter * S, 25 * S);
-  const botBarY2 = botBarY1 + botR.diameter * S / 2 + botClear + botR.diameter * S / 2;
+  const botRowCount = botR.rows || (botR.perRow ? botR.perRow.length : 1);
+  const botBarYPositions = (() => {
+    const positions = [botBarY1];
+    for (let i = 1; i < botRowCount; i++) {
+      const prevY = positions[i - 1];
+      positions.push(prevY + botR.diameter * S / 2 + botClear + botR.diameter * S / 2);
+    }
+    return positions;
+  })();
 
   // 支座负筋 Y: 在上部通长筋下方（紧贴，实际施工中钢筋紧挨绑扎）
   const supportDia = (leftR?.diameter || rightR?.diameter || topR.diameter) * S;
@@ -279,13 +296,9 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
   const topBarZRange = stirCenterW - STIR_D - topR.diameter * S;
   const botBarZRange = stirCenterW - STIR_D - botR.diameter * S;
 
-  const topBars = useMemo(() =>
-    layoutBars(topR, topBarZRange, [topBarY1, topBarY2]),
-  [topR.count, topR.diameter, topR.rows, topR.perRow, topBarZRange, topBarY1, topBarY2]);
+  const topBars = layoutBars(topR, topBarZRange, topBarYPositions);
 
-  const botBars = useMemo(() =>
-    layoutBars(botR, botBarZRange, [botBarY1, botBarY2]),
-  [botR.count, botR.diameter, botR.rows, botR.perRow, botBarZRange, botBarY1, botBarY2]);
+  const botBars = layoutBars(botR, botBarZRange, botBarYPositions);
 
   const supportLenMm = calcSupportRebarLength(params.spanLength || 4000);
   const supportLen = supportLenMm * S;
@@ -304,8 +317,6 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
   }, [rightR, stirCenterW, STIR_D, supportBarY1, supportBarY2]);
 
   // 第二排支座负筋 Y 坐标: 在第一排支座筋下方
-  const support2Dia = (leftR2?.diameter || rightR2?.diameter || topR.diameter) * S;
-  const supportBarY2Row = supportBarY2 - supportDia / 2 - Math.max(support2Dia, 25 * S) - support2Dia / 2;
   const leftBars2 = useMemo(() => {
     if (!leftR2) return [];
     const range = stirCenterW - STIR_D - leftR2.diameter * S;
@@ -335,45 +346,71 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
   const gv = (g: string) => !visibleGroups || visibleGroups.has(g);
 
   // 收集所有纵筋 Z 坐标，供多肢箍拉筋避让
-  const allBarZPositions = useMemo(() => {
+  const allBarZPositions = (() => {
     const zSet = new Set<number>();
     topBars.forEach(b => zSet.add(b.z));
     botBars.forEach(b => zSet.add(b.z));
     return [...zSet];
-  }, [topBars, botBars]);
+  })();
 
   // parseSideBar 缓存（避免多处重复解析）
   const sideInfo = useMemo(() => params.sideBar ? parseSideBar(params.sideBar) : null, [params.sideBar]);
 
   // 拉筋曲线缓存（参数不随跨变化，提到循环外）
   // 22G101: 拉筋两端135°弯钩勾住腰筋
-  const memoTieCurve = useMemo(() => {
+  // 用折线点数组(polyline)代替 CatmullRomCurve3，弯折处用小弧线离散化
+  const memoTiePoints = useMemo((): THREE.Vector3[] | null => {
     if (!sideInfo) return null;
-    const sideZ = (stirCenterW / 2) - STIR_D / 2; // 腰筋 Z 位置
+    const sideZ = (stirCenterW / 2) - STIR_D / 2;
     const tieInfo = params.tieBar ? parseTieBar(params.tieBar) : autoTieBar(params.b, stir.grade, stir.diameter);
     if (!tieInfo) return null;
     const tieDiaS = tieInfo.diameter * S;
     const sideDiaS = sideInfo.diameter * S;
-    // 拉筋勾住腰筋: 弯折半径≈腰筋半径+拉筋直径
-    const wrapR = Math.max(sideDiaS / 2 + tieDiaS, tieDiaS * 3);
-    const halfExt = sideZ + wrapR; // 延伸过腰筋
-    const hookLen = Math.max(10 * tieDiaS, wrapR);
+    // 弯折内半径: 规范要求 ≥ 2.5d(拉筋), 取 max(3d, 腰筋半径+拉筋直径)
+    const bendR = Math.max(sideDiaS / 2 + tieDiaS, tieDiaS * 3);
+    const hookLen = Math.max(10 * tieDiaS, bendR * 1.5);
+
+    // 135° 弯钩: 弯折角度 = 180° - 135° = 45°, 弧度 = 3π/4
+    // 弯钩方向: 向下弯 (Y负方向)
+    const bendAngle = Math.PI * 3 / 4; // 135° hook = 3/4 π 弯转
+    const arcSegs = 8; // 弧线离散段数
+
+    const pts: THREE.Vector3[] = [];
+
+    // ── 左侧 135° 弯钩 ──
+    // 弯钩直线段末端(向下-45°方向)
     const c45 = Math.SQRT1_2;
-    return new THREE.CatmullRomCurve3([
-      // Left 135° hook (DOWN) — 环绕腰筋后弯钩
-      new THREE.Vector3(0, -(wrapR + hookLen * c45), -halfExt + hookLen * c45),
-      new THREE.Vector3(0, -wrapR, -halfExt),
-      new THREE.Vector3(0, 0, -sideZ),
-      // 中间直线段 — 加密点防波浪形
-      new THREE.Vector3(0, 0, -sideZ * 0.6),
-      new THREE.Vector3(0, 0, -sideZ * 0.2),
-      new THREE.Vector3(0, 0, sideZ * 0.2),
-      new THREE.Vector3(0, 0, sideZ * 0.6),
-      new THREE.Vector3(0, 0, sideZ),
-      new THREE.Vector3(0, -wrapR, halfExt),
-      // Right 135° hook (DOWN)
-      new THREE.Vector3(0, -(wrapR + hookLen * c45), halfExt - hookLen * c45),
-    ], false, 'centripetal');
+    const leftHookEnd = new THREE.Vector3(0, -(bendR + hookLen * c45), -sideZ - bendR + hookLen * c45);
+    pts.push(leftHookEnd);
+    // 弧线: 从弯钩末端方向(向上+45°) 弯转到水平方向(+Z)
+    // 弧心在腰筋位置偏下: (0, -bendR, -sideZ)
+    const leftCx = 0, leftCy = -bendR, leftCz = -sideZ;
+    // 弧线起始角 = -3π/4 (从弯钩方向), 终止角 = 0 (到水平)
+    // 在 YZ 平面上: 角度从 -π/2 - π/4 到 0
+    const leftStartAngle = -Math.PI / 2 - Math.PI / 4;
+    for (let i = 0; i <= arcSegs; i++) {
+      const t = i / arcSegs;
+      const a = leftStartAngle + t * bendAngle;
+      pts.push(new THREE.Vector3(leftCx, leftCy + bendR * Math.sin(a), leftCz + bendR * Math.cos(a)));
+    }
+
+    // ── 中间直线段 ──
+    pts.push(new THREE.Vector3(0, 0, -sideZ));
+    pts.push(new THREE.Vector3(0, 0, sideZ));
+
+    // ── 右侧 135° 弯钩 (镜像) ──
+    const rightCx = 0, rightCy = -bendR, rightCz = sideZ;
+    const rightStartAngle = 0;
+    for (let i = 0; i <= arcSegs; i++) {
+      const t = i / arcSegs;
+      const a = rightStartAngle - t * bendAngle; // 反方向
+      pts.push(new THREE.Vector3(rightCx, rightCy + bendR * Math.sin(a), rightCz + bendR * Math.cos(a)));
+    }
+    // 弯钩直线段末端
+    const rightHookEnd = new THREE.Vector3(0, -(bendR + hookLen * c45), sideZ + bendR - hookLen * c45);
+    pts.push(rightHookEnd);
+
+    return pts;
   }, [sideInfo, params.tieBar, params.b, stir.grade, stir.diameter, stirCenterW, STIR_D]);
 
   return (
@@ -783,7 +820,7 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
         <group key={`span-ts-${si}`} position={[span.center, 0, 0]}>
           {/* Tie bars (拉筋) */}
           <group visible={gv('sideBar')}>
-          {sideInfo && memoTieCurve && (() => {
+          {sideInfo && memoTiePoints && (() => {
             const perSide = Math.ceil(sideInfo.count / 2);
             const sideDia = sideInfo.diameter;
             const yTop = topBarY1 - topR.diameter * S / 2 - Math.max(sideDia * S, 25 * S);
@@ -800,11 +837,11 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
             const tieDetail = `${tieLabel} · ${gradeLabel(tieInfo.grade)} Φ${tieDia}，间距${stir.spacingNormal}mm(同箍筋非加密区)，两端135°弯钩`;
             const tieSpacing = stir.spacingNormal * S;
             const tieBars: React.ReactNode[] = [];
-            for (let sx = -BEAM_LEN / 2 + tieSpacing; sx < BEAM_LEN / 2; sx += tieSpacing) {
+            for (let sx = -BEAM_LEN / 2 + tieSpacing * 1.5; sx < BEAM_LEN / 2 - tieSpacing * 0.5; sx += tieSpacing) {
               tieYPositions.forEach((y, yi) => {
                 tieBars.push(
                   <TieBarMesh key={`tie-${si}-${yi}-${sx.toFixed(4)}`}
-                    position={[sx, y, 0]} curve={memoTieCurve} radius={tieDiaS / 2}
+                    position={[sx, y, 0]} points={memoTiePoints} radius={tieDiaS / 2}
                     info={{ type: 'tieBar', label: '拉筋', detail: tieDetail }}
                     selected={isSelected('tieBar')} onSelect={onSelect} />
                 );
@@ -874,7 +911,6 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
           const sign = sd === 'left' ? -1 : 1;
           const xColFace = sign * BEAM_LEN / 2;
           const xColInner = xColFace + sign * anchorInCol;
-          const xHaunchEnd = xColFace - sign * haunchLen;
 
           // 斜面延伸终点
           const xSlopeEnd = xColFace - sign * haunchLen * finalRatio;
@@ -1328,11 +1364,11 @@ export default function BeamViewer({ params, cutPosition, showCut, onCutPosition
   const [animating, setAnimating] = useState(false);
   const [step, setStep] = useState(BEAM_CONSTRUCTION_STEPS.length - 1);
   const [autoPlay, setAutoPlay] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const { isFullscreen: fsActive, toggle: fsToggle, containerRef: fsContainerRef, containerClass: fsClass } = useFullscreen();
 
   // 截图函数
   const takeScreenshot = useCallback(() => {
-    const canvas = containerRef.current?.querySelector('canvas');
+    const canvas = document.querySelector<HTMLCanvasElement>('[data-viewer="beam"] canvas');
     if (canvas) {
       const dataUrl = canvas.toDataURL('image/png');
       const link = document.createElement('a');
@@ -1486,7 +1522,7 @@ export default function BeamViewer({ params, cutPosition, showCut, onCutPosition
   }, [selected, params]);
 
   return (
-    <div className="space-y-2" ref={containerRef}>
+    <div className="space-y-2" data-viewer="beam">
       <div className="flex items-center gap-1.5 flex-wrap">
         <button
           onClick={() => { onShowCutChange(!showCut); if (showCut) onCutPositionChange(null); else onCutPositionChange(0); }}
@@ -1547,7 +1583,7 @@ export default function BeamViewer({ params, cutPosition, showCut, onCutPosition
         </div>
       )}
 
-      <div className="relative w-full h-[500px] lg:h-[600px] bg-surface rounded-xl border border-gray-200 overflow-hidden">
+      <div ref={fsContainerRef} className={`relative w-full bg-surface overflow-hidden ${fsClass}`}>
         {selected && <RebarDetailPanel info={selected} onClose={() => setSelected(null)} additionalData={selectedAdditionalData} />}
 
         {/* Toolbar overlay */}
@@ -1568,6 +1604,11 @@ export default function BeamViewer({ params, cutPosition, showCut, onCutPosition
             <input type="range" min={0} max={0.4} step={0.02} value={concreteOpacity}
               onChange={e => setConcreteOpacity(parseFloat(e.target.value))} className="w-12 accent-accent" />
           </div>
+          <button onClick={fsToggle}
+            className="ml-1 p-1 rounded-md bg-white/80 backdrop-blur-sm border border-gray-200/60 text-muted hover:bg-white hover:text-primary transition-colors cursor-pointer"
+            title={fsActive ? '退出全屏 (Esc)' : '全屏显示'}>
+            {fsActive ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+          </button>
         </div>
 
         <Canvas camera={{ position: [3 * camScale, 2 * camScale, 4 * camScale], fov: 45 }} scene={{ background: new THREE.Color('#f8fafc') }}>

@@ -1,0 +1,756 @@
+'use client';
+
+import { useMemo, useState, useEffect, useCallback } from 'react';
+import { Canvas, useThree, type ThreeEvent } from '@react-three/fiber';
+import { OrbitControls, Grid, Html, Line } from '@react-three/drei';
+import { Camera, Maximize2, Minimize2 } from 'lucide-react';
+import { useFullscreen } from '@/lib/useFullscreen';
+import * as THREE from 'three';
+import type { StairParams, RebarMeshInfo } from '@/lib/types';
+import { parseSlabRebar, gradeLabel } from '@/lib/rebar';
+import { S, REBAR_MATERIAL, COLOR_STAIR_TOP, COLOR_STAIR_TOP_HI, COLOR_STAIR_BOTTOM, COLOR_STAIR_BOTTOM_HI, COLOR_STAIR_DIST, COLOR_STAIR_DIST_HI, STAIR_CONSTRUCTION_STEPS } from '@/lib/constants';
+import { SectionCutPlane } from './three';
+import { useKeyboard, createViewerBindings } from '@/lib/useKeyboard';
+import { KeyboardHelp } from './KeyboardHelp';
+
+// ═══════════════════════════════════════════════════════════════════
+// 辅助组件
+// ═══════════════════════════════════════════════════════════════════
+
+function CameraController({ targetPosition }: { targetPosition: [number, number, number] | null }) {
+  const { camera } = useThree();
+  useEffect(() => {
+    if (targetPosition) { camera.position.set(...targetPosition); camera.updateProjectionMatrix(); }
+  }, [targetPosition, camera]);
+  return null;
+}
+
+function StairBar({ position, rotation, length, diameter, color, hiColor, info, selected, onSelect }: {
+  position: [number, number, number]; rotation?: [number, number, number];
+  length: number; diameter: number; color: string; hiColor: string;
+  info: RebarMeshInfo; selected: boolean; onSelect: (info: RebarMeshInfo | null) => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const activeColor = selected ? hiColor : hovered ? hiColor : color;
+  const scale = selected ? 1.3 : hovered ? 1.15 : 1;
+  return (
+    <mesh position={position} rotation={rotation || [0, 0, Math.PI / 2]}
+      onClick={(e) => { e.stopPropagation(); onSelect(selected ? null : info); }}
+      onPointerOver={(e) => { e.stopPropagation(); setHovered(true); document.body.style.cursor = 'pointer'; }}
+      onPointerOut={() => { setHovered(false); document.body.style.cursor = 'auto'; }}
+      scale={[scale, 1, scale]}>
+      <cylinderGeometry args={[diameter * S / 2, diameter * S / 2, length, 8]} />
+      <meshStandardMaterial color={activeColor} {...REBAR_MATERIAL}
+        emissive={selected ? hiColor : '#000000'} emissiveIntensity={selected ? 0.3 : 0} />
+    </mesh>
+  );
+}
+
+/** 多段折线钢筋管 — 每段独立 TubeGeometry，保持弯折处尖角 */
+function TubeBar({ path, diameter, color, hiColor, info, selected, onSelect }: {
+  path: THREE.Vector3[]; diameter: number; color: string; hiColor: string;
+  info: RebarMeshInfo; selected: boolean; onSelect: (info: RebarMeshInfo | null) => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const activeColor = selected ? hiColor : hovered ? hiColor : color;
+  const r = diameter * S / 2;
+  const geos = useMemo(() => {
+    const result: THREE.TubeGeometry[] = [];
+    for (let i = 0; i < path.length - 1; i++) {
+      const seg = new THREE.LineCurve3(path[i], path[i + 1]);
+      const len = path[i].distanceTo(path[i + 1]);
+      const segs = Math.max(2, Math.round(len / 0.02)); // ≈20mm per segment
+      result.push(new THREE.TubeGeometry(seg, segs, r, 8, false));
+    }
+    return result;
+  }, [path, r]);
+  const handler = {
+    onClick: (e: ThreeEvent<MouseEvent>) => { e.stopPropagation(); onSelect(selected ? null : info); },
+    onPointerOver: (e: ThreeEvent<PointerEvent>) => { e.stopPropagation(); setHovered(true); document.body.style.cursor = 'pointer'; },
+    onPointerOut: () => { setHovered(false); document.body.style.cursor = 'auto'; },
+  };
+  return (
+    <group>
+      {geos.map((geo, i) => (
+        <mesh key={i} geometry={geo} {...handler}>
+          <meshStandardMaterial color={activeColor} {...REBAR_MATERIAL}
+            emissive={selected ? hiColor : '#000000'} emissiveIntensity={selected ? 0.3 : 0} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// AT 型楼梯 3D 场景
+// ═══════════════════════════════════════════════════════════════════
+
+function ATStairScene({ params, selected, onSelect, concreteOpacity, visibleGroups, showDimensions, cutPosition }: {
+  params: StairParams; selected: RebarMeshInfo | null;
+  onSelect: (info: RebarMeshInfo | null) => void;
+  concreteOpacity: number; visibleGroups: Set<string> | null;
+  showDimensions: boolean; cutPosition: number | null;
+}) {
+  const {
+    stepCount: n, stepHeight: hMM, stepWidth: bMM,
+    slabThickness: tMM, flightWidth: wMM,
+    topPlatformLen: topPlatMM, botPlatformLen: botPlatMM,
+    platformThickness: platTMM,
+    beamB: beamBMM, beamH: beamHMM,
+    cover: coverMM,
+  } = params;
+
+  // mm → m
+  const h = hMM * S;         // 踏步高
+  const b = bMM * S;         // 踏步宽
+  const t = tMM * S;         // 梯板厚
+  const w = wMM * S;         // 梯段宽
+  const topPlat = topPlatMM * S;
+  const botPlat = botPlatMM * S;
+  const platT = platTMM * S;
+  const beamB = beamBMM * S;
+  const beamH = beamHMM * S;
+  const cover = coverMM * S;
+
+  // 解析配筋
+  const topR = parseSlabRebar(params.topBar);
+  const botR = parseSlabRebar(params.bottomBar);
+  const distR = parseSlabRebar(params.distBar);
+
+  // 梯段总高和总长 (水平投影)
+  const totalRise = n * h;
+  const totalRun = n * b;
+
+  // 梯段倾斜角度
+  const angle = Math.atan2(totalRise, totalRun);
+  // 沿斜面的梯板长度
+  const slabLen = Math.sqrt(totalRise * totalRise + totalRun * totalRun);
+  // 板厚在竖直方向的投影
+  const tCosA = t * Math.cos(angle);
+
+  // 坐标系: X 方向=行走方向 (水平), Y=竖直, Z=梯段宽度方向
+  // 原点: 低端梯梁顶面中心（梯板低端支座）
+
+  const gv = (g: string) => !visibleGroups || visibleGroups.has(g);
+  const isSelected = (type: string) => selected?.type === type;
+
+  // ============ RebarMeshInfo ============
+  const botInfo: RebarMeshInfo = {
+    type: 'stairBottom', label: '下部纵筋',
+    detail: `${params.bottomBar} · ${gradeLabel(botR.grade)} Φ${botR.diameter}@${botR.spacing}`,
+  };
+  const topInfo: RebarMeshInfo = {
+    type: 'stairTop', label: '上部纵筋',
+    detail: `${params.topBar} · ${gradeLabel(topR.grade)} Φ${topR.diameter}@${topR.spacing}`,
+  };
+  const distInfo: RebarMeshInfo = {
+    type: 'stairDist', label: '分布筋',
+    detail: `${params.distBar} · ${gradeLabel(distR.grade)} Φ${distR.diameter}@${distR.spacing}`,
+  };
+
+  // ============ 踏步几何 (混凝土) ============
+  // 每个踏步是直角三角形截面(板顶斜面 与 水平踏面 之间的区域)
+  // 三角形顶点: (i*b, (i+1)*h), (i*b, i*h), ((i+1)*b, (i+1)*h)
+  // 图集 AT 型: 第0级(低端梯梁顶面) 和 第n-1级(高端梯梁顶面) 不单独渲染
+  const stepsGeo = useMemo(() => {
+    const geos: THREE.ExtrudeGeometry[] = [];
+    for (let i = 1; i < n - 1; i++) {
+      const shape = new THREE.Shape();
+      shape.moveTo(i * b, (i + 1) * h);      // 踏面左上角
+      shape.lineTo(i * b, i * h);              // 板顶面(低点)
+      shape.lineTo((i + 1) * b, (i + 1) * h); // 板顶面(高点)=踏面右边
+      shape.closePath();
+      const geo = new THREE.ExtrudeGeometry(shape, { depth: w, bevelEnabled: false });
+      geo.translate(0, 0, -w / 2);
+      geos.push(geo);
+    }
+    return geos;
+  }, [n, b, h, w]);
+
+  // ============ 纵筋 Z 坐标分布 ============
+  const botBarZs = useMemo(() => {
+    const spacing = botR.spacing * S;
+    const bars: number[] = [];
+    for (let z = -w / 2 + cover + botR.diameter * S / 2; z <= w / 2 - cover - botR.diameter * S / 2; z += spacing) {
+      bars.push(z);
+    }
+    return bars;
+  }, [botR.spacing, botR.diameter, w, cover]);
+
+  const topBarZs = useMemo(() => {
+    const spacing = topR.spacing * S;
+    const bars: number[] = [];
+    for (let z = -w / 2 + cover + topR.diameter * S / 2; z <= w / 2 - cover - topR.diameter * S / 2; z += spacing) {
+      bars.push(z);
+    }
+    return bars;
+  }, [topR.spacing, topR.diameter, w, cover]);
+
+  // ============ 分布筋沿斜面分布 ============
+  const distBarPositions = useMemo(() => {
+    const spacing = distR.spacing * S;
+    const positions: { x: number; y: number }[] = [];
+    // 沿斜面方向每隔 spacing 布一根
+    const cosA = Math.cos(angle);
+    const sinA = Math.sin(angle);
+    for (let s = spacing; s < slabLen - spacing / 2; s += spacing) {
+      positions.push({ x: s * cosA, y: s * sinA });
+    }
+    return positions;
+  }, [distR.spacing, angle, slabLen]);
+
+  // ============ 锚固参数 (22G101-2 页2-8) ============
+  const bot5d = 5 * botR.diameter * S;              // 下部纵筋 ≥5d 过支座中线
+  const topHook15d = 15 * topR.diameter * S;         // 上部纵筋弯钩 15d
+
+  // ── 梯梁几何 ──
+  // AT型: 梯梁渲染范围  低端 [0, b], 高端 [totalRun-b, totalRun]
+  //        梯梁顶面标高  低端 Y=h,   高端 Y=totalRise
+  //        梯梁底面标高  低端 Y=h-beamH, 高端 Y=totalRise-beamH
+  const botBeamRenderCenterX = b / 2;
+  const topBeamRenderCenterX = totalRun - b / 2;
+
+  // ============ 坐标系说明 ============
+  // 板顶面: (0,0) → (totalRun, totalRise)  slope = totalRise / totalRun
+  // 板底面: (0,-tCosA) → (totalRun, totalRise-tCosA)  同斜率, 竖直下移 tCosA
+  // 在任意 X 处:
+  //   板顶面Y = slope * X
+  //   板底面Y = slope * X - tCosA
+  //   下部筋Y = slope * X - tCosA + cvBot   (cvBot = 竖直方向的保护层+半径)
+  //   上部筋Y = slope * X - cvTop            (cvTop = 竖直方向的保护层+半径)
+  const slope = totalRise / totalRun;
+  const cvBot = (cover + botR.diameter * S / 2) / Math.cos(angle); // 沿竖直方向的偏移
+  const cvTop = (cover + topR.diameter * S / 2) / Math.cos(angle);
+
+  // ============ 纵筋路径 (严格按 22G101-2 图集 页2-8) ============
+  //
+  //  两种纵筋都沿板面延长线(同斜率)伸入梯梁，无水平段!
+  //
+  //  【下部纵筋】沿板底面延长线伸入两端梯梁，无弯钩
+  //              锚固条件: ① 过支座中线  ② 伸入梁≥5d (两者取大值)
+  //
+  //  【上部纵筋】(支座负筋，两端各一段)
+  //              从梯板 ln/4 处沿板顶面延长线伸入梯梁至梁边(≥0.35lab)
+  //              末端 15d 向下弯钩
+  //
+
+  // ─── 下部纵筋 ───
+  // 沿 botY(x) = slope*x - tCosA + cvBot 延长线直接伸入梯梁，无弯钩
+  // 锚固条件: 过支座中线 / 伸入梁≥5d，两者取大值(即更深入梁的那个)
+  const botBarPath = useMemo(() => {
+    const botY = (x: number) => slope * x - tCosA + cvBot;
+
+    // 低端: 梁[0,b], 中线X=b/2, 梁内侧边X=b
+    // 过中线: X ≤ b/2;  伸入≥5d: X ≤ b - bot5d;  取较小值=更深入
+    const lowAncX = Math.max(Math.min(b / 2, b - bot5d), cover);
+
+    // 高端: 梁[totalRun-b, totalRun], 中线X=totalRun-b/2, 梁内侧边X=totalRun-b
+    // 过中线: X ≥ totalRun-b/2;  伸入≥5d: X ≥ totalRun-b+bot5d;  取较大值=更深入
+    const highAncX = Math.min(Math.max(totalRun - b / 2, totalRun - b + bot5d), totalRun - cover);
+
+    return [
+      new THREE.Vector3(lowAncX, botY(lowAncX), 0),     // 低端锚固末端(延长线上)
+      new THREE.Vector3(highAncX, botY(highAncX), 0),   // 高端锚固末端(延长线上)
+    ];
+  }, [slope, tCosA, cvBot, totalRun, b, bot5d, cover]);
+
+  // ─── 上部纵筋 ───
+  // 两端各一段独立负筋: 沿 topY(x) = slope*x - cvTop 延长线伸入梯梁, 弯钩向下
+  const topBarPaths = useMemo((): { low: THREE.Vector3[]; high: THREE.Vector3[] } => {
+    const topY = (x: number) => slope * x - cvTop;
+    const cosA = Math.cos(angle);
+    const dxLn4 = (slabLen / 4) * cosA;  // ln/4 水平投影
+
+    // === 低端负筋 ===
+    // 梁[0,b]: 延长线伸入梁至外侧边附近
+    const lowAncX = cover;                                    // 锚固末端(梁外侧边)
+    const lowAncY = topY(lowAncX);                            // 延长线上的Y
+    const lowHookBottom = Math.max(lowAncY - topHook15d, h - beamH + cover);
+    const lowEndX = Math.min(totalRun - b, b + dxLn4);       // 斜段末端(ln/4)
+
+    const low: THREE.Vector3[] = [
+      new THREE.Vector3(lowAncX, lowHookBottom, 0),           // ① 弯钩底(15d向下)
+      new THREE.Vector3(lowAncX, lowAncY, 0),                  // ② 弯折点(延长线上)
+      new THREE.Vector3(lowEndX, topY(lowEndX), 0),            // ③ 斜段末端(ln/4)
+    ];
+
+    // === 高端负筋 ===
+    // 梁[totalRun-b, totalRun]: 延长线伸入梁至外侧边附近
+    const highAncX = totalRun - cover;
+    const highAncY = topY(highAncX);
+    const highHookBottom = Math.max(highAncY - topHook15d, totalRise - beamH + cover);
+    const highStartX = Math.max(b, totalRun - b - dxLn4);
+
+    const high: THREE.Vector3[] = [
+      new THREE.Vector3(highStartX, topY(highStartX), 0),     // ① 斜段起端(ln/4)
+      new THREE.Vector3(highAncX, highAncY, 0),                // ② 弯折点(延长线上)
+      new THREE.Vector3(highAncX, highHookBottom, 0),          // ③ 弯钩底(15d向下)
+    ];
+
+    return { low, high };
+  }, [slope, cvTop, totalRun, totalRise, slabLen, angle, b, h, beamH, topHook15d, cover]);
+
+  // ============ 梯板底面几何 (斜面板) ============
+  // 板顶面与踏步底面对齐 (0,0)→(totalRun,totalRise)
+  // 板底面下移 tCosA
+  const slabGeo = useMemo(() => {
+    // 梯板只在两个梯梁之间: X 从 b 到 totalRun-b
+    const x0 = b;
+    const x1 = totalRun - b;
+    const y0 = slope * x0;            // 板顶面 at x0
+    const y1 = slope * x1;            // 板顶面 at x1
+    const shape = new THREE.Shape();
+    shape.moveTo(x0, y0 - tCosA);     // 低端板底
+    shape.lineTo(x1, y1 - tCosA);     // 高端板底
+    shape.lineTo(x1, y1);             // 高端板顶
+    shape.lineTo(x0, y0);             // 低端板顶
+    shape.closePath();
+    const extrudeSettings = { depth: w, bevelEnabled: false };
+    const geo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+    geo.translate(0, 0, -w / 2);
+    return geo;
+  }, [totalRun, b, slope, tCosA, w]);
+
+  return (
+    <>
+      {/* 不可见点击区域 */}
+      <mesh position={[totalRun / 2, totalRise / 2, 0]} onClick={() => onSelect(null)} visible={false}>
+        <boxGeometry args={[totalRun + botPlat + topPlat + 1, totalRise + 1, w + 1]} />
+        <meshBasicMaterial />
+      </mesh>
+
+      {/* ═══════════ 混凝土 ═══════════ */}
+      {gv('concrete') && (
+        <group>
+          {/* 梯板底面 (斜面板) */}
+          <mesh geometry={slabGeo}>
+            <meshPhysicalMaterial color="#BDC3C7" transparent opacity={concreteOpacity} side={THREE.DoubleSide} depthWrite={false} roughness={0.8} />
+          </mesh>
+
+          {/* 踏步 — 三角形截面(板顶斜面与水平踏面之间) */}
+          {stepsGeo.map((geo, i) => (
+            <mesh key={`step-${i}`} geometry={geo}>
+              <meshPhysicalMaterial color="#C8CED4" transparent opacity={concreteOpacity * 1.2} side={THREE.DoubleSide} depthWrite={false} roughness={0.8} />
+            </mesh>
+          ))}
+          {stepsGeo.map((geo, i) => (
+            <lineSegments key={`step-edge-${i}`}>
+              <edgesGeometry args={[geo]} />
+              <lineBasicMaterial color="#94A3B8" />
+            </lineSegments>
+          ))}
+
+          {/* 下平台板 — 紧贴低端梯梁左侧，顶面与梯梁顶面齐平 */}
+          <mesh position={[-botPlat / 2, h - platT / 2, 0]}>
+            <boxGeometry args={[botPlat, platT, w]} />
+            <meshPhysicalMaterial color="#B0B8C1" transparent opacity={concreteOpacity * 1.1} side={THREE.DoubleSide} depthWrite={false} roughness={0.8} />
+          </mesh>
+          <lineSegments position={[-botPlat / 2, h - platT / 2, 0]}>
+            <edgesGeometry args={[new THREE.BoxGeometry(botPlat, platT, w)]} />
+            <lineBasicMaterial color="#94A3B8" />
+          </lineSegments>
+
+          {/* 上平台板 — 紧贴高端梯梁右侧，顶面与梯梁顶面齐平 */}
+          <mesh position={[totalRun + topPlat / 2, totalRise - platT / 2, 0]}>
+            <boxGeometry args={[topPlat, platT, w]} />
+            <meshPhysicalMaterial color="#B0B8C1" transparent opacity={concreteOpacity * 1.1} side={THREE.DoubleSide} depthWrite={false} roughness={0.8} />
+          </mesh>
+          <lineSegments position={[totalRun + topPlat / 2, totalRise - platT / 2, 0]}>
+            <edgesGeometry args={[new THREE.BoxGeometry(topPlat, platT, w)]} />
+            <lineBasicMaterial color="#94A3B8" />
+          </lineSegments>
+
+          {/* 低端梯梁（顶面 = 第一个踏步踏面, y=h，X宽 = b） */}
+          <mesh position={[botBeamRenderCenterX, h - beamH / 2, 0]}>
+            <boxGeometry args={[b, beamH, w + 0.4]} />
+            <meshPhysicalMaterial color="#A0A8B1" transparent opacity={concreteOpacity * 1.3} side={THREE.DoubleSide} depthWrite={false} roughness={0.8} />
+          </mesh>
+          <lineSegments position={[botBeamRenderCenterX, h - beamH / 2, 0]}>
+            <edgesGeometry args={[new THREE.BoxGeometry(b, beamH, w + 0.4)]} />
+            <lineBasicMaterial color="#7F8C9A" />
+          </lineSegments>
+
+          {/* 高端梯梁（顶面 = 最后一个踏步踏面，X宽 = b） */}
+          <mesh position={[topBeamRenderCenterX, totalRise - beamH / 2, 0]}>
+            <boxGeometry args={[b, beamH, w + 0.4]} />
+            <meshPhysicalMaterial color="#A0A8B1" transparent opacity={concreteOpacity * 1.3} side={THREE.DoubleSide} depthWrite={false} roughness={0.8} />
+          </mesh>
+          <lineSegments position={[topBeamRenderCenterX, totalRise - beamH / 2, 0]}>
+            <edgesGeometry args={[new THREE.BoxGeometry(b, beamH, w + 0.4)]} />
+            <lineBasicMaterial color="#7F8C9A" />
+          </lineSegments>
+        </group>
+      )}
+
+      {/* ═══════════ 下部纵筋 ═══════════ */}
+      {gv('bottom') && botBarZs.map((z, i) => {
+        const pts = botBarPath.map(p => new THREE.Vector3(p.x, p.y, z));
+        return (
+          <TubeBar key={`bot-${i}`} path={pts} diameter={botR.diameter}
+            color={COLOR_STAIR_BOTTOM} hiColor={COLOR_STAIR_BOTTOM_HI}
+            info={botInfo} selected={isSelected('stairBottom')} onSelect={onSelect} />
+        );
+      })}
+
+      {/* ═══════════ 上部纵筋 ═══════════ */}
+      {gv('top') && topBarZs.map((z, i) => {
+        const ptsLow = topBarPaths.low.map(p => new THREE.Vector3(p.x, p.y, z));
+        const ptsHigh = topBarPaths.high.map(p => new THREE.Vector3(p.x, p.y, z));
+        return (
+          <group key={`top-${i}`}>
+            <TubeBar path={ptsLow} diameter={topR.diameter}
+              color={COLOR_STAIR_TOP} hiColor={COLOR_STAIR_TOP_HI}
+              info={topInfo} selected={isSelected('stairTop')} onSelect={onSelect} />
+            <TubeBar path={ptsHigh} diameter={topR.diameter}
+              color={COLOR_STAIR_TOP} hiColor={COLOR_STAIR_TOP_HI}
+              info={topInfo} selected={isSelected('stairTop')} onSelect={onSelect} />
+          </group>
+        );
+      })}
+
+      {/* ═══════════ 分布筋 (垂直于纵筋方向, Z轴) ═══════════ */}
+      {/* 下部分布筋: 在底筋外侧 (板底面 + cover + 底筋直径 + 分布筋半径, 竖直方向) */}
+      {gv('dist') && distBarPositions.map((pos, i) => {
+        const cvDist = (cover + botR.diameter * S + distR.diameter * S / 2) / Math.cos(angle);
+        const barY = slope * pos.x - tCosA + cvDist;
+        return (
+          <StairBar key={`dist-bot-${i}`}
+            position={[pos.x, barY, 0]}
+            rotation={[Math.PI / 2, 0, 0]}
+            length={w - 2 * cover}
+            diameter={distR.diameter}
+            color={COLOR_STAIR_DIST} hiColor={COLOR_STAIR_DIST_HI}
+            info={distInfo} selected={isSelected('stairDist')} onSelect={onSelect} />
+        );
+      })}
+      {/* 上部分布筋: 在顶筋外侧 (板顶面 - cover - 顶筋直径 - 分布筋半径, 竖直方向) */}
+      {gv('dist') && distBarPositions.map((pos, i) => {
+        const cvDist = (cover + topR.diameter * S + distR.diameter * S / 2) / Math.cos(angle);
+        const barY = slope * pos.x - cvDist;
+        return (
+          <StairBar key={`dist-top-${i}`}
+            position={[pos.x, barY, 0]}
+            rotation={[Math.PI / 2, 0, 0]}
+            length={w - 2 * cover}
+            diameter={distR.diameter}
+            color={COLOR_STAIR_DIST} hiColor={COLOR_STAIR_DIST_HI}
+            info={distInfo} selected={isSelected('stairDist')} onSelect={onSelect} />
+        );
+      })}
+
+      {/* ═══════════ 尺寸标注 ═══════════ */}
+      {showDimensions && (
+        <StairDimensions
+          totalRun={totalRun} totalRise={totalRise}
+          b={b} h={h} t={t} w={w} n={n}
+          stepHeight={hMM} stepWidth={bMM}
+          slabThickness={tMM} flightWidth={wMM}
+        />
+      )}
+
+      {/* ═══════════ 剖切面 ═══════════ */}
+      {cutPosition !== null && (
+        <SectionCutPlane position={cutPosition} height={totalRise + platT} width={w} />
+      )}
+    </>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 尺寸标注组件
+// ═══════════════════════════════════════════════════════════════════
+
+function DimLabel3D({ position, label, color = '#2563EB' }: { position: [number, number, number]; label: string; color?: string }) {
+  return (
+    <Html position={position} center distanceFactor={8}>
+      <div style={{
+        color, fontSize: 8, fontWeight: 700, whiteSpace: 'nowrap',
+        pointerEvents: 'none',
+        textShadow: '0 0 3px #fff, 0 0 3px #fff, 0 0 6px rgba(255,255,255,0.8)',
+        lineHeight: 1, letterSpacing: '-0.01em',
+      }}>
+        {label}
+      </div>
+    </Html>
+  );
+}
+
+function StairDimensions({
+  totalRun, totalRise, b, h, t, w, n,
+  stepHeight, stepWidth, slabThickness, flightWidth,
+}: {
+  totalRun: number; totalRise: number;
+  b: number; h: number; t: number; w: number; n: number;
+  stepHeight: number; stepWidth: number;
+  slabThickness: number; flightWidth: number;
+}) {
+  const zFront = w / 2 + 0.08;
+  const tickLen = 0.03;
+  const dimColor = '#2563EB';
+  const dimColor2 = '#D97706';
+
+  return (
+    <group>
+      {/* 总水平长 (下方) */}
+      <Line points={[[0, -0.12, zFront], [totalRun, -0.12, zFront]]} color={dimColor} lineWidth={1.5} />
+      <Line points={[[0, -0.12 - tickLen, zFront], [0, -0.12 + tickLen, zFront]]} color={dimColor} lineWidth={1} />
+      <Line points={[[totalRun, -0.12 - tickLen, zFront], [totalRun, -0.12 + tickLen, zFront]]} color={dimColor} lineWidth={1} />
+      <DimLabel3D position={[totalRun / 2, -0.12, zFront]} label={`${n}×${stepWidth}=${n * stepWidth}mm`} color={dimColor} />
+
+      {/* 总升高 (右侧) */}
+      <Line points={[[totalRun + 0.12, 0, zFront], [totalRun + 0.12, totalRise, zFront]]} color={dimColor} lineWidth={1.5} />
+      <Line points={[[totalRun + 0.12 - tickLen, 0, zFront], [totalRun + 0.12 + tickLen, 0, zFront]]} color={dimColor} lineWidth={1} />
+      <Line points={[[totalRun + 0.12 - tickLen, totalRise, zFront], [totalRun + 0.12 + tickLen, totalRise, zFront]]} color={dimColor} lineWidth={1} />
+      <DimLabel3D position={[totalRun + 0.12, totalRise / 2, zFront]} label={`${n}×${stepHeight}=${n * stepHeight}mm`} color={dimColor} />
+
+      {/* 第一个踏步尺寸标注 (踏步宽) */}
+      <Line points={[[0, -0.06, zFront], [b, -0.06, zFront]]} color={dimColor2} lineWidth={1} />
+      <Line points={[[0, -0.06 - tickLen * 0.7, zFront], [0, -0.06 + tickLen * 0.7, zFront]]} color={dimColor2} lineWidth={1} />
+      <Line points={[[b, -0.06 - tickLen * 0.7, zFront], [b, -0.06 + tickLen * 0.7, zFront]]} color={dimColor2} lineWidth={1} />
+      <DimLabel3D position={[b / 2, -0.06, zFront]} label={`b=${stepWidth}`} color={dimColor2} />
+
+      {/* 第一个踏步高度标注 */}
+      <Line points={[[-0.08, 0, zFront], [-0.08, h, zFront]]} color={dimColor2} lineWidth={1} />
+      <Line points={[[-0.08 - tickLen * 0.7, 0, zFront], [-0.08 + tickLen * 0.7, 0, zFront]]} color={dimColor2} lineWidth={1} />
+      <Line points={[[-0.08 - tickLen * 0.7, h, zFront], [-0.08 + tickLen * 0.7, h, zFront]]} color={dimColor2} lineWidth={1} />
+      <DimLabel3D position={[-0.08, h / 2, zFront]} label={`h=${stepHeight}`} color={dimColor2} />
+
+      {/* 梯段宽度 (Z方向) */}
+      <Line points={[[-0.05, -0.05, -w / 2], [-0.05, -0.05, w / 2]]} color="#059669" lineWidth={1.5} />
+      <Line points={[[-0.05 - tickLen, -0.05, -w / 2], [-0.05 + tickLen, -0.05, -w / 2]]} color="#059669" lineWidth={1} />
+      <Line points={[[-0.05 - tickLen, -0.05, w / 2], [-0.05 + tickLen, -0.05, w / 2]]} color="#059669" lineWidth={1} />
+      <DimLabel3D position={[-0.05, -0.05, 0]} label={`梯段宽=${flightWidth}mm`} color="#059669" />
+
+      {/* 梯板厚度标注 (在斜段中部法向方向) */}
+      {(() => {
+        const midX = totalRun * 0.4;
+        const midY = totalRise * 0.4;
+        const cosA = Math.cos(Math.atan2(totalRise, totalRun));
+        const sinA = Math.sin(Math.atan2(totalRise, totalRun));
+        const nx = -sinA;
+        const ny = cosA;
+        return (
+          <group>
+            <Line points={[[midX, midY, zFront], [midX + nx * t, midY + ny * t, zFront]]} color="#DC2626" lineWidth={1} />
+            <DimLabel3D position={[midX + nx * t * 0.5 + nx * 0.04, midY + ny * t * 0.5 + ny * 0.04, zFront]} label={`t=${slabThickness}`} color="#DC2626" />
+          </group>
+        );
+      })()}
+    </group>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 信息提示
+// ═══════════════════════════════════════════════════════════════════
+
+function InfoTooltip({ info }: { info: RebarMeshInfo }) {
+  const colorMap: Record<string, string> = {
+    stairBottom: 'bg-red-50 border-red-200 text-red-800',
+    stairTop: 'bg-purple-50 border-purple-200 text-purple-800',
+    stairDist: 'bg-green-50 border-green-200 text-green-800',
+    stairPlatform: 'bg-blue-50 border-blue-200 text-blue-800',
+  };
+  const cls = colorMap[info.type] || 'bg-gray-50 border-gray-200 text-gray-800';
+  return (
+    <div className={`absolute top-3 right-3 px-4 py-3 rounded-xl border text-sm shadow-lg backdrop-blur-sm z-10 max-w-xs ${cls}`}>
+      <p className="font-semibold">{info.label}</p>
+      <p className="text-xs mt-1 opacity-80">{info.detail}</p>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 导出：StairViewer 主组件
+// ═══════════════════════════════════════════════════════════════════
+
+export default function StairViewer({ params }: { params: StairParams }) {
+  const [selected, setSelected] = useState<RebarMeshInfo | null>(null);
+  const [concreteOpacity, setConcreteOpacity] = useState(0.15);
+  const [cameraTarget, setCameraTarget] = useState<[number, number, number] | null>(null);
+  const [showDimensions, setShowDimensions] = useState(false);
+  const [showCut, setShowCut] = useState(false);
+  const [cutPosition, setCutPosition] = useState<number | null>(null);
+  const [animating, setAnimating] = useState(false);
+  const [step, setStep] = useState(STAIR_CONSTRUCTION_STEPS.length - 1);
+  const [autoPlay, setAutoPlay] = useState(false);
+  const { isFullscreen, toggle: toggleFullscreen, containerRef: viewerContainerRef, containerClass: fsClass } = useFullscreen();
+
+  const visibleGroups = animating ? STAIR_CONSTRUCTION_STEPS[step].groups : null;
+
+  // 相机目标中心
+  const totalRise = params.stepCount * params.stepHeight * S;
+  const totalRun = params.stepCount * params.stepWidth * S;
+  const centerX = totalRun / 2;
+  const centerY = totalRise / 2;
+
+  // 剖切范围
+  const cutMax = totalRun * 0.95;
+
+  // 截图函数
+  const takeScreenshot = useCallback(() => {
+    const canvas = document.querySelector<HTMLCanvasElement>('[data-viewer="stair"] canvas');
+    if (canvas) {
+      const dataUrl = canvas.toDataURL('image/png');
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = `stair-${params.id || 'view'}.png`;
+      a.click();
+    }
+  }, [params.id]);
+
+  // 快捷键
+  const keyBindings = useMemo(() => createViewerBindings({
+    resetView: () => setCameraTarget([centerX + 3, centerY + 2, 3]),
+    toggleDimensions: () => setShowDimensions(d => !d),
+    takeScreenshot,
+    toggleAnimation: () => {
+      if (animating) {
+        setAutoPlay(a => !a);
+      } else {
+        setStep(0);
+        setAnimating(true);
+      }
+    },
+    setViewPreset: (preset) => {
+      const presets: Record<string, [number, number, number]> = {
+        front: [centerX, centerY, 4],
+        side: [centerX + 4, centerY, 0],
+        top: [centerX, centerY + 5, 0.1],
+        iso: [centerX + 3, centerY + 2, 3],
+      };
+      setCameraTarget(presets[preset] || presets.iso);
+    },
+  }), [centerX, centerY, animating, takeScreenshot]);
+
+  useKeyboard(keyBindings);
+
+  // 自动播放
+  useEffect(() => {
+    if (!autoPlay || !animating) return;
+    const id = setInterval(() => {
+      setStep(s => {
+        if (s >= STAIR_CONSTRUCTION_STEPS.length - 1) { setAutoPlay(false); return s; }
+        return s + 1;
+      });
+    }, 2000);
+    return () => clearInterval(id);
+  }, [autoPlay, animating]);
+
+  return (
+    <div className="space-y-2" data-viewer="stair">
+      {/* ═══ 工具栏 ═══ */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <button
+          onClick={() => { setShowCut(!showCut); if (showCut) setCutPosition(null); else setCutPosition(0); }}
+          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-all ${showCut ? 'bg-accent text-white shadow-sm shadow-accent/20' : 'bg-white border border-gray-200 text-muted hover:bg-gray-50 hover:border-gray-300'}`}>
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21L3 9m18 12l-4-12M12 3v18" /></svg>
+          {showCut ? '关闭剖切' : '剖切视图'}
+        </button>
+        <button
+          onClick={() => setShowDimensions(!showDimensions)}
+          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-all ${showDimensions ? 'bg-amber-500 text-white shadow-sm shadow-amber-500/20' : 'bg-white border border-gray-200 text-muted hover:bg-gray-50 hover:border-gray-300'}`}>
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5" /></svg>
+          {showDimensions ? '隐藏标注' : '尺寸标注'}
+        </button>
+        <button
+          onClick={() => { setAnimating(a => { if (a) { setAutoPlay(false); } else { setStep(0); } return !a; }); }}
+          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-all ${animating ? 'bg-emerald-500 text-white shadow-sm shadow-emerald-500/20' : 'bg-white border border-gray-200 text-muted hover:bg-gray-50 hover:border-gray-300'}`}>
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+          {animating ? '退出动画' : '施工动画'}
+        </button>
+        <button
+          onClick={takeScreenshot}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-all bg-white border border-gray-200 text-muted hover:bg-gray-50 hover:border-gray-300"
+          title="截图 (S)">
+          <Camera className="w-3.5 h-3.5" />
+          截图
+        </button>
+        <KeyboardHelp bindings={keyBindings} />
+        {selected && (
+          <button onClick={() => setSelected(null)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-100 text-muted cursor-pointer hover:bg-gray-200 transition-colors">
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+            取消选中
+          </button>
+        )}
+      </div>
+
+      {/* ═══ 施工动画时间轴 ═══ */}
+      {animating && (
+        <div className="flex items-center gap-3 bg-white rounded-lg border border-emerald-200 px-4 py-2">
+          <button onClick={() => setStep(s => Math.max(0, s - 1))} disabled={step <= 0}
+            className="px-2 py-1 rounded text-xs font-medium cursor-pointer bg-gray-100 hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed">◀</button>
+          <input type="range" min={0} max={STAIR_CONSTRUCTION_STEPS.length - 1} step={1} value={step}
+            onChange={e => setStep(parseInt(e.target.value))} className="flex-1 accent-emerald-500" />
+          <button onClick={() => setStep(s => Math.min(STAIR_CONSTRUCTION_STEPS.length - 1, s + 1))} disabled={step >= STAIR_CONSTRUCTION_STEPS.length - 1}
+            className="px-2 py-1 rounded text-xs font-medium cursor-pointer bg-gray-100 hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed">▶</button>
+          <button onClick={() => { if (!autoPlay) setStep(s => Math.min(s, STAIR_CONSTRUCTION_STEPS.length - 2)); setAutoPlay(a => !a); }}
+            className={`px-2 py-1 rounded text-xs font-medium cursor-pointer ${autoPlay ? 'bg-emerald-500 text-white' : 'bg-gray-100 hover:bg-gray-200'}`}>
+            {autoPlay ? '⏸' : '▶ 自动'}
+          </button>
+          <span className="text-xs text-muted whitespace-nowrap">{step + 1}/{STAIR_CONSTRUCTION_STEPS.length} {STAIR_CONSTRUCTION_STEPS[step].label}</span>
+        </div>
+      )}
+
+      {/* ═══ 剖切位置滑块 ═══ */}
+      {showCut && (
+        <div className="flex items-center gap-3 bg-white rounded-lg border border-gray-200 px-4 py-2">
+          <span className="text-xs text-muted whitespace-nowrap">剖切位置</span>
+          <input type="range" min={-cutMax / 2} max={cutMax} step={0.01} value={cutPosition ?? 0}
+            onChange={e => setCutPosition(parseFloat(e.target.value))} className="flex-1 accent-accent" />
+          <span className="text-xs text-muted w-16 text-right">{((cutPosition ?? 0) * 1000).toFixed(0)}mm</span>
+        </div>
+      )}
+
+      {/* ═══ 3D 画布 ═══ */}
+      <div ref={viewerContainerRef} className={`relative w-full bg-surface overflow-hidden ${fsClass}`}>
+        {selected && <InfoTooltip info={selected} />}
+
+        <div className="absolute top-3 left-3 z-10 flex items-center gap-1.5">
+          {[
+            { name: '正面', pos: [centerX, centerY, 4] as [number, number, number] },
+            { name: '侧面', pos: [centerX + 4, centerY, 0] as [number, number, number] },
+            { name: '俯视', pos: [centerX, centerY + 5, 0.1] as [number, number, number] },
+            { name: '透视', pos: [centerX + 3, centerY + 2, 3] as [number, number, number] },
+          ].map(a => (
+            <button key={a.name} onClick={() => setCameraTarget(a.pos)}
+              className="px-2 py-1 rounded-md text-[11px] font-medium cursor-pointer bg-white/80 backdrop-blur-sm border border-gray-200/60 text-muted hover:bg-white hover:text-primary transition-colors">
+              {a.name}
+            </button>
+          ))}
+          <div className="flex items-center gap-1 ml-1 px-2 py-1 rounded-md bg-white/80 backdrop-blur-sm border border-gray-200/60">
+            <span className="text-[11px] text-muted">透明</span>
+            <input type="range" min={0} max={0.5} step={0.02} value={concreteOpacity}
+              onChange={e => setConcreteOpacity(parseFloat(e.target.value))} className="w-12 accent-accent" />
+          </div>
+          <button onClick={toggleFullscreen}
+            className="ml-1 p-1 rounded-md bg-white/80 backdrop-blur-sm border border-gray-200/60 text-muted hover:bg-white hover:text-primary transition-colors cursor-pointer"
+            title={isFullscreen ? '退出全屏 (Esc)' : '全屏显示'}>
+            {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+          </button>
+        </div>
+
+        <Canvas camera={{ position: [centerX + 3, centerY + 2, 3], fov: 45 }} scene={{ background: new THREE.Color('#f8fafc') }}>
+          <CameraController targetPosition={cameraTarget} />
+          <ambientLight intensity={0.6} />
+          <directionalLight position={[5, 8, 5]} intensity={0.8} castShadow />
+          <ATStairScene params={params} selected={selected} onSelect={setSelected}
+            concreteOpacity={concreteOpacity} visibleGroups={visibleGroups}
+            showDimensions={showDimensions} cutPosition={cutPosition} />
+          <Grid args={[20, 20]} position={[0, -0.01, 0]} cellColor="#E2E8F0" sectionColor="#E2E8F0" fadeDistance={15} />
+          <axesHelper args={[0.5]} />
+          <OrbitControls target={[centerX, centerY, 0]} enableDamping dampingFactor={0.1} />
+        </Canvas>
+        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-black/50 text-white/80 text-[11px] px-4 py-1.5 rounded-full backdrop-blur-md pointer-events-none">
+          <span>左键旋转</span>
+          <span className="w-px h-3 bg-white/20" />
+          <span>右键平移</span>
+          <span className="w-px h-3 bg-white/20" />
+          <span>滚轮缩放</span>
+          <span className="w-px h-3 bg-white/20" />
+          <span>点击钢筋查看详情</span>
+        </div>
+      </div>
+    </div>
+  );
+}

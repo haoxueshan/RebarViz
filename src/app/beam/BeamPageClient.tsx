@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import type { BeamParams, HaunchType } from '@/lib/types';
 import { BEAM_PRESETS } from '@/lib/rebar';
 import { calcBeam, calcBeamRebarRatios } from '@/lib/calc';
-import { decodeShareParams } from '@/lib/useShareUrl';
 import { validateRebar, validateStirrup, validateDimension } from '@/lib/validate';
 import { BeamCrossSection } from '@/components/CrossSection';
 import { BeamExplain } from '@/components/NotationExplain';
@@ -15,9 +15,11 @@ import { ShareButton } from '@/components/ShareButton';
 import { Field, NumField, Legend, ResetButton, SelectField, Section } from '@/components/FormControls';
 import { ViewerSkeleton } from '@/components/ViewerSkeleton';
 import { CONCRETE_GRADES, SEISMIC_GRADES } from '@/lib/anchor';
+import type { ConcreteGrade, SeismicGrade } from '@/lib/anchor';
 import { AISidebar } from '@/components/AISidebar';
 import { RebarRatioCard } from '@/components/RebarRatioCard';
 import { buildBeamContext } from '@/lib/ai-context';
+import { decodeSharedParam } from '@/lib/share-params';
 import { Sparkles, HelpCircle } from 'lucide-react';
 import { Tutorial, resetTutorial } from '@/components/Tutorial';
 import { checkBeamCompliance } from '@/lib/compliance';
@@ -52,15 +54,17 @@ const presetList = [
 const DEFAULT = { ...BEAM_PRESETS.standard };
 
 export function BeamPageClient() {
-  const [params, setParams] = useState<BeamParams>(DEFAULT);
+  const searchParams = useSearchParams();
+  const [params, setParams] = useState<BeamParams>(() => {
+    const p = searchParams.get('p');
+    const shared = decodeSharedParam<Partial<BeamParams>>(p ?? undefined);
+    if (shared && shared.b && shared.h) {
+      return { ...DEFAULT, ...shared };
+    }
+    return DEFAULT;
+  });
   const [cutPosition, setCutPosition] = useState<number | null>(null);
   const [showCut, setShowCut] = useState(false);
-  useEffect(() => {
-    const shared = decodeShareParams<BeamParams>(window.location.search);
-    if (shared && shared.b && shared.h) {
-      setParams(shared);
-    }
-  }, []);
 
   const update = (patch: Partial<BeamParams>) => setParams(p => ({ ...p, ...patch }));
   const calcResult = useMemo(() => calcBeam(params), [params]);
@@ -89,7 +93,8 @@ export function BeamPageClient() {
     setParams({ ...BEAM_PRESETS[key] });
   };
   const [dataTab, setDataTab] = useState<typeof DATA_TABS[number]['key']>('section');
-  const [showAI, setShowAI] = useState(false);
+  const aiMessage = searchParams.get('ai') || undefined;
+  const [showAI, setShowAI] = useState(!!aiMessage);
   const [showTutorial, setShowTutorial] = useState(false);
 
   // 历史记录
@@ -182,9 +187,9 @@ export function BeamPageClient() {
             </Section>
 
             <Section title="材料与构造">
-              <SelectField label="混凝土等级" value={params.concreteGrade} onChange={v => update({ concreteGrade: v as any })}
+              <SelectField label="混凝土等级" value={params.concreteGrade} onChange={v => update({ concreteGrade: v as ConcreteGrade })}
                 options={CONCRETE_GRADES.map(g => ({ value: g, label: g }))} />
-              <SelectField label="抗震等级" value={params.seismicGrade} onChange={v => update({ seismicGrade: v as any })}
+              <SelectField label="抗震等级" value={params.seismicGrade} onChange={v => update({ seismicGrade: v as SeismicGrade })}
                 options={SEISMIC_GRADES.map(g => ({ value: g, label: g }))} />
               <NumField label="保护层 (mm)" value={params.cover} onChange={v => update({ cover: v })} min={15} max={50} />
               <NumField label="梁净跨 (mm)" value={params.spanLength} onChange={v => update({ spanLength: v })} min={1000} max={15000} />
@@ -357,6 +362,7 @@ export function BeamPageClient() {
               onApplyParams={(p) => handleAIApply(p as Partial<BeamParams>)}
               context={aiContext}
               notationSlot={<BeamExplain params={params} />}
+              initialMessage={aiMessage}
             />
           </div>
         )}

@@ -103,14 +103,48 @@ export interface ShearWallParams {
   cover: number;
 }
 
-export type ComponentType = 'beam' | 'column' | 'slab' | 'joint' | 'shearwall';
+// ═══════════════════════════════════════════════════════════════════
+// 楼梯参数 (22G101-2)
+// ═══════════════════════════════════════════════════════════════════
+
+/** 楼梯类型 — 预留扩展 */
+export type StairType = 'AT' | 'BT' | 'CT' | 'DT' | 'ET';
+
+/** AT 型板式楼梯参数 */
+export interface StairParams {
+  id: string;
+  stairType: StairType;        // 楼梯类型
+  // 几何
+  stepCount: number;           // 踏步数 n
+  stepHeight: number;          // 踏步高 h (mm)
+  stepWidth: number;           // 踏步宽 b (mm)
+  slabThickness: number;       // 梯板厚度 (mm)
+  flightWidth: number;         // 梯段宽度 (mm)，垂直于行走方向
+  // 平台
+  topPlatformLen: number;      // 上平台板长 (mm)
+  botPlatformLen: number;      // 下平台板长 (mm)
+  platformThickness: number;   // 平台板厚 (mm)
+  // 梯梁（梯板端支座梁）
+  beamB: number;               // 梯梁宽 (mm)
+  beamH: number;               // 梯梁高 (mm)
+  // 配筋
+  topBar: string;              // 上部纵筋 e.g. C10@150
+  bottomBar: string;           // 下部纵筋 e.g. C12@150
+  distBar: string;             // 板板分布筋 e.g. A6@250
+  // 材料
+  concreteGrade: import('./anchor').ConcreteGrade;
+  cover: number;               // 保护层 (mm)
+}
+
+export type ComponentType = 'beam' | 'column' | 'slab' | 'joint' | 'shearwall' | 'stair';
 
 export interface RebarMeshInfo {
   type: 'top' | 'bottom' | 'stirrup' | 'leftSupport' | 'rightSupport' | 'leftSupport2' | 'rightSupport2' | 'main'
     | 'bottomX' | 'bottomY' | 'topX' | 'topY' | 'distribution'
     | 'colMain' | 'colStirrup' | 'beamTop' | 'beamBottom' | 'beamStirrup' | 'jointStirrup' | 'anchor'
     | 'vertBar' | 'horizBar' | 'boundaryMain' | 'boundaryStirrup'
-    | 'sideBar' | 'erection' | 'tieBar';
+    | 'sideBar' | 'erection' | 'tieBar'
+    | 'stairTop' | 'stairBottom' | 'stairDist' | 'stairPlatform';
   label: string;
   detail: string;
 }

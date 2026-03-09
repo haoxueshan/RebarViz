@@ -205,10 +205,31 @@ export const JOINT_JSON_SCHEMA = `{
   "cover": number (mm, 可选)
 }`;
 
+const STAIR_JSON_SCHEMA = `{
+  "componentType": "stair",
+  "stairType": "AT" | "BT" | "CT" | "DT" | "ET" (可选，默认AT),
+  "stepCount": number (踏步数，3-24),
+  "stepHeight": number (踏步高mm，100-200),
+  "stepWidth": number (踏步宽mm，220-350),
+  "slabThickness": number (梯板厚mm，80-200),
+  "flightWidth": number (梯段宽mm，800-2000),
+  "topPlatformLen": number (上平台板长mm，可选),
+  "botPlatformLen": number (下平台板长mm，可选),
+  "platformThickness": number (平台板厚mm，可选),
+  "beamB": number (梯梁宽mm，可选),
+  "beamH": number (梯梁高mm，可选),
+  "topBar": "等级+直径@间距" (上部纵筋，如C8@200),
+  "bottomBar": "等级+直径@间距" (下部纵筋，如C10@150),
+  "distBar": "等级+直径@间距" (分布筋，如A6@250),
+  "concreteGrade": "C20"-"C80" (可选),
+  "cover": number (mm, 可选)
+}`;
+
 export const JSON_SCHEMAS: Record<string, string> = {
   beam: BEAM_JSON_SCHEMA,
   column: COLUMN_JSON_SCHEMA,
   shearwall: SHEAR_WALL_JSON_SCHEMA,
   slab: SLAB_JSON_SCHEMA,
   joint: JOINT_JSON_SCHEMA,
+  stair: STAIR_JSON_SCHEMA,
 };

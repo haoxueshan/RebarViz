@@ -1,8 +1,10 @@
 'use client';
 
-import { useMemo, useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, Grid } from '@react-three/drei';
+import { Maximize2, Minimize2 } from 'lucide-react';
+import { useFullscreen } from '@/lib/useFullscreen';
 import * as THREE from 'three';
 import type { SlabParams, RebarMeshInfo } from '@/lib/types';
 import { parseSlabRebar, gradeLabel } from '@/lib/rebar';
@@ -51,35 +53,35 @@ function SlabScene({ params, selected, onSelect, concreteOpacity }: {
   const tx = params.topX ? parseSlabRebar(params.topX) : null;
   const ty = params.topY ? parseSlabRebar(params.topY) : null;
 
-  const bottomXBars = useMemo(() => {
+  const bottomXBars = (() => {
     const spacing = bx.spacing * S;
     const bars: number[] = [];
     for (let z = -SLAB_D / 2 + COVER; z <= SLAB_D / 2 - COVER; z += spacing) bars.push(z);
     return bars;
-  }, [bx.spacing]);
+  })();
 
-  const bottomYBars = useMemo(() => {
+  const bottomYBars = (() => {
     const spacing = by.spacing * S;
     const bars: number[] = [];
     for (let x = -SLAB_W / 2 + COVER; x <= SLAB_W / 2 - COVER; x += spacing) bars.push(x);
     return bars;
-  }, [by.spacing]);
+  })();
 
-  const topXBars = useMemo(() => {
+  const topXBars = (() => {
     if (!tx) return [];
     const spacing = tx.spacing * S;
     const bars: number[] = [];
     for (let z = -SLAB_D / 2 + COVER; z <= SLAB_D / 2 - COVER; z += spacing) bars.push(z);
     return bars;
-  }, [tx]);
+  })();
 
-  const topYBars = useMemo(() => {
+  const topYBars = (() => {
     if (!ty) return [];
     const spacing = ty.spacing * S;
     const bars: number[] = [];
     for (let x = -SLAB_W / 2 + COVER; x <= SLAB_W / 2 - COVER; x += spacing) bars.push(x);
     return bars;
-  }, [ty]);
+  })();
 
   const yBottomX = COVER;
   const yBottomY = COVER + bx.diameter * S;
@@ -147,6 +149,7 @@ export default function SlabViewer({ params }: { params: SlabParams }) {
   const [selected, setSelected] = useState<RebarMeshInfo | null>(null);
   const [concreteOpacity, setConcreteOpacity] = useState(0.12);
   const [cameraTarget, setCameraTarget] = useState<[number, number, number] | null>(null);
+  const { isFullscreen: fsActive, toggle: fsToggle, containerRef: fsContainerRef, containerClass: fsClass } = useFullscreen();
   const th = params.thickness * S;
 
   return (
@@ -159,7 +162,7 @@ export default function SlabViewer({ params }: { params: SlabParams }) {
         )}
       </div>
 
-      <div className="relative w-full h-[500px] lg:h-[600px] bg-surface rounded-xl border border-gray-200 overflow-hidden">
+      <div ref={fsContainerRef} className={`relative w-full bg-surface overflow-hidden ${fsClass}`}>
         {selected && <InfoTooltip info={selected} />}
 
         <div className="absolute top-3 left-3 z-10 flex items-center gap-1.5">
@@ -179,6 +182,11 @@ export default function SlabViewer({ params }: { params: SlabParams }) {
             <input type="range" min={0} max={0.4} step={0.02} value={concreteOpacity}
               onChange={e => setConcreteOpacity(parseFloat(e.target.value))} className="w-12 accent-accent" />
           </div>
+          <button onClick={fsToggle}
+            className="ml-1 p-1 rounded-md bg-white/80 backdrop-blur-sm border border-gray-200/60 text-muted hover:bg-white hover:text-primary transition-colors cursor-pointer"
+            title={fsActive ? '退出全屏 (Esc)' : '全屏显示'}>
+            {fsActive ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+          </button>
         </div>
 
         <Canvas camera={{ position: [3, 2, 3], fov: 45 }} scene={{ background: new THREE.Color('#f8fafc') }}>

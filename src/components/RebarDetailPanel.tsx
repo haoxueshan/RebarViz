@@ -2,7 +2,6 @@
 
 import { X, Info, Ruler, Weight, Anchor, BarChart3 } from 'lucide-react';
 import type { RebarMeshInfo } from '@/lib/types';
-import { gradeLabel } from '@/lib/rebar';
 
 interface RebarDetailPanelProps {
   info: RebarMeshInfo;

@@ -5,7 +5,7 @@ import type { ComponentType } from './types';
 import { JSON_SCHEMAS } from './nl-rebar-schema';
 
 const COMPONENT_NAMES: Record<ComponentType, string> = {
-  beam: '框架梁', column: '框架柱', shearwall: '剪力墙', slab: '楼板', joint: '梁柱节点',
+  beam: '框架梁', column: '框架柱', shearwall: '剪力墙', slab: '楼板', joint: '梁柱节点', stair: '楼梯',
 };
 
 const SIDEBAR_SYSTEM_BASE = `你是一位资深结构工程师和22G101图集专家。你同时具备两项能力：
@@ -27,6 +27,22 @@ const SIDEBAR_SYSTEM_BASE = `你是一位资深结构工程师和22G101图集专
 
 ## 能力二：知识问答
 当用户询问规范、构造、计算等问题时，直接用中文回答，不需要输出JSON。
+
+## 能力三：配筋分析与计算书
+当用户要求"分析当前配筋"或"生成计算书"时：
+1. 基于"当前参数"中的数据进行计算和分析
+2. 必须给出具体数值和计算过程，不能只说"满足/不满足"
+3. 计算书格式要求：
+   - 使用 Markdown 表格和公式展示
+   - 标注所引用的规范条文
+   - 给出明确的结论和改进建议
+4. 分析内容应包括（按构件类型）：
+   - 梁：配筋率(ρ/ρmin/ρmax)、锚固长度(la/laE)、箍筋间距校核、加密区范围、钢筋用量
+   - 柱：配筋率、轴压比估算、箍筋体积配箍率、纵筋间距
+   - 板：配筋率、最小配筋率校核、分布筋间距
+   - 墙：竖向/水平配筋率、边缘构件校核
+   - 节点：核心区箍筋校核、梁筋锚固长度、柱截面校核
+   - 楼梯：梯板配筋率、锚固长度、挠度估算
 
 你的专业领域：
 - 22G101-1/2/3 系列图集
@@ -159,6 +175,12 @@ const COMPONENT_EXAMPLES: Record<ComponentType, string> = {
   slab: SLAB_EXAMPLES,
   shearwall: SHEAR_WALL_EXAMPLES,
   joint: JOINT_EXAMPLES,
+  stair: `示例:
+用户: 11步楼梯，踏步高150宽280
+\`\`\`rebar-json
+{"componentType":"stair","stepCount":11,"stepHeight":150,"stepWidth":280}
+\`\`\`
+已设置为11步楼梯。`,
 };
 
 /** 构建完整 system prompt */
@@ -211,6 +233,46 @@ export const PARAM_SUGGESTIONS: Record<ComponentType, string[]> = {
     '柱500×500，梁300×600，弯锚',
     '改成直锚',
   ],
+  stair: [
+    '11步楼梯，踏步高150宽280',
+    '梯板厚改成140',
+    '下部纵筋改成C12@150',
+  ],
+};
+
+/** AI 分析建议 — 基于当前模型参数的智能分析 */
+export const ANALYSIS_SUGGESTIONS: Record<ComponentType, string[]> = {
+  beam: [
+    '分析当前配筋方案是否合理，给出优化建议',
+    '生成当前梁的配筋计算书（含配筋率、锚固长度、箍筋校核）',
+    '当前梁的钢筋用量估算和经济性分析',
+    '检查当前配筋是否满足抗震构造要求',
+  ],
+  column: [
+    '分析当前柱配筋方案的合理性',
+    '生成当前柱的配筋计算书（含配筋率、轴压比估算）',
+    '检查当前配筋是否满足抗震构造要求',
+  ],
+  shearwall: [
+    '分析当前剪力墙配筋方案',
+    '生成配筋计算书（含配筋率、边缘构件校核）',
+    '约束边缘构件长度和配筋是否满足要求',
+  ],
+  slab: [
+    '分析当前板配筋是否合理',
+    '生成配筋计算书（含配筋率、裂缝宽度估算）',
+    '板厚和配筋经济性分析',
+  ],
+  joint: [
+    '分析当前节点核心区是否满足要求',
+    '生成节点计算书（含锚固长度、核心区箍筋校核）',
+    '梁筋锚固方式是否合适',
+  ],
+  stair: [
+    '分析当前楼梯配筋方案的合理性',
+    '生成梯板配筋计算书（含配筋率、锚固长度）',
+    '梯板厚度和配筋经济性分析',
+  ],
 };
 
 /** 知识问答建议 */
@@ -237,5 +299,10 @@ export const QA_SUGGESTIONS: Record<ComponentType, string[]> = {
   joint: [
     '节点核心区箍筋要求？',
     '梁筋锚固长度怎么算？',
+  ],
+  stair: [
+    'AT型楼梯纵筋锚固要求？',
+    '梯板厚度怎么确定？',
+    '分布筋间距要求？',
   ],
 };

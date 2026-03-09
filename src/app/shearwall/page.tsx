@@ -1,5 +1,10 @@
+import { Suspense } from 'react';
 import { ShearWallPageClient } from './ShearWallPageClient';
 
 export default function ShearWallPage() {
-  return <ShearWallPageClient />;
+  return (
+    <Suspense>
+      <ShearWallPageClient />
+    </Suspense>
+  );
 }

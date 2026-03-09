@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import type { BeamParams, ColumnParams, SlabParams, JointParams, ShearWallParams } from './types';
 
 type ComponentType = 'beam' | 'column' | 'slab' | 'joint' | 'shearwall';
@@ -32,30 +32,51 @@ function getStorageKey(type: ComponentType, key: 'history' | 'favorites'): strin
   return `${STORAGE_KEYS[key]}_${type}`;
 }
 
+function parseStoredItems<T>(raw: string | null): T[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function getParamsName(type: ComponentType, params: AnyParams, fallbackName?: string): string {
+  if (fallbackName) return fallbackName;
+  if ('id' in params && typeof params.id === 'string' && params.id.trim()) {
+    return params.id;
+  }
+  return `${type}-${Date.now()}`;
+}
+
 /**
  * 历史记录和收藏 Hook
  */
 export function useHistory<T extends AnyParams>(type: ComponentType) {
-  const [history, setHistory] = useState<HistoryItem<T>[]>([]);
-  const [favorites, setFavorites] = useState<FavoriteItem<T>[]>([]);
-  const [isLoaded, setIsLoaded] = useState(false);
-
-  // 从 localStorage 加载
-  useEffect(() => {
+  const [history, setHistory] = useState<HistoryItem<T>[]>(() => {
+    if (typeof window === 'undefined') return [];
     try {
       const historyKey = getStorageKey(type, 'history');
-      const favKey = getStorageKey(type, 'favorites');
-      
       const savedHistory = localStorage.getItem(historyKey);
-      const savedFavorites = localStorage.getItem(favKey);
-      
-      if (savedHistory) setHistory(JSON.parse(savedHistory));
-      if (savedFavorites) setFavorites(JSON.parse(savedFavorites));
+      return parseStoredItems<HistoryItem<T>>(savedHistory);
     } catch (e) {
       console.warn('Failed to load history from localStorage:', e);
+      return [];
     }
-    setIsLoaded(true);
-  }, [type]);
+  });
+  const [favorites, setFavorites] = useState<FavoriteItem<T>[]>(() => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const favKey = getStorageKey(type, 'favorites');
+      const savedFavorites = localStorage.getItem(favKey);
+      return parseStoredItems<FavoriteItem<T>>(savedFavorites);
+    } catch (e) {
+      console.warn('Failed to load favorites from localStorage:', e);
+      return [];
+    }
+  });
+  const isLoaded = true;
 
   // 保存到 localStorage
   const saveToStorage = useCallback((items: HistoryItem<T>[], key: 'history' | 'favorites') => {
@@ -85,7 +106,7 @@ export function useHistory<T extends AnyParams>(type: ComponentType) {
         id: generateId(),
         type,
         params,
-        name: name || (params as any).id || `${type}-${Date.now()}`,
+        name: getParamsName(type, params, name),
         timestamp: Date.now(),
       };
       
@@ -108,7 +129,7 @@ export function useHistory<T extends AnyParams>(type: ComponentType) {
         id: generateId(),
         type,
         params,
-        name: name || (params as any).id || `${type}-${Date.now()}`,
+        name: getParamsName(type, params, name),
         timestamp: Date.now(),
         note,
       };

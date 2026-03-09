@@ -64,7 +64,7 @@ function beamSchemaToParams(s: BeamSchema): Partial<BeamParams> {
   if (s.leftSupportRebar) p.leftSupport = rebarSpecToNotation(s.leftSupportRebar);
   if (s.rightSupportRebar) p.rightSupport = rebarSpecToNotation(s.rightSupportRebar);
   if (s.sideBar) {
-    const prefix = (s.sideBar as any).prefix || 'G';
+    const prefix = s.sideBar.prefix || 'G';
     p.sideBar = `${prefix}${s.sideBar.count}${gradeLetter(s.sideBar.grade)}${s.sideBar.diameter}`;
   }
   if (s.tieBar) {

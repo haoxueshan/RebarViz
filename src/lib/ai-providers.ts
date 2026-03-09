@@ -9,6 +9,7 @@ export interface AIProvider {
   baseUrl: string;
   defaultModel: string;
   models: string[];
+  visionModel?: string; // model that supports image input
   envKey: string; // env variable name for API key
 }
 
@@ -26,7 +27,8 @@ export const AI_PROVIDERS: AIProvider[] = [
     name: '通义千问 Qwen',
     baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     defaultModel: 'qwen-plus',
-    models: ['qwen-turbo', 'qwen-plus', 'qwen-max'],
+    models: ['qwen-turbo', 'qwen-plus', 'qwen-max', 'qwen-vl-plus'],
+    visionModel: 'qwen-vl-plus',
     envKey: 'QWEN_API_KEY',
   },
   {
@@ -67,7 +69,12 @@ export const SYSTEM_PROMPT = `你是一位资深的结构工程师和22G101图�
 - 箍筋加密区：max(2h, 500mm)
 - 支座负筋：第一排 ln/3，第二排 ln/4`;
 
+/** Content part for multimodal messages */
+export type ContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } };
+
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
-  content: string;
+  content: string | ContentPart[];
 }

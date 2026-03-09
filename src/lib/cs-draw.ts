@@ -295,7 +295,6 @@ export function drawCoverDim(
   ctx.setLineDash([2, 2]);
 
   // 水平保护层线
-  const y1 = sectionBottom;
   const y2 = sectionBottom - coverPx;
   ctx.beginPath();
   ctx.moveTo(sectionLeft - 6, y2);

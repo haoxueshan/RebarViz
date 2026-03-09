@@ -1,18 +1,20 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
+import { useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import type { JointParams } from '@/lib/types';
 import { JOINT_PRESETS } from '@/lib/rebar';
-import { decodeShareParams } from '@/lib/useShareUrl';
 import { validateRebar, validateStirrup, validateDimension } from '@/lib/validate';
 import { JointExplain } from '@/components/NotationExplain';
 import { ShareButton } from '@/components/ShareButton';
 import { Field, NumField, Legend, ResetButton, SelectField, Section } from '@/components/FormControls';
 import { ViewerSkeleton } from '@/components/ViewerSkeleton';
 import { CONCRETE_GRADES, SEISMIC_GRADES } from '@/lib/anchor';
+import type { ConcreteGrade, SeismicGrade } from '@/lib/anchor';
 import { AISidebar } from '@/components/AISidebar';
 import { buildJointContext } from '@/lib/ai-context';
+import { decodeSharedParam } from '@/lib/share-params';
 import { Sparkles } from 'lucide-react';
 
 const JointViewer = dynamic(() => import('@/components/JointViewer'), {
@@ -29,13 +31,17 @@ const presetList = [
 const DEFAULT = { ...JOINT_PRESETS.middleBent };
 
 export function JointPageClient() {
-  const [params, setParams] = useState<JointParams>(DEFAULT);
-  const [showAI, setShowAI] = useState(false);
-
-  useEffect(() => {
-    const shared = decodeShareParams<JointParams>(window.location.search);
-    if (shared && shared.colB) setParams(shared);
-  }, []);
+  const searchParams = useSearchParams();
+  const [params, setParams] = useState<JointParams>(() => {
+    const p = searchParams.get('p');
+    const shared = decodeSharedParam<Partial<JointParams>>(p ?? undefined);
+    if (shared && shared.colB) {
+      return { ...DEFAULT, ...shared };
+    }
+    return DEFAULT;
+  });
+  const aiMessage = searchParams.get('ai') || undefined;
+  const [showAI, setShowAI] = useState(!!aiMessage);
 
   const update = (patch: Partial<JointParams>) => setParams(p => ({ ...p, ...patch }));
   const aiContext = useMemo(() => buildJointContext(params), [params]);
@@ -105,9 +111,9 @@ export function JointPageClient() {
             </div>
 
             <Section title="材料与构造">
-              <SelectField label="混凝土等级" value={params.concreteGrade} onChange={v => update({ concreteGrade: v as any })}
+              <SelectField label="混凝土等级" value={params.concreteGrade} onChange={v => update({ concreteGrade: v as ConcreteGrade })}
                 options={CONCRETE_GRADES.map(g => ({ value: g, label: g }))} />
-              <SelectField label="抗震等级" value={params.seismicGrade} onChange={v => update({ seismicGrade: v as any })}
+              <SelectField label="抗震等级" value={params.seismicGrade} onChange={v => update({ seismicGrade: v as SeismicGrade })}
                 options={SEISMIC_GRADES.map(g => ({ value: g, label: g }))} />
               <NumField label="保护层 (mm)" value={params.cover} onChange={v => update({ cover: v })} min={15} max={50} />
             </Section>
@@ -158,6 +164,7 @@ export function JointPageClient() {
               onApplyParams={(p) => update(p as Partial<JointParams>)}
               context={aiContext}
               notationSlot={<JointExplain params={params} />}
+              initialMessage={aiMessage}
             />
           </div>
         )}

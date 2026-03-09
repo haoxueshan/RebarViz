@@ -5,18 +5,18 @@ import { Send, Trash2, ChevronDown, ChevronRight, Loader2, AlertCircle, Sparkles
 import { AI_PROVIDERS } from '@/lib/ai-providers';
 import type { ChatMessage } from '@/lib/ai-providers';
 import { getApiKey, getApiKeys } from '@/lib/api-keys';
-import type { ComponentType, BeamParams, ColumnParams, SlabParams, JointParams, ShearWallParams } from '@/lib/types';
+import type { ComponentType, BeamParams, ColumnParams, SlabParams, JointParams, ShearWallParams, StairParams } from '@/lib/types';
 import { parseAIResponse } from '@/lib/nl-rebar-parser';
 import { mapSchemaToParams } from '@/lib/nl-rebar-mapper';
 import { formatSchemaPreview } from '@/lib/nl-rebar-prompt';
-import { buildSidebarSystemPrompt, PARAM_SUGGESTIONS, QA_SUGGESTIONS } from '@/lib/ai-sidebar-prompt';
+import { buildSidebarSystemPrompt, PARAM_SUGGESTIONS, QA_SUGGESTIONS, ANALYSIS_SUGGESTIONS } from '@/lib/ai-sidebar-prompt';
 import { tryParseNotation } from '@/lib/notation-parser';
 import { checkCompliance, type ComplianceResult } from '@/lib/compliance';
 import Link from 'next/link';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-type AnyParams = BeamParams | ColumnParams | SlabParams | JointParams | ShearWallParams;
+type AnyParams = BeamParams | ColumnParams | SlabParams | JointParams | ShearWallParams | StairParams;
 
 interface AISidebarProps {
   componentType: ComponentType;
@@ -24,6 +24,7 @@ interface AISidebarProps {
   onApplyParams: (partial: Partial<AnyParams>) => void;
   context: string;
   notationSlot?: ReactNode;
+  initialMessage?: string; // 从首页跳转携带的 AI 消息，自动发送
 }
 
 /** rebar-json 块检测正则 */
@@ -109,7 +110,7 @@ const MarkdownContent = memo(function MarkdownContent({ content }: { content: st
   );
 });
 
-export function AISidebar({ componentType, currentParams, onApplyParams, context, notationSlot }: AISidebarProps) {
+export function AISidebar({ componentType, currentParams, onApplyParams, context, notationSlot, initialMessage }: AISidebarProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -154,6 +155,17 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
       inputRef.current.focus();
     }
   }, []);
+
+  // Auto-send initialMessage from homepage redirect
+  const initialSentRef = useRef(false);
+  useEffect(() => {
+    if (initialMessage && !initialSentRef.current && hasAnyKey) {
+      initialSentRef.current = true;
+      // Small delay to ensure component is fully mounted
+      const timer = setTimeout(() => sendMessage(initialMessage), 300);
+      return () => clearTimeout(timer);
+    }
+  }, [initialMessage, hasAnyKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Run compliance check after params applied */
   const runComplianceCheck = useCallback((mergedParams: AnyParams): ComplianceResult[] => {
@@ -211,7 +223,7 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
         ],
         stream: true,
         temperature: 0.3,
-        max_tokens: 2048,
+        max_tokens: 4096,
       }),
       signal: controller.signal,
     });
@@ -392,6 +404,7 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
   const hasAppliedParams = Object.values(applyResults).some(r => r.success);
   const paramChips = PARAM_SUGGESTIONS[componentType];
   const qaChips = QA_SUGGESTIONS[componentType];
+  const analysisChips = ANALYSIS_SUGGESTIONS[componentType];
 
   return (
     <div className="bg-white rounded-xl border border-gray-100 shadow-sm flex flex-col h-[calc(100vh-6rem)] sticky top-4">
@@ -520,6 +533,22 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
                         key={i}
                         onClick={() => sendMessage(q)}
                         className="px-2.5 py-1.5 text-[11px] text-gray-600 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer leading-tight"
+                      >
+                        {q}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Analysis suggestion chips */}
+                <div className="space-y-1.5">
+                  <p className="text-[11px] text-muted font-medium">🔍 智能分析：</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {analysisChips.map((q, i) => (
+                      <button
+                        key={i}
+                        onClick={() => sendMessage(q)}
+                        className="px-2.5 py-1.5 text-[11px] text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition-colors cursor-pointer leading-tight"
                       >
                         {q}
                       </button>

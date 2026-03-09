@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
+import { useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import type { SlabParams } from '@/lib/types';
 import { SLAB_PRESETS } from '@/lib/rebar';
 import { calcSlab } from '@/lib/calc';
-import { decodeShareParams } from '@/lib/useShareUrl';
 import { validateSlabRebar, validateDimension } from '@/lib/validate';
 import { SlabCrossSection } from '@/components/CrossSection';
 import { SlabExplain } from '@/components/NotationExplain';
@@ -14,8 +14,10 @@ import { ShareButton } from '@/components/ShareButton';
 import { Field, NumField, Legend, ResetButton, SelectField, Section } from '@/components/FormControls';
 import { ViewerSkeleton } from '@/components/ViewerSkeleton';
 import { CONCRETE_GRADES } from '@/lib/anchor';
+import type { ConcreteGrade } from '@/lib/anchor';
 import { AISidebar } from '@/components/AISidebar';
 import { buildSlabContext } from '@/lib/ai-context';
+import { decodeSharedParam } from '@/lib/share-params';
 import { Sparkles } from 'lucide-react';
 
 const DATA_TABS = [
@@ -37,14 +39,18 @@ const presetList = [
 const DEFAULT = { ...SLAB_PRESETS.standard };
 
 export function SlabPageClient() {
-  const [params, setParams] = useState<SlabParams>(DEFAULT);
+  const searchParams = useSearchParams();
+  const [params, setParams] = useState<SlabParams>(() => {
+    const p = searchParams.get('p');
+    const shared = decodeSharedParam<Partial<SlabParams>>(p ?? undefined);
+    if (shared && shared.thickness) {
+      return { ...DEFAULT, ...shared };
+    }
+    return DEFAULT;
+  });
   const [dataTab, setDataTab] = useState<typeof DATA_TABS[number]['key']>('section');
-  const [showAI, setShowAI] = useState(false);
-
-  useEffect(() => {
-    const shared = decodeShareParams<SlabParams>(window.location.search);
-    if (shared && shared.thickness) setParams(shared);
-  }, []);
+  const aiMessage = searchParams.get('ai') || undefined;
+  const [showAI, setShowAI] = useState(!!aiMessage);
 
   const update = (patch: Partial<SlabParams>) => setParams(p => ({ ...p, ...patch }));
   const calcResult = useMemo(() => calcSlab(params), [params]);
@@ -92,7 +98,7 @@ export function SlabPageClient() {
             </div>
 
             <Section title="材料与构造">
-              <SelectField label="混凝土等级" value={params.concreteGrade} onChange={v => update({ concreteGrade: v as any })}
+              <SelectField label="混凝土等级" value={params.concreteGrade} onChange={v => update({ concreteGrade: v as ConcreteGrade })}
                 options={CONCRETE_GRADES.map(g => ({ value: g, label: g }))} />
               <NumField label="保护层 (mm)" value={params.cover} onChange={v => update({ cover: v })} min={10} max={30} />
             </Section>
@@ -164,6 +170,7 @@ export function SlabPageClient() {
               onApplyParams={(p) => update(p as Partial<SlabParams>)}
               context={aiContext}
               notationSlot={<SlabExplain params={params} />}
+              initialMessage={aiMessage}
             />
           </div>
         )}

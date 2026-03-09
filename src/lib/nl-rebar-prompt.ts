@@ -7,7 +7,7 @@ import { JSON_SCHEMAS, LETTER_TO_GRADE } from './nl-rebar-schema';
 import { parseRebar, parseStirrup, parseSlabRebar } from './rebar';
 
 const COMPONENT_NAMES: Record<ComponentType, string> = {
-  beam: '框架梁', column: '框架柱', shearwall: '剪力墙', slab: '楼板', joint: '梁柱节点',
+  beam: '框架梁', column: '框架柱', shearwall: '剪力墙', slab: '楼板', joint: '梁柱节点', stair: '楼梯',
 };
 
 const NL_SYSTEM_BASE = `你是一位资深结构工程师，精通22G101图集和GB50010规范。

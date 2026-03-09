@@ -7,6 +7,8 @@ import {
   RotateCcw, MousePointerClick, Scissors, BookOpen, Sparkles, Layers,
   ChevronDown, Zap, Eye, Brain,
 } from 'lucide-react';
+import { GlobalAIInput } from '@/components/GlobalAIInput';
+import { ContactModal } from '@/components/ContactAuthor';
 
 /* ─── Full-screen animated mesh background ─── */
 function MeshBackground() {
@@ -224,6 +226,8 @@ const STATS = [
 
 /* ─── Main Landing Page ─── */
 export function LandingPage() {
+  const [contactOpen, setContactOpen] = useState(false);
+
   return (
     <main className="bg-[#0a0f1a] text-white overflow-hidden">
 
@@ -261,16 +265,21 @@ export function LandingPage() {
           </Reveal>
 
           <Reveal delay={200}>
-            <p className="text-lg sm:text-xl lg:text-2xl text-gray-400 max-w-3xl mx-auto mb-14 leading-relaxed font-light">
+            <p className="text-lg sm:text-xl lg:text-2xl text-gray-400 max-w-3xl mx-auto mb-10 leading-relaxed font-light">
               输入平法标注，即时生成三维配筋模型
               <br className="hidden sm:block" />
               旋转查看构造细节，AI 助手随时答疑
             </p>
           </Reveal>
 
+          {/* Global AI Input — describe to generate */}
+          <Reveal delay={280}>
+            <GlobalAIInput />
+          </Reveal>
+
           {/* CTA — prominent */}
-          <Reveal delay={300}>
-            <div className="flex flex-col sm:flex-row gap-5 justify-center">
+          <Reveal delay={360}>
+            <div className="flex flex-col sm:flex-row gap-5 justify-center mt-10">
               <Link
                 href="/beam"
                 className="group relative inline-flex items-center justify-center gap-3 px-10 py-5 text-lg font-bold rounded-2xl overflow-hidden transition-all hover:shadow-[0_0_60px_rgba(59,130,246,0.3)] cursor-pointer bg-gradient-to-r from-blue-500 to-cyan-400 text-white"
@@ -497,12 +506,26 @@ export function LandingPage() {
               </div>
               <span className="font-bold text-lg text-gray-300">RebarViz</span>
             </div>
-            <p className="text-sm text-gray-600">
-              基于 22G101-1/2/3 系列图集 · 仅供学习参考
-            </p>
+            <div className="flex items-center gap-4">
+              <button
+                onClick={() => setContactOpen(true)}
+                className="flex items-center gap-2 text-sm text-gray-500 hover:text-green-400 transition-colors cursor-pointer"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+                </svg>
+                联系作者
+              </button>
+              <span className="text-gray-700">·</span>
+              <p className="text-sm text-gray-600">
+                基于 22G101-1/2/3 系列图集 · 仅供学习参考
+              </p>
+            </div>
           </div>
         </div>
       </footer>
+
+      {contactOpen && <ContactModal onClose={() => setContactOpen(false)} />}
     </main>
   );
 }

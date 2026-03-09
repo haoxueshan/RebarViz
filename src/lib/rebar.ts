@@ -240,3 +240,33 @@ export const JOINT_PRESETS = {
     concreteGrade: 'C30' as const, seismicGrade: '三级' as const, cover: 25,
   },
 } as const;
+
+export const STAIR_PRESETS = {
+  standard: {
+    id: 'AT-1', stairType: 'AT' as const,
+    stepCount: 11, stepHeight: 150, stepWidth: 280,
+    slabThickness: 120, flightWidth: 1200,
+    topPlatformLen: 1500, botPlatformLen: 1500, platformThickness: 120,
+    beamB: 250, beamH: 350,
+    topBar: 'C8@200', bottomBar: 'C10@150', distBar: 'A6@250',
+    concreteGrade: 'C30' as const, cover: 15,
+  },
+  wide: {
+    id: 'AT-2', stairType: 'AT' as const,
+    stepCount: 13, stepHeight: 160, stepWidth: 260,
+    slabThickness: 140, flightWidth: 1500,
+    topPlatformLen: 1800, botPlatformLen: 1800, platformThickness: 140,
+    beamB: 250, beamH: 400,
+    topBar: 'C10@200', bottomBar: 'C12@150', distBar: 'A8@250',
+    concreteGrade: 'C30' as const, cover: 20,
+  },
+  compact: {
+    id: 'AT-3', stairType: 'AT' as const,
+    stepCount: 9, stepHeight: 167, stepWidth: 260,
+    slabThickness: 100, flightWidth: 1100,
+    topPlatformLen: 1200, botPlatformLen: 1200, platformThickness: 100,
+    beamB: 200, beamH: 300,
+    topBar: 'C8@250', bottomBar: 'C10@200', distBar: 'A6@300',
+    concreteGrade: 'C25' as const, cover: 15,
+  },
+} as const;

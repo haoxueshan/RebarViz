@@ -2,8 +2,9 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Columns3, Box, LayoutGrid, GitMerge, ChevronLeft, ChevronRight, PanelLeftOpen, Settings, Wallpaper } from 'lucide-react';
+import { Columns3, Box, LayoutGrid, GitMerge, ChevronLeft, ChevronRight, PanelLeftOpen, Settings, Wallpaper, Footprints } from 'lucide-react';
 import { useState } from 'react';
+import { ContactAuthorButton } from './ContactAuthor';
 
 const NAV = [
   { href: '/beam', label: '梁 KL', desc: '框架梁', icon: Columns3 },
@@ -11,6 +12,7 @@ const NAV = [
   { href: '/shearwall', label: '墙 Q', desc: '剪力墙', icon: Wallpaper },
   { href: '/slab', label: '板 LB', desc: '楼板', icon: LayoutGrid },
   { href: '/joint', label: '节点', desc: '梁柱节点', icon: GitMerge },
+  { href: '/stair', label: '楼梯 LT', desc: 'AT型楼梯', icon: Footprints },
 ];
 
 type SidebarMode = 'expanded' | 'collapsed' | 'hidden';
@@ -106,6 +108,11 @@ export function Sidebar() {
               </div>
             )}
           </Link>
+        </div>
+
+        {/* Contact Author */}
+        <div className="px-2 pb-1">
+          <ContactAuthorButton collapsed={collapsed} />
         </div>
 
         <button

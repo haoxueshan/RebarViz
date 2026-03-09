@@ -102,6 +102,26 @@ export const SHEARWALL_CONSTRUCTION_STEPS: ConstructionStep[] = [
 // 渲染参数
 // ═══════════════════════════════════════════════════════════════════
 
+/** 楼梯上部筋 */
+export const COLOR_STAIR_TOP = '#8E44AD';
+export const COLOR_STAIR_TOP_HI = '#9B59B6';
+
+/** 楼梯下部筋 */
+export const COLOR_STAIR_BOTTOM = '#C0392B';
+export const COLOR_STAIR_BOTTOM_HI = '#E74C3C';
+
+/** 楼梯分布筋 */
+export const COLOR_STAIR_DIST = '#27AE60';
+export const COLOR_STAIR_DIST_HI = '#2ECC71';
+
+/** 楼梯施工步骤 */
+export const STAIR_CONSTRUCTION_STEPS: ConstructionStep[] = [
+  { groups: new Set(['concrete']), label: '模板+混凝土' },
+  { groups: new Set(['concrete', 'bottom']), label: '+下部纵筋' },
+  { groups: new Set(['concrete', 'bottom', 'top']), label: '+上部纵筋' },
+  { groups: new Set(['concrete', 'bottom', 'top', 'dist']), label: '+分布筋' },
+];
+
 /** 钢筋材质默认参数 */
 export const REBAR_MATERIAL = {
   roughness: 0.4,
