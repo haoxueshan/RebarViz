@@ -1,7 +1,9 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState, useCallback } from 'react';
+import { ThreeEvent } from '@react-three/fiber';
 import * as THREE from 'three';
+import type { RebarMeshInfo } from '@/lib/types';
 import { S, REBAR_MATERIAL } from '@/lib/constants';
 
 export interface BentRebarEndProps {
@@ -11,6 +13,10 @@ export interface BentRebarEndProps {
   diameter: number;
   direction: 'down' | 'up';
   color: string;
+  hiColor?: string;
+  info?: RebarMeshInfo;
+  selected?: boolean;
+  onSelect?: (info: RebarMeshInfo | null) => void;
   xDir?: number; // 1 = 向右伸入右柱, -1 = 向左伸入左柱
 }
 
@@ -25,9 +31,25 @@ export function BentRebarEnd({
   diameter,
   direction,
   color,
+  hiColor,
+  info,
+  selected = false,
+  onSelect,
   xDir = 1,
 }: BentRebarEndProps) {
+  const [hovered, setHovered] = useState(false);
   const r = (diameter * S) / 2;
+
+  const handleClick = useCallback(
+    (e: ThreeEvent<MouseEvent>) => {
+      e.stopPropagation();
+      if (onSelect && info) onSelect(selected ? null : info);
+    },
+    [selected, info, onSelect],
+  );
+
+  const activeColor = selected && hiColor ? hiColor : hovered && hiColor ? hiColor : color;
+  const scale = selected ? 1.3 : hovered ? 1.15 : 1;
 
   const curve = useMemo(() => {
     const bendRadius = Math.min(4 * diameter * S, straightLen * 0.3);
@@ -61,12 +83,27 @@ export function BentRebarEnd({
   }, [straightLen, bendLen, diameter, direction, xDir]);
 
   return (
-    <mesh position={position}>
+    <mesh
+      position={position}
+      onClick={onSelect ? handleClick : undefined}
+      onPointerOver={hiColor ? (e) => {
+        e.stopPropagation();
+        setHovered(true);
+        document.body.style.cursor = 'pointer';
+      } : undefined}
+      onPointerOut={hiColor ? () => {
+        setHovered(false);
+        document.body.style.cursor = 'auto';
+      } : undefined}
+      scale={[scale, scale, scale]}
+    >
       <tubeGeometry args={[curve, 32, r, 8, false]} />
       <meshStandardMaterial
-        color={color}
+        color={activeColor}
         roughness={REBAR_MATERIAL.roughness}
         metalness={REBAR_MATERIAL.metalness}
+        emissive={selected && hiColor ? hiColor : '#000000'}
+        emissiveIntensity={selected ? 0.3 : 0}
       />
     </mesh>
   );

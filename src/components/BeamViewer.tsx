@@ -478,12 +478,18 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
             straightLen={topAnchor.bentStraightPart * S}
             bendLen={topAnchor.bentBendPart * S}
             diameter={topR.diameter} direction="down" color={COLOR_REBAR}
+            hiColor={COLOR_REBAR_HI}
+            info={{ type: 'top', label: '上部筋弯锚', detail: topAnchorDesc }}
+            selected={isSelected('top')} onSelect={onSelect}
             xDir={-1} />
           <BentRebarEnd
             position={[TOTAL_NET / 2, bar.y, bar.z]}
             straightLen={topAnchor.bentStraightPart * S}
             bendLen={topAnchor.bentBendPart * S}
             diameter={topR.diameter} direction="down" color={COLOR_REBAR}
+            hiColor={COLOR_REBAR_HI}
+            info={{ type: 'top', label: '上部筋弯锚', detail: topAnchorDesc }}
+            selected={isSelected('top')} onSelect={onSelect}
             xDir={1} />
         </group>
       ))}
@@ -523,12 +529,18 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
             straightLen={botAnchor.bentStraightPart * S}
             bendLen={botAnchor.bentBendPart * S}
             diameter={botR.diameter} direction="up" color={COLOR_REBAR}
+            hiColor={COLOR_REBAR_HI}
+            info={{ type: 'bottom', label: '下部筋弯锚', detail: botAnchorDesc }}
+            selected={isSelected('bottom')} onSelect={onSelect}
             xDir={-1} />
           <BentRebarEnd
             position={[TOTAL_NET / 2, bar.y, bar.z]}
             straightLen={botAnchor.bentStraightPart * S}
             bendLen={botAnchor.bentBendPart * S}
             diameter={botR.diameter} direction="up" color={COLOR_REBAR}
+            hiColor={COLOR_REBAR_HI}
+            info={{ type: 'bottom', label: '下部筋弯锚', detail: botAnchorDesc }}
+            selected={isSelected('bottom')} onSelect={onSelect}
             xDir={1} />
         </group>
       ))}
@@ -567,6 +579,9 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
               straightLen={leftAnchor.bentStraightPart * S}
               bendLen={leftAnchor.bentBendPart * S}
               diameter={leftR.diameter} direction="down" color={COLOR_SUPPORT}
+              hiColor={COLOR_SUPPORT_HI}
+              info={{ type: 'leftSupport', label: '左支座负筋弯锚', detail: leftAnchorDesc }}
+              selected={isSelected('leftSupport')} onSelect={onSelect}
               xDir={-1} />
           ))}
           {leftR && leftAnchor && leftAnchor.canStraight && leftBars.map((bar, i) => (
@@ -591,6 +606,9 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
               straightLen={rightAnchor.bentStraightPart * S}
               bendLen={rightAnchor.bentBendPart * S}
               diameter={rightR.diameter} direction="down" color={COLOR_SUPPORT}
+              hiColor={COLOR_SUPPORT_HI}
+              info={{ type: 'rightSupport', label: '右支座负筋弯锚', detail: rightAnchorDesc }}
+              selected={isSelected('rightSupport')} onSelect={onSelect}
               xDir={1} />
           ))}
           {rightR && rightAnchor && rightAnchor.canStraight && rightBars.map((bar, i) => (
@@ -615,6 +633,9 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
               straightLen={leftAnchor2.bentStraightPart * S}
               bendLen={leftAnchor2.bentBendPart * S}
               diameter={leftR2.diameter} direction="down" color={COLOR_SUPPORT}
+              hiColor={COLOR_SUPPORT_HI}
+              info={{ type: 'leftSupport2', label: '左支座负筋(二排)弯锚', detail: leftAnchorDesc2 }}
+              selected={isSelected('leftSupport2')} onSelect={onSelect}
               xDir={-1} />
           ))}
           {leftR2 && leftAnchor2 && leftAnchor2.canStraight && leftBars2.map((bar, i) => (
@@ -639,6 +660,9 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
               straightLen={rightAnchor2.bentStraightPart * S}
               bendLen={rightAnchor2.bentBendPart * S}
               diameter={rightR2.diameter} direction="down" color={COLOR_SUPPORT}
+              hiColor={COLOR_SUPPORT_HI}
+              info={{ type: 'rightSupport2', label: '右支座负筋(二排)弯锚', detail: rightAnchorDesc2 }}
+              selected={isSelected('rightSupport2')} onSelect={onSelect}
               xDir={1} />
           ))}
           {rightR2 && rightAnchor2 && rightAnchor2.canStraight && rightBars2.map((bar, i) => (
@@ -785,6 +809,9 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
                   straightLen={sideAnchor.bentStraightPart * S}
                   bendLen={sideAnchor.bentBendPart * S}
                   diameter={sideDia} direction="down" color={COLOR_SIDEBAR}
+                  hiColor={COLOR_SIDEBAR_HI}
+                  info={{ type: 'sideBar', label: `${prefixLabel}弯锚`, detail: sideAnchorDesc }}
+                  selected={isSelected('sideBar')} onSelect={onSelect}
                   xDir={-1} />
               );
             }
@@ -805,6 +832,9 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
                   straightLen={sideAnchor.bentStraightPart * S}
                   bendLen={sideAnchor.bentBendPart * S}
                   diameter={sideDia} direction="down" color={COLOR_SIDEBAR}
+                  hiColor={COLOR_SIDEBAR_HI}
+                  info={{ type: 'sideBar', label: `${prefixLabel}弯锚`, detail: sideAnchorDesc }}
+                  selected={isSelected('sideBar')} onSelect={onSelect}
                   xDir={1} />
               );
             }
