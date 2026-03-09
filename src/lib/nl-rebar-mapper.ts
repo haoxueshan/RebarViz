@@ -148,6 +148,7 @@ export function mapSchemaToParams(
     case 'shearwall': return shearWallSchemaToParams(schema as ShearWallSchema);
     case 'slab': return slabSchemaToParams(schema as SlabSchema);
     case 'joint': return jointSchemaToParams(schema as JointSchema);
+    default: return {};
   }
 }
 
@@ -244,5 +245,6 @@ export function mapParamsToSchema(
     case 'shearwall': return shearWallParamsToSchema(params as ShearWallParams);
     case 'slab': return slabParamsToSchema(params as SlabParams);
     case 'joint': return jointParamsToSchema(params as JointParams);
+    default: return { componentType } as unknown as RebarGenSchema;
   }
 }

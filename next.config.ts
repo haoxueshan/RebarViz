@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
 const isProd = process.env.NODE_ENV === 'production';
-const basePath = isProd ? '/RebarViz' : '';
+const isNetlify = !!process.env.NETLIFY;
+const basePath = isProd && !isNetlify ? '/RebarViz' : '';
 
 const nextConfig: NextConfig = {
   output: 'export',

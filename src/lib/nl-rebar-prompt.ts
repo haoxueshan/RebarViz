@@ -107,6 +107,7 @@ export function formatParams(
       const jt = { middle: '中间节点', side: '边节点', corner: '角节点' };
       return `柱截面: ${p.colB}×${p.colH}mm, 柱纵筋: ${p.colMain}, 梁截面: ${p.beamB}×${p.beamH}mm, 梁上部筋: ${p.beamTop}, 梁下部筋: ${p.beamBottom}, 节点类型: ${jt[p.jointType]}, 锚固: ${p.anchorType === 'bent' ? '弯锚' : '直锚'}, 混凝土: ${p.concreteGrade}, 抗震: ${p.seismicGrade}, 保护层: ${p.cover}mm`;
     }
+    default: return '';
   }
 }
 

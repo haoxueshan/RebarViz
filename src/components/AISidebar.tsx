@@ -565,12 +565,12 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
             <div className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
               {msg.role === 'user' ? (
                 <div className="max-w-[85%] px-3 py-2 rounded-xl rounded-br-md text-sm leading-relaxed whitespace-pre-wrap bg-accent text-white">
-                  {msg.content}
+                  {typeof msg.content === 'string' ? msg.content : msg.content.map(p => p.type === 'text' ? p.text : '').join('')}
                 </div>
               ) : (
                 <div className="max-w-[95%] px-3 py-2 rounded-xl rounded-bl-md text-[13px] leading-relaxed bg-gray-50 text-gray-800 border border-gray-100">
                   {msg.content ? (
-                    <MarkdownContent content={msg.content} />
+                    <MarkdownContent content={typeof msg.content === 'string' ? msg.content : msg.content.map(p => p.type === 'text' ? p.text : '').join('')} />
                   ) : (
                     loading && i === messages.length - 1 && (
                       <span className="flex items-center gap-1.5 text-muted">
