@@ -49,7 +49,7 @@ export function BentRebarEnd({
   );
 
   const activeColor = selected && hiColor ? hiColor : hovered && hiColor ? hiColor : color;
-  const scale = selected ? 1.3 : hovered ? 1.15 : 1;
+  const radiusScale = selected ? 1.3 : hovered ? 1.15 : 1;
 
   const curve = useMemo(() => {
     const bendRadius = Math.min(4 * diameter * S, straightLen * 0.3);
@@ -95,9 +95,8 @@ export function BentRebarEnd({
         setHovered(false);
         document.body.style.cursor = 'auto';
       } : undefined}
-      scale={[scale, scale, scale]}
     >
-      <tubeGeometry args={[curve, 32, r, 8, false]} />
+      <tubeGeometry args={[curve, 32, r * radiusScale, 8, false]} />
       <meshStandardMaterial
         color={activeColor}
         roughness={REBAR_MATERIAL.roughness}
