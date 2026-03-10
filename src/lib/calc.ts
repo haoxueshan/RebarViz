@@ -1,4 +1,4 @@
-import { parseRebar, parseStirrup, parseSlabRebar, parseSideBar, parseTieBar, autoTieBar } from './rebar';
+import { parseRebar, parseRebarBottom, parseStirrup, parseSlabRebar, parseSideBar, parseTieBar, autoTieBar } from './rebar';
 import { calcSupportRebarLength, calcLlE, calcSlabBottomAnchor, calcBeamEndAnchor, FT, FY } from './anchor';
 import { calcEffectiveDepth } from './layout';
 import type { BeamParams, ColumnParams, SlabParams, ShearWallParams, StairParams } from './types';
@@ -122,7 +122,7 @@ export interface CalcResult {
 
 export function calcBeam(p: BeamParams): CalcResult {
   const top = parseRebar(p.top);
-  const bot = parseRebar(p.bottom);
+  const bot = parseRebarBottom(p.bottom);
   const stir = parseStirrup(p.stirrup);
   const leftR = p.leftSupport ? parseRebar(p.leftSupport) : null;
   const rightR = p.rightSupport ? parseRebar(p.rightSupport) : null;
@@ -166,7 +166,7 @@ export function calcBeam(p: BeamParams): CalcResult {
     ...beamEndAnchorSteps(bot.grade, bot.diameter, p.concreteGrade, p.seismicGrade, hc, cover),
     { label: '单根长度', formula: 'L = 净跨总长 + 2×锚固', substitution: `= ${totalNet} + 2×${botAnchorLen}`, result: `= ${(totalNet + 2 * botAnchorLen)} mm = ${botL.toFixed(2)} m` },
   ];
-  const botRowDesc = bot.perRow && bot.perRow.length >= 2 ? `，${bot.perRow.length}排(${bot.perRow.join('/')})` : (bot.rows && bot.rows >= 2 ? `，${bot.rows}排` : '');
+  const botRowDesc = bot.perRow && bot.perRow.length >= 2 ? `，${bot.perRow.length}排(${[...bot.perRow].reverse().join('/')})` : (bot.rows && bot.rows >= 2 ? `，${bot.rows}排` : '');
   push('下部通长筋', p.bottom, `${botL.toFixed(2)}m × ${bot.count}${botRowDesc} (${botAnchorDesc}×2)`,
     bot.grade, bot.diameter, bot.count, botL, '#C0392B', botFormula);
 
@@ -362,7 +362,7 @@ export interface BeamRatioResult {
  */
 export function calcBeamRebarRatios(p: BeamParams): BeamRatioResult {
   const top = parseRebar(p.top);
-  const bot = parseRebar(p.bottom);
+  const bot = parseRebarBottom(p.bottom);
   const stir = parseStirrup(p.stirrup);
   const cover = p.cover || 25;
   const b = p.b;
@@ -443,7 +443,7 @@ export interface BarShape {
 export function calcBarShapes(p: BeamParams): BarShape[] {
   const shapes: BarShape[] = [];
   const top = parseRebar(p.top);
-  const bot = parseRebar(p.bottom);
+  const bot = parseRebarBottom(p.bottom);
   const stir = parseStirrup(p.stirrup);
   const cover = p.cover || 25;
   const hc = p.hc || 500;

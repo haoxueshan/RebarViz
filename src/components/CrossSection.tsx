@@ -3,7 +3,7 @@
 import { useRef, useEffect, useState, useCallback, type RefObject } from 'react';
 import { Download } from 'lucide-react';
 import type { BeamParams, ColumnParams, SlabParams, ShearWallParams, StairParams } from '@/lib/types';
-import { parseRebar, parseStirrup, parseSlabRebar, parseSideBar } from '@/lib/rebar';
+import { parseRebar, parseRebarBottom, parseStirrup, parseSlabRebar, parseSideBar } from '@/lib/rebar';
 import {
   setupHiDPI, drawConcreteSection, drawRebarDot, drawRebarCross,
   drawStirrup, drawInnerTies, drawDimLine, drawCoverDim, drawLabel,
@@ -88,7 +88,7 @@ export function BeamCrossSection({ params, cutPosition }: { params: BeamParams; 
 
     // Parse
     const topR = parseRebar(params.top);
-    const botR = parseRebar(params.bottom);
+    const botR = parseRebarBottom(params.bottom);
     const stir = parseStirrup(params.stirrup);
     const leftR = params.leftSupport ? parseRebar(params.leftSupport) : null;
     const rightR = params.rightSupport ? parseRebar(params.rightSupport) : null;

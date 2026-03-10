@@ -7,7 +7,7 @@ import { Camera, Maximize2, Minimize2 } from 'lucide-react';
 import { useFullscreen } from '@/lib/useFullscreen';
 import * as THREE from 'three';
 import type { BeamParams, RebarMeshInfo } from '@/lib/types';
-import { parseRebar, parseStirrup, parseSideBar, parseTieBar, autoTieBar, tieBarToString, gradeLabel } from '@/lib/rebar';
+import { parseRebar, parseRebarBottom, parseStirrup, parseSideBar, parseTieBar, autoTieBar, tieBarToString, gradeLabel } from '@/lib/rebar';
 import { calcSupportRebarLength, calcBeamEndAnchor, calcLaE } from '@/lib/anchor';
 import { RebarDetailPanel } from './RebarDetailPanel';
 import {
@@ -196,7 +196,7 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
   }, [spanLayouts, HC, spanCount]);
 
   const topR = parseRebar(params.top);
-  const botR = parseRebar(params.bottom);
+  const botR = parseRebarBottom(params.bottom);
   const stir = parseStirrup(params.stirrup);
   const leftR = params.leftSupport ? parseRebar(params.leftSupport) : null;
   const rightR = params.rightSupport ? parseRebar(params.rightSupport) : null;
@@ -370,45 +370,50 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
     const bendR = Math.max(sideDiaS / 2 + tieDiaS, tieDiaS * 3);
     const hookLen = Math.max(10 * tieDiaS, bendR * 1.5);
 
-    // 135° 弯钩: 弯折角度 = 180° - 135° = 45°, 弧度 = 3π/4
-    // 弯钩方向: 向下弯 (Y负方向)
-    const bendAngle = Math.PI * 3 / 4; // 135° hook = 3/4 π 弯转
-    const arcSegs = 8; // 弧线离散段数
+    // 135° 弯钩: 弧转角 = 3π/4
+    // 弯钩方向: 从水平向下弯，尾端朝混凝土核心方向
+    const bendAngle = Math.PI * 3 / 4;
+    const arcSegs = 8;
 
     const pts: THREE.Vector3[] = [];
 
     // ── 左侧 135° 弯钩 ──
-    // 弯钩直线段末端(向下-45°方向)
-    const c45 = Math.SQRT1_2;
-    const leftHookEnd = new THREE.Vector3(0, -(bendR + hookLen * c45), -sideZ - bendR + hookLen * c45);
-    pts.push(leftHookEnd);
-    // 弧线: 从弯钩末端方向(向上+45°) 弯转到水平方向(+Z)
-    // 弧心在腰筋位置偏下: (0, -bendR, -sideZ)
-    const leftCx = 0, leftCy = -bendR, leftCz = -sideZ;
-    // 弧线起始角 = -3π/4 (从弯钩方向), 终止角 = 0 (到水平)
-    // 在 YZ 平面上: 角度从 -π/2 - π/4 到 0
-    const leftStartAngle = -Math.PI / 2 - Math.PI / 4;
-    for (let i = 0; i <= arcSegs; i++) {
-      const t = i / arcSegs;
-      const a = leftStartAngle + t * bendAngle;
-      pts.push(new THREE.Vector3(leftCx, leftCy + bendR * Math.sin(a), leftCz + bendR * Math.cos(a)));
+    // 22G101: 弯钩尾端应朝向混凝土核心(+Z方向)
+    // 弧心在直线段端点正下方: (0, -bendR, -sideZ)
+    // 弧从 π/2(顶部=直线段端点) 逆时针转 3π/4 到 5π/4
+    const leftCy = -bendR, leftCz = -sideZ;
+    const leftEndAngle = Math.PI / 2 + bendAngle; // 5π/4
+    const leftArcEndY = leftCy + bendR * Math.sin(leftEndAngle);
+    const leftArcEndZ = leftCz + bendR * Math.cos(leftEndAngle);
+    // 弧在末端的切线方向(逆时针): (cos(a), -sin(a))
+    const leftTailDY = Math.cos(leftEndAngle);
+    const leftTailDZ = -Math.sin(leftEndAngle);
+    pts.push(new THREE.Vector3(0, leftArcEndY + hookLen * leftTailDY, leftArcEndZ + hookLen * leftTailDZ));
+    // 弧线: 从末端(5π/4)→起点(π/2)（反向遍历保持点序从尾→头）
+    for (let i = arcSegs; i >= 0; i--) {
+      const a = Math.PI / 2 + (i / arcSegs) * bendAngle;
+      pts.push(new THREE.Vector3(0, leftCy + bendR * Math.sin(a), leftCz + bendR * Math.cos(a)));
     }
+    // 弧在 i=0 处 a=π/2: y=0, z=-sideZ，与直线段左端重合
 
     // ── 中间直线段 ──
-    pts.push(new THREE.Vector3(0, 0, -sideZ));
     pts.push(new THREE.Vector3(0, 0, sideZ));
 
     // ── 右侧 135° 弯钩 (镜像) ──
-    const rightCx = 0, rightCy = -bendR, rightCz = sideZ;
-    const rightStartAngle = 0;
+    // 弧心: (0, -bendR, +sideZ)
+    // 弧从 π/2(顶部) 顺时针转 3π/4 到 -π/4
+    const rightCy = -bendR, rightCz = sideZ;
+    const rightEndAngle = Math.PI / 2 - bendAngle; // -π/4
     for (let i = 0; i <= arcSegs; i++) {
-      const t = i / arcSegs;
-      const a = rightStartAngle - t * bendAngle; // 反方向
-      pts.push(new THREE.Vector3(rightCx, rightCy + bendR * Math.sin(a), rightCz + bendR * Math.cos(a)));
+      const a = Math.PI / 2 - (i / arcSegs) * bendAngle;
+      pts.push(new THREE.Vector3(0, rightCy + bendR * Math.sin(a), rightCz + bendR * Math.cos(a)));
     }
-    // 弯钩直线段末端
-    const rightHookEnd = new THREE.Vector3(0, -(bendR + hookLen * c45), sideZ + bendR - hookLen * c45);
-    pts.push(rightHookEnd);
+    // 弧在末端的切线方向(顺时针): (-cos(a), sin(a))
+    const rightArcEndY = rightCy + bendR * Math.sin(rightEndAngle);
+    const rightArcEndZ = rightCz + bendR * Math.cos(rightEndAngle);
+    const rightTailDY = -Math.cos(rightEndAngle);
+    const rightTailDZ = Math.sin(rightEndAngle);
+    pts.push(new THREE.Vector3(0, rightArcEndY + hookLen * rightTailDY, rightArcEndZ + hookLen * rightTailDZ));
 
     return pts;
   }, [sideInfo, params.tieBar, params.b, stir.grade, stir.diameter, stirCenterW, STIR_D]);

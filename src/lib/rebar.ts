@@ -46,6 +46,17 @@ export function parseRebar(str: string): RebarInfo {
   return { count, grade, diameter };
 }
 
+/**
+ * 解析底部钢筋: 22G101 中底部钢筋标注 (2/4) 表示上排2根、下排4根，
+ * 与上部钢筋 perRow 顺序相反。此函数自动反转 perRow，
+ * 使 perRow[0] 始终为最靠近底边（外排）的根数。
+ */
+export function parseRebarBottom(str: string): RebarInfo {
+  const r = parseRebar(str);
+  if (r.perRow && r.perRow.length >= 2) r.perRow = [...r.perRow].reverse();
+  return r;
+}
+
 // 板筋格式: "C10@150" => { grade:'C', diameter:10, spacing:150 }
 export function parseSlabRebar(str: string): { grade: string; diameter: number; spacing: number } {
   const m = str.match(/([A-Za-z])(\d+)@(\d+)/);

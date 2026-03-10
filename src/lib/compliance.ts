@@ -3,7 +3,7 @@
  * 在 AI 生成配筋参数后，自动检查是否满足规范要求
  */
 import type { BeamParams, ColumnParams, SlabParams, ShearWallParams, StairParams, ComponentType } from './types';
-import { parseRebar, parseStirrup, parseSlabRebar } from './rebar';
+import { parseRebar, parseRebarBottom, parseStirrup, parseSlabRebar } from './rebar';
 import { calcEffectiveDepth } from './layout';
 import { FT, FY } from './anchor';
 import type { SeismicGrade } from './anchor';
@@ -52,7 +52,7 @@ function minStirrupDiameter(seismicGrade: SeismicGrade): number {
 export function checkBeamCompliance(p: BeamParams): ComplianceResult[] {
   const results: ComplianceResult[] = [];
   const top = parseRebar(p.top);
-  const bot = parseRebar(p.bottom);
+  const bot = parseRebarBottom(p.bottom);
   const stir = parseStirrup(p.stirrup);
   const cover = p.cover || 25;
 
