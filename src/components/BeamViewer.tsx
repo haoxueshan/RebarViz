@@ -307,14 +307,14 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
   const leftBars = useMemo(() => {
     if (!leftR) return [];
     const range = stirCenterW - STIR_D - leftR.diameter * S;
-    return layoutBars(leftR, range, [supportBarY1, supportBarY2]);
-  }, [leftR, stirCenterW, STIR_D, supportBarY1, supportBarY2]);
+    return layoutBars(leftR, range, [supportBarY1]);
+  }, [leftR, stirCenterW, STIR_D, supportBarY1]);
 
   const rightBars = useMemo(() => {
     if (!rightR) return [];
     const range = stirCenterW - STIR_D - rightR.diameter * S;
-    return layoutBars(rightR, range, [supportBarY1, supportBarY2]);
-  }, [rightR, stirCenterW, STIR_D, supportBarY1, supportBarY2]);
+    return layoutBars(rightR, range, [supportBarY1]);
+  }, [rightR, stirCenterW, STIR_D, supportBarY1]);
 
   // 第二排支座负筋 Y 坐标: 在第一排支座筋下方
   const leftBars2 = useMemo(() => {
