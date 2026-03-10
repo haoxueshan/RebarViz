@@ -112,13 +112,25 @@ export function BeamCrossSection({ params, cutPosition }: { params: BeamParams; 
     const stirH = dh - cover;
     drawStirrup(ctx, stirX, stirY, stirW, stirH, '#27AE60', 8);
 
-    // ── Top rebars (through bars) ──
+    // ── Top rebars (through bars, multi-row support) ──
     const topY = sectionTop + cover;
-    const topSpacing = innerW / Math.max(topR.count - 1, 1);
-    for (let i = 0; i < topR.count; i++) {
-      const x = sectionLeft + cover + i * topSpacing;
-      drawRebarDot(ctx, x, topY, Math.max(topR.diameter * scale / 2, 4), '#C0392B');
+    const topRowCount = topR.rows || (topR.perRow ? topR.perRow.length : 1);
+    const topPerRow: number[] = topR.perRow && topR.perRow.length >= 2
+      ? topR.perRow
+      : topRowCount >= 2
+        ? (() => { const pr: number[] = []; let rem = topR.count; for (let r = 0; r < topRowCount; r++) { const n = Math.ceil(rem / (topRowCount - r)); pr.push(n); rem -= n; } return pr; })()
+        : [topR.count];
+    const topClearV = Math.max(topR.diameter * scale, 25 * scale);
+    for (let row = 0; row < topPerRow.length; row++) {
+      const rowY = topY + row * (topR.diameter * scale + topClearV);
+      const rowCount = topPerRow[row];
+      const rowSpacing = innerW / Math.max(rowCount - 1, 1);
+      for (let i = 0; i < rowCount; i++) {
+        const x = sectionLeft + cover + i * rowSpacing;
+        drawRebarDot(ctx, x, rowY, Math.max(topR.diameter * scale / 2, 4), '#C0392B');
+      }
     }
+    const topLastRowY = topY + (topPerRow.length - 1) * (topR.diameter * scale + topClearV);
 
     // ── Support rebars (1st row) ──
     const showLeftSupport = hasCut ? inLeftSupport : !!leftR;
@@ -126,7 +138,7 @@ export function BeamCrossSection({ params, cutPosition }: { params: BeamParams; 
     const supportR = showLeftSupport ? leftR : showRightSupport ? rightR : null;
 
     if (supportR && (showLeftSupport || showRightSupport)) {
-      const supportY = topY + topR.diameter * scale * 1.2;
+      const supportY = topLastRowY + topR.diameter * scale * 1.2;
       const supportSpacing = innerW / Math.max(supportR.count - 1, 1);
       for (let i = 0; i < supportR.count; i++) {
         const x = sectionLeft + cover + i * supportSpacing;
@@ -141,7 +153,7 @@ export function BeamCrossSection({ params, cutPosition }: { params: BeamParams; 
     // ── Support rebars (2nd row) ──
     const support2R = showLeftSupport ? leftR2 : showRightSupport ? rightR2 : null;
     if (support2R && supportR) {
-      const row2Y = topY + topR.diameter * scale * 1.2 + supportR.diameter * scale * 1.2;
+      const row2Y = topLastRowY + topR.diameter * scale * 1.2 + supportR.diameter * scale * 1.2;
       const row2Spacing = innerW / Math.max(support2R.count - 1, 1);
       for (let i = 0; i < support2R.count; i++) {
         const x = sectionLeft + cover + i * row2Spacing;
@@ -151,12 +163,23 @@ export function BeamCrossSection({ params, cutPosition }: { params: BeamParams; 
       drawLabel(ctx, row2Label, sectionRight + 8, row2Y + 4, '#A569BD', LW);
     }
 
-    // ── Bottom rebars ──
+    // ── Bottom rebars (multi-row support) ──
     const botY = sectionBottom - cover;
-    const botSpacing = innerW / Math.max(botR.count - 1, 1);
-    for (let i = 0; i < botR.count; i++) {
-      const x = sectionLeft + cover + i * botSpacing;
-      drawRebarDot(ctx, x, botY, Math.max(botR.diameter * scale / 2, 4), '#C0392B');
+    const botRowCount = botR.rows || (botR.perRow ? botR.perRow.length : 1);
+    const botPerRow: number[] = botR.perRow && botR.perRow.length >= 2
+      ? botR.perRow
+      : botRowCount >= 2
+        ? (() => { const pr: number[] = []; let rem = botR.count; for (let r = 0; r < botRowCount; r++) { const n = Math.ceil(rem / (botRowCount - r)); pr.push(n); rem -= n; } return pr; })()
+        : [botR.count];
+    const botClearV = Math.max(botR.diameter * scale, 25 * scale);
+    for (let row = 0; row < botPerRow.length; row++) {
+      const rowY = botY - row * (botR.diameter * scale + botClearV);
+      const rowCount = botPerRow[row];
+      const rowSpacing = innerW / Math.max(rowCount - 1, 1);
+      for (let i = 0; i < rowCount; i++) {
+        const x = sectionLeft + cover + i * rowSpacing;
+        drawRebarDot(ctx, x, rowY, Math.max(botR.diameter * scale / 2, 4), '#C0392B');
+      }
     }
 
     // ── Side bars (腰筋/抗扭筋) ──

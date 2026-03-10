@@ -5,8 +5,9 @@ export interface ValidationError {
 
 export function validateRebar(str: string, fieldName: string): ValidationError | null {
   if (!str.trim()) return null; // empty is ok for optional fields
-  const m = str.match(/^(\d+)([A-Za-z])(\d+)$/);
-  if (!m) return { field: fieldName, message: '格式应为: 数量+等级+直径，如 2C25、4C20' };
+  // 支持多排格式: 6C25(2) 或 5C25(3/2)
+  const m = str.match(/^(\d+)([A-Za-z])(\d+)(?:\((\d+)(?:\/(\d+))?\))?$/);
+  if (!m) return { field: fieldName, message: '格式应为: 数量+等级+直径，如 2C25、6C25(2)、5C25(3/2)' };
   const count = parseInt(m[1]);
   const diameter = parseInt(m[3]);
   if (count < 1 || count > 30) return { field: fieldName, message: '钢筋数量应在 1~30 之间' };
@@ -14,6 +15,19 @@ export function validateRebar(str: string, fieldName: string): ValidationError |
   if (!validDiameters.includes(diameter)) return { field: fieldName, message: `直径应为标准规格: ${validDiameters.join('、')}` };
   const grade = m[2].toUpperCase();
   if (!['A', 'B', 'C', 'D', 'E'].includes(grade)) return { field: fieldName, message: '等级应为 A~E (A=HPB300, C=HRB400)' };
+  // 多排校验
+  if (m[4]) {
+    if (m[5]) {
+      // 格式 (n1/n2): 检查总数匹配
+      const r1 = parseInt(m[4]), r2 = parseInt(m[5]);
+      if (r1 + r2 !== count) return { field: fieldName, message: `每排根数之和 ${r1}+${r2}=${r1 + r2} 应等于总数 ${count}` };
+    } else {
+      // 格式 (n): 排数
+      const rows = parseInt(m[4]);
+      if (rows < 2 || rows > 4) return { field: fieldName, message: '排数应在 2~4 之间' };
+      if (rows > count) return { field: fieldName, message: `排数 ${rows} 不应大于钢筋总数 ${count}` };
+    }
+  }
   return null;
 }
 

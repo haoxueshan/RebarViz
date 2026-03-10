@@ -11,6 +11,8 @@ export interface RebarSpec {
   count: number;
   grade: string;    // "HPB300" | "HRB335" | "HRB400" | "RRB400" | "HRBF400"
   diameter: number; // mm
+  rows?: number;    // 排数，如 6C25(2) 表示2排
+  perRow?: number[]; // 每排根数，如 [4,2] 表示第一排4根第二排2根
 }
 
 /** 分布筋（板筋/墙筋）: HRB400直径10间距200 */

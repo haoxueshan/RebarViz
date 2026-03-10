@@ -87,6 +87,68 @@ export function layoutBars(
 }
 
 /**
+ * 计算多排钢筋合力点到截面近边缘的距离 as (mm)
+ * 单排时 as = cover + stirDia + d/2
+ * 多排时按各排面积加权: as = Σ(Asi × asi) / ΣAsi
+ * @param h 截面高度 (mm)
+ * @param cover 保护层厚度 (mm)
+ * @param stirDia 箍筋直径 (mm)
+ * @param rebarDia 纵筋直径 (mm)
+ * @param count 纵筋总根数
+ * @param rows 排数 (可选)
+ * @param perRow 每排根数 (可选)
+ * @returns { as_mm, h0 } 合力点距离和有效高度 (mm)
+ */
+export function calcEffectiveDepth(
+  h: number,
+  cover: number,
+  stirDia: number,
+  rebarDia: number,
+  count: number,
+  rows?: number,
+  perRow?: number[],
+): { as_mm: number; h0: number } {
+  const rowCount = rows || (perRow && perRow.length >= 2 ? perRow.length : 1);
+
+  if (rowCount <= 1) {
+    const as_mm = cover + stirDia + rebarDia / 2;
+    return { as_mm, h0: h - as_mm };
+  }
+
+  // 计算每排根数
+  let pr: number[];
+  if (perRow && perRow.length >= 2) {
+    pr = perRow;
+  } else {
+    pr = [];
+    let rem = count;
+    for (let i = 0; i < rowCount; i++) {
+      const n = Math.ceil(rem / (rowCount - i));
+      pr.push(n);
+      rem -= n;
+    }
+  }
+
+  // 各排到近边缘距离 asi (mm)
+  // 第一排: cover + stirDia + d/2
+  // 第 i 排: 前一排 + d/2 + clearV + d/2 (clearV = max(d, 25))
+  const clearV = Math.max(rebarDia, 25);
+  const rowDistances: number[] = [cover + stirDia + rebarDia / 2];
+  for (let i = 1; i < pr.length; i++) {
+    rowDistances.push(rowDistances[i - 1] + rebarDia / 2 + clearV + rebarDia / 2);
+  }
+
+  // 加权平均: as = Σ(ni × asi) / Σni  (同直径时面积比等于根数比)
+  let sumNA = 0, sumN = 0;
+  for (let i = 0; i < pr.length; i++) {
+    sumNA += pr[i] * rowDistances[i];
+    sumN += pr[i];
+  }
+  const as_mm = sumNA / sumN;
+  return { as_mm, h0: h - as_mm };
+}
+
+/**
  * 计算箍筋中心线尺寸
  * GB50010: 保护层 = 混凝土表面到最近钢筋（箍筋）外皮的距离
  * @param b 截面宽度 (mm)

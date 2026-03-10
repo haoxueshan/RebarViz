@@ -12,9 +12,15 @@ function gradeLetter(grade: string): string {
   return GRADE_TO_LETTER[grade] || GRADE_TO_LETTER[grade.toUpperCase()] || 'C';
 }
 
-/** {count:4, grade:"HRB400", diameter:25} → "4C25" */
+/** {count:4, grade:"HRB400", diameter:25} → "4C25", {count:6, ..., rows:2} → "6C25(2)", {count:5, ..., perRow:[3,2]} → "5C25(3/2)" */
 export function rebarSpecToNotation(spec: RebarSpec): string {
-  return `${spec.count}${gradeLetter(spec.grade)}${spec.diameter}`;
+  let base = `${spec.count}${gradeLetter(spec.grade)}${spec.diameter}`;
+  if (spec.perRow && spec.perRow.length >= 2) {
+    base += `(${spec.perRow.join('/')})`;
+  } else if (spec.rows && spec.rows >= 2) {
+    base += `(${spec.rows})`;
+  }
+  return base;
 }
 
 /** {grade:"HRB400", diameter:10, spacing:200} → "C10@200" */
@@ -39,7 +45,10 @@ function gradeFullName(letter: string): string {
 
 export function notationToRebarSpec(notation: string): RebarSpec {
   const info = parseRebar(notation);
-  return { count: info.count, grade: gradeFullName(info.grade), diameter: info.diameter };
+  const spec: RebarSpec = { count: info.count, grade: gradeFullName(info.grade), diameter: info.diameter };
+  if (info.rows && info.rows >= 2) spec.rows = info.rows;
+  if (info.perRow && info.perRow.length >= 2) spec.perRow = info.perRow;
+  return spec;
 }
 
 export function notationToDistributedSpec(notation: string): DistributedRebarSpec {

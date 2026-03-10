@@ -1,5 +1,6 @@
 import { parseRebar, parseStirrup, parseSlabRebar, parseSideBar, parseTieBar, autoTieBar } from './rebar';
 import { calcSupportRebarLength, calcLlE, calcSlabBottomAnchor, calcBeamEndAnchor, FT, FY } from './anchor';
+import { calcEffectiveDepth } from './layout';
 import type { BeamParams, ColumnParams, SlabParams, ShearWallParams, StairParams } from './types';
 
 const WEIGHT_PER_M: Record<number, number> = {
@@ -151,7 +152,8 @@ export function calcBeam(p: BeamParams): CalcResult {
     ...beamEndAnchorSteps(top.grade, top.diameter, p.concreteGrade, p.seismicGrade, hc, cover),
     { label: '单根长度', formula: 'L = 净跨总长 + 2×锚固', substitution: `= ${totalNet} + 2×${topAnchorLen}`, result: `= ${(totalNet + 2 * topAnchorLen)} mm = ${topL.toFixed(2)} m` },
   ];
-  push('上部通长筋', p.top, `${topL.toFixed(2)}m × ${top.count} (${topAnchorDesc}×2)`,
+  const topRowDesc = top.perRow && top.perRow.length >= 2 ? `，${top.perRow.length}排(${top.perRow.join('/')})` : (top.rows && top.rows >= 2 ? `，${top.rows}排` : '');
+  push('上部通长筋', p.top, `${topL.toFixed(2)}m × ${top.count}${topRowDesc} (${topAnchorDesc}×2)`,
     top.grade, top.diameter, top.count, topL, '#C0392B', topFormula);
 
   // 下部通长筋 (含两端锚固, 按22G101-1)
@@ -164,7 +166,8 @@ export function calcBeam(p: BeamParams): CalcResult {
     ...beamEndAnchorSteps(bot.grade, bot.diameter, p.concreteGrade, p.seismicGrade, hc, cover),
     { label: '单根长度', formula: 'L = 净跨总长 + 2×锚固', substitution: `= ${totalNet} + 2×${botAnchorLen}`, result: `= ${(totalNet + 2 * botAnchorLen)} mm = ${botL.toFixed(2)} m` },
   ];
-  push('下部通长筋', p.bottom, `${botL.toFixed(2)}m × ${bot.count} (${botAnchorDesc}×2)`,
+  const botRowDesc = bot.perRow && bot.perRow.length >= 2 ? `，${bot.perRow.length}排(${bot.perRow.join('/')})` : (bot.rows && bot.rows >= 2 ? `，${bot.rows}排` : '');
+  push('下部通长筋', p.bottom, `${botL.toFixed(2)}m × ${bot.count}${botRowDesc} (${botAnchorDesc}×2)`,
     bot.grade, bot.diameter, bot.count, botL, '#C0392B', botFormula);
 
   // 支座负筋 (伸入跨内 ln/3 + 锚固)
@@ -372,9 +375,11 @@ export function calcBeamRebarRatios(p: BeamParams): BeamRatioResult {
   const AsTop = top.count * Math.PI * top.diameter * top.diameter / 4;
   const AsBot = bot.count * Math.PI * bot.diameter * bot.diameter / 4;
 
-  // h0 = h - cover - stirrupDia - d/2 (第一排主筋中心到截面受压边缘)
-  const h0Top = p.h - cover - stir.diameter - top.diameter / 2;
-  const h0Bot = p.h - cover - stir.diameter - bot.diameter / 2;
+  // h0: 多排时按合力点加权计算，单排时 h0 = h - cover - stirDia - d/2
+  const { h0: h0Top } = calcEffectiveDepth(p.h, cover, stir.diameter, top.diameter, top.count, top.rows, top.perRow);
+  const { h0: h0Bot } = calcEffectiveDepth(p.h, cover, stir.diameter, bot.diameter, bot.count, bot.rows, bot.perRow);
+  const topIsMultiRow = (top.rows && top.rows >= 2) || (top.perRow && top.perRow.length >= 2);
+  const botIsMultiRow = (bot.rows && bot.rows >= 2) || (bot.perRow && bot.perRow.length >= 2);
 
   // ρ = As / (b × h0)
   const rhoTop = AsTop / (b * h0Top);
@@ -391,17 +396,21 @@ export function calcBeamRebarRatios(p: BeamParams): BeamRatioResult {
     return 'ok';
   }
 
-  function ratioSteps(pos: string, n: number, d: number, fy: number, h0: number, As: number, rho: number, rhoMin: number): FormulaStep[] {
+  function ratioSteps(pos: string, n: number, d: number, fy: number, h0: number, As: number, rho: number, rhoMin: number, isMultiRow: boolean): FormulaStep[] {
+    const h0Formula = isMultiRow ? 'h₀ = h - as (多排合力点加权)' : 'h₀ = h - c - d_stir - d/2';
+    const h0Sub = isMultiRow
+      ? `多排钢筋，合力点距边缘 as=${(p.h - h0).toFixed(0)}mm`
+      : `= ${p.h} - ${cover} - ${stir.diameter} - ${d}/2`;
     return [
       { label: `${pos}钢筋面积`, formula: 'As = n × π × d² / 4', substitution: `= ${n} × π × ${d}² / 4`, result: `= ${As.toFixed(0)} mm²` },
-      { label: '有效高度', formula: 'h₀ = h - c - d_stir - d/2', substitution: `= ${p.h} - ${cover} - ${stir.diameter} - ${d}/2`, result: `= ${h0.toFixed(0)} mm` },
+      { label: '有效高度', formula: h0Formula, substitution: h0Sub, result: `= ${h0.toFixed(0)} mm` },
       { label: '配筋率', formula: 'ρ = As / (b × h₀)', substitution: `= ${As.toFixed(0)} / (${b} × ${h0.toFixed(0)})`, result: `= ${(rho * 100).toFixed(2)}%` },
       { label: '最小配筋率', formula: 'ρmin = max(0.2%, 0.45ft/fy)', substitution: `= max(0.2%, 0.45×${ft}/${fy})`, result: `= ${(rhoMin * 100).toFixed(2)}%` },
     ];
   }
 
-  const topSteps = ratioSteps('上部', top.count, top.diameter, fyTop, h0Top, AsTop, rhoTop, rhoMinTop);
-  const botSteps = ratioSteps('下部', bot.count, bot.diameter, fyBot, h0Bot, AsBot, rhoBot, rhoMinBot);
+  const topSteps = ratioSteps('上部', top.count, top.diameter, fyTop, h0Top, AsTop, rhoTop, rhoMinTop, !!topIsMultiRow);
+  const botSteps = ratioSteps('下部', bot.count, bot.diameter, fyBot, h0Bot, AsBot, rhoBot, rhoMinBot, !!botIsMultiRow);
 
   return {
     top: { As: AsTop, h0: h0Top, rho: rhoTop, rhoMin: rhoMinTop, rhoMax, status: status(rhoTop, rhoMinTop), formulaSteps: topSteps },

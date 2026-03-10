@@ -4,6 +4,7 @@
  */
 import type { BeamParams, ColumnParams, SlabParams, ShearWallParams, StairParams, ComponentType } from './types';
 import { parseRebar, parseStirrup, parseSlabRebar } from './rebar';
+import { calcEffectiveDepth } from './layout';
 import { FT, FY } from './anchor';
 import type { SeismicGrade } from './anchor';
 
@@ -59,9 +60,9 @@ export function checkBeamCompliance(p: BeamParams): ComplianceResult[] {
   const fyTop = FY[top.grade] || 360;
   const fyBot = FY[bot.grade] || 360;
 
-  // 1. 配筋率校验 GB50010 §8.5.1
-  const h0Top = p.h - cover - stir.diameter - top.diameter / 2;
-  const h0Bot = p.h - cover - stir.diameter - bot.diameter / 2;
+  // 1. 配筋率校验 GB50010 §8.5.1 (多排钢筋取合力点)
+  const { h0: h0Top } = calcEffectiveDepth(p.h, cover, stir.diameter, top.diameter, top.count, top.rows, top.perRow);
+  const { h0: h0Bot } = calcEffectiveDepth(p.h, cover, stir.diameter, bot.diameter, bot.count, bot.rows, bot.perRow);
   const AsTop = top.count * rebarArea(top.diameter);
   const AsBot = bot.count * rebarArea(bot.diameter);
   const rhoTop = AsTop / (p.b * h0Top);

@@ -137,8 +137,8 @@ export const BEAM_PRESETS = {
     sideBar: 'G4C12',
   },
   complex: {
-    id: 'KL2(4)', b: 350, h: 700, top: '4C25', bottom: '6C28',
-    stirrup: 'A10@100/200(4)', leftSupport: '4C25', rightSupport: '6C25',
+    id: 'KL2(4)', b: 350, h: 700, top: '4C25(2)', bottom: '6C28(2)',
+    stirrup: 'A10@100/200(4)', leftSupport: '4C25', rightSupport: '6C25(4/2)',
     leftSupport2: '2C25', rightSupport2: '2C25',
     concreteGrade: 'C35' as const, seismicGrade: '二级' as const, cover: 25, spanLength: 6000, hc: 600,
     haunchType: 'none' as const, haunchLength: 0, haunchHeight: 0, haunchSide: 'both' as const,
