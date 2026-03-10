@@ -152,7 +152,7 @@ export function calcBeam(p: BeamParams): CalcResult {
     ...beamEndAnchorSteps(top.grade, top.diameter, p.concreteGrade, p.seismicGrade, hc, cover),
     { label: '单根长度', formula: 'L = 净跨总长 + 2×锚固', substitution: `= ${totalNet} + 2×${topAnchorLen}`, result: `= ${(totalNet + 2 * topAnchorLen)} mm = ${topL.toFixed(2)} m` },
   ];
-  const topRowDesc = top.perRow && top.perRow.length >= 2 ? `，${top.perRow.length}排(${top.perRow.join('/')})` : (top.rows && top.rows >= 2 ? `，${top.rows}排` : '');
+  const topRowDesc = top.perRow && top.perRow.length >= 2 ? `，${top.perRow.length}排(${[...top.perRow].reverse().join('/')})` : (top.rows && top.rows >= 2 ? `，${top.rows}排` : '');
   push('上部通长筋', p.top, `${topL.toFixed(2)}m × ${top.count}${topRowDesc} (${topAnchorDesc}×2)`,
     top.grade, top.diameter, top.count, topL, '#C0392B', topFormula);
 

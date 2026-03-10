@@ -24,10 +24,11 @@ export function parseRebar(str: string): RebarInfo {
   const rowMatch = afterBase.match(/\((\d+)(?:\/(\d+))?\)/);
   if (rowMatch) {
     if (rowMatch[2]) {
-      // 格式: (3/2) — 显式每排根数
+      // 格式: (2/4) — 22G101: 第一个数=内排(靠中性轴)，第二个数=外排(靠截面边缘)
+      // perRow[0] 始终为外排(最靠近截面边缘)
       const r1 = parseInt(rowMatch[1]);
       const r2 = parseInt(rowMatch[2]);
-      return { count: r1 + r2, grade, diameter, rows: 2, perRow: [r1, r2] };
+      return { count: r1 + r2, grade, diameter, rows: 2, perRow: [r2, r1] };
     } else {
       // 格式: (2) — 排数，自动分配
       const rows = parseInt(rowMatch[1]);
@@ -47,14 +48,12 @@ export function parseRebar(str: string): RebarInfo {
 }
 
 /**
- * 解析底部钢筋: 22G101 中底部钢筋标注 (2/4) 表示上排2根、下排4根，
- * 与上部钢筋 perRow 顺序相反。此函数自动反转 perRow，
- * 使 perRow[0] 始终为最靠近底边（外排）的根数。
+ * 解析底部钢筋: 22G101 中 (a/b) 标注 a=内排 b=外排,
+ * parseRebar 已将 perRow[0] 设为外排(靠截面边缘),
+ * 对底部钢筋同样适用，无需额外反转。
  */
 export function parseRebarBottom(str: string): RebarInfo {
-  const r = parseRebar(str);
-  if (r.perRow && r.perRow.length >= 2) r.perRow = [...r.perRow].reverse();
-  return r;
+  return parseRebar(str);
 }
 
 // 板筋格式: "C10@150" => { grade:'C', diameter:10, spacing:150 }

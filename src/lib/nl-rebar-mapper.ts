@@ -16,7 +16,8 @@ function gradeLetter(grade: string): string {
 export function rebarSpecToNotation(spec: RebarSpec): string {
   let base = `${spec.count}${gradeLetter(spec.grade)}${spec.diameter}`;
   if (spec.perRow && spec.perRow.length >= 2) {
-    base += `(${spec.perRow.join('/')})`;
+    // perRow[0]=外排, perRow[1]=内排; 22G101标注为 (内排/外排)
+    base += `(${[...spec.perRow].reverse().join('/')})`;
   } else if (spec.rows && spec.rows >= 2) {
     base += `(${spec.rows})`;
   }
