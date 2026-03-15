@@ -5,7 +5,7 @@ import { Send, Trash2, ChevronDown, ChevronRight, Loader2, AlertCircle, Sparkles
 import { AI_PROVIDERS } from '@/lib/ai-providers';
 import type { ChatMessage } from '@/lib/ai-providers';
 import { getApiKey, getApiKeys } from '@/lib/api-keys';
-import type { ComponentType, BeamParams, ColumnParams, SlabParams, JointParams, ShearWallParams, StairParams } from '@/lib/types';
+import type { ComponentType, BeamParams, ColumnParams, SlabParams, JointParams, ShearWallParams, StairParams, FoundationParams, PileCapParams, RaftFoundationParams } from '@/lib/types';
 import { parseAIResponse } from '@/lib/nl-rebar-parser';
 import { mapSchemaToParams } from '@/lib/nl-rebar-mapper';
 import { formatSchemaPreview } from '@/lib/nl-rebar-prompt';
@@ -16,7 +16,7 @@ import Link from 'next/link';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-type AnyParams = BeamParams | ColumnParams | SlabParams | JointParams | ShearWallParams | StairParams;
+type AnyParams = BeamParams | ColumnParams | SlabParams | JointParams | ShearWallParams | StairParams | FoundationParams | PileCapParams | RaftFoundationParams;
 
 interface AISidebarProps {
   componentType: ComponentType;

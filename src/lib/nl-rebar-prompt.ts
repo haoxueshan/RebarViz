@@ -7,7 +7,7 @@ import { JSON_SCHEMAS, LETTER_TO_GRADE } from './nl-rebar-schema';
 import { parseRebar, parseStirrup, parseSlabRebar } from './rebar';
 
 const COMPONENT_NAMES: Record<ComponentType, string> = {
-  beam: '框架梁', column: '框架柱', shearwall: '剪力墙', slab: '楼板', joint: '梁柱节点', stair: '楼梯',
+  beam: '框架梁', column: '框架柱', shearwall: '剪力墙', slab: '楼板', joint: '梁柱节点', stair: '楼梯', foundation: '独立基础', pilecap: '承台', raft: '筏板基础',
 };
 
 const NL_SYSTEM_BASE = `你是一位资深结构工程师，精通22G101图集和GB50010规范。
@@ -87,7 +87,12 @@ export function formatParams(
     }
     case 'column': {
       const p = params as ColumnParams;
-      return `截面: ${p.b}×${p.h}mm, 纵筋: ${p.main}(${fmtRebar(p.main)}), 箍筋: ${p.stirrup}(${fmtStirrup(p.stirrup)}), 混凝土: ${p.concreteGrade}, 抗震: ${p.seismicGrade}, 保护层: ${p.cover}mm, 柱净高: ${p.height}mm`;
+      let s = `截面: ${p.b}×${p.h}mm, 全部纵筋: ${p.main}(${fmtRebar(p.main)})`;
+      if (p.cornerMain) s += `, 角筋: ${p.cornerMain}(${fmtRebar(p.cornerMain)})`;
+      if (p.bMiddleMain) s += `, b边中部筋: ${p.bMiddleMain}(${fmtRebar(p.bMiddleMain)}每侧)`;
+      if (p.hMiddleMain) s += `, h边中部筋: ${p.hMiddleMain}(${fmtRebar(p.hMiddleMain)}每侧)`;
+      s += `, 箍筋: ${p.stirrup}(${fmtStirrup(p.stirrup)}), 混凝土: ${p.concreteGrade}, 抗震: ${p.seismicGrade}, 保护层: ${p.cover}mm, 柱净高: ${p.height}mm`;
+      return s;
     }
     case 'shearwall': {
       const p = params as ShearWallParams;
@@ -129,8 +134,8 @@ export function formatSchemaPreview(schema: RebarGenSchema, componentType: Compo
     case 'beam': {
       const s = schema as import('./nl-rebar-schema').BeamSchema;
       if (s.sectionWidth !== undefined || s.sectionHeight !== undefined) lines.push(`截面: ${s.sectionWidth ?? '—'}×${s.sectionHeight ?? '—'}mm`);
-      if (s.topRebar) lines.push(`上部筋: ${fmtRebarSpec(s.topRebar)}`);
-      if (s.bottomRebar) lines.push(`下部筋: ${fmtRebarSpec(s.bottomRebar)}`);
+      if (s.topRebar) lines.push(`上部筋: ${typeof s.topRebar === 'string' ? s.topRebar : fmtRebarSpec(s.topRebar)}`);
+      if (s.bottomRebar) lines.push(`下部筋: ${typeof s.bottomRebar === 'string' ? s.bottomRebar : fmtRebarSpec(s.bottomRebar)}`);
       if (s.stirrup) lines.push(`箍筋: ${fmtStirrupSpec(s.stirrup)}`);
       if (s.leftSupportRebar) lines.push(`左支座负筋: ${fmtRebarSpec(s.leftSupportRebar)}`);
       if (s.rightSupportRebar) lines.push(`右支座负筋: ${fmtRebarSpec(s.rightSupportRebar)}`);
@@ -144,7 +149,10 @@ export function formatSchemaPreview(schema: RebarGenSchema, componentType: Compo
     case 'column': {
       const s = schema as import('./nl-rebar-schema').ColumnSchema;
       if (s.sectionWidth !== undefined || s.sectionHeight !== undefined) lines.push(`截面: ${s.sectionWidth ?? '—'}×${s.sectionHeight ?? '—'}mm`);
-      if (s.mainRebar) lines.push(`纵筋: ${fmtRebarSpec(s.mainRebar)}`);
+      if (s.mainRebar) lines.push(`全部纵筋: ${fmtRebarSpec(s.mainRebar)}`);
+      if (s.cornerRebar) lines.push(`角筋: ${fmtRebarSpec(s.cornerRebar)}`);
+      if (s.bMiddleRebar) lines.push(`b边中部筋: ${fmtRebarSpec(s.bMiddleRebar)}(每侧)`);
+      if (s.hMiddleRebar) lines.push(`h边中部筋: ${fmtRebarSpec(s.hMiddleRebar)}(每侧)`);
       if (s.stirrup) lines.push(`箍筋: ${fmtStirrupSpec(s.stirrup)}`);
       if (s.concreteGrade) lines.push(`混凝土: ${s.concreteGrade}`);
       if (s.seismicGrade) lines.push(`抗震: ${s.seismicGrade}`);

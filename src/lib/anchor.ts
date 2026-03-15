@@ -25,13 +25,16 @@ export type SeismicGrade = '一级' | '二级' | '三级' | '四级' | '非抗�
 export const CONCRETE_GRADES: ConcreteGrade[] = ['C20', 'C25', 'C30', 'C35', 'C40', 'C45', 'C50', 'C55', 'C60'];
 export const SEISMIC_GRADES: SeismicGrade[] = ['一级', '二级', '三级', '四级', '非抗震'];
 
-// 保护层厚度推荐值 (mm)，按构件类型和环境类别（一类环境）
-export const COVER_DEFAULTS: Record<string, number> = {
-  beam: 25,
-  column: 25,
-  slab: 15,
-  joint: 25,
-};
+// 保护层厚度推荐值 — 已集中到 construction-rules.ts，此处保持向后兼容导出
+export { COVER_DEFAULT as COVER_DEFAULTS } from './construction-rules';
+import {
+  ANCHOR_ALPHA, SEISMIC_ANCHOR_FACTOR, BENT_ANCHOR_FACTOR,
+  anchorMinLength, LAP_MIN_LENGTH, lapFactor,
+  BEAM_END_STRAIGHT, BEAM_END_BENT_STRAIGHT_RATIO,
+  SLAB_BOTTOM_ANCHOR, BOTTOM_BAR_MIN_ANCHOR_D_FACTOR,
+  BOTTOM_BAR_LAP_H0_FACTOR, COLUMN_LAP_ZONE,
+  SUPPORT_BAR_EXTEND_RATIO,
+} from './construction-rules';
 
 /**
  * 基本锚固长度 lab (mm)
@@ -41,7 +44,7 @@ export const COVER_DEFAULTS: Record<string, number> = {
 export function calcLab(rebarGrade: string, diameter: number, concreteGrade: ConcreteGrade): number {
   const fy = FY[rebarGrade] || 360;
   const ft = FT[concreteGrade] || 1.43;
-  const alpha = rebarGrade === 'A' ? 0.16 : 0.14; // 光圆 vs 带肋
+  const alpha = rebarGrade === 'A' ? ANCHOR_ALPHA.plain : ANCHOR_ALPHA.deformed;
   const lab = alpha * (fy / ft) * diameter;
   return Math.ceil(lab);
 }
@@ -55,7 +58,7 @@ export function calcLa(rebarGrade: string, diameter: number, concreteGrade: Conc
   const lab = calcLab(rebarGrade, diameter, concreteGrade);
   const zetaA = 1.0; // 简化：普通钢筋，非环氧涂层
   const la = Math.ceil(zetaA * lab);
-  return Math.max(la, 200, 10 * diameter);
+  return anchorMinLength(la, diameter);
 }
 
 /**
@@ -68,9 +71,9 @@ export function calcLaE(
   concreteGrade: ConcreteGrade, seismicGrade: SeismicGrade
 ): number {
   const la = calcLa(rebarGrade, diameter, concreteGrade);
-  const zetaAE = seismicGrade === '非抗震' ? 1.0 : 1.15; // 抗震时 ×1.15
+  const zetaAE = seismicGrade === '非抗震' ? SEISMIC_ANCHOR_FACTOR.nonSeismic : SEISMIC_ANCHOR_FACTOR.seismic;
   const laE = Math.ceil(zetaAE * la);
-  return Math.max(laE, 200, 10 * diameter);
+  return anchorMinLength(laE, diameter);
 }
 
 /**
@@ -83,13 +86,9 @@ export function calcLl(
   concreteGrade: ConcreteGrade, lapPercent: number = 50
 ): number {
   const la = calcLa(rebarGrade, diameter, concreteGrade);
-  // 搭接百分率修正系数
-  let zetaL = 1.2;
-  if (lapPercent <= 25) zetaL = 1.2;
-  else if (lapPercent <= 50) zetaL = 1.4;
-  else zetaL = 1.6;
+  const zetaL = lapFactor(lapPercent);
   const ll = Math.ceil(zetaL * la);
-  return Math.max(ll, 300);
+  return Math.max(ll, LAP_MIN_LENGTH);
 }
 
 /**
@@ -101,12 +100,9 @@ export function calcLlE(
   lapPercent: number = 50
 ): number {
   const laE = calcLaE(rebarGrade, diameter, concreteGrade, seismicGrade);
-  let zetaL = 1.2;
-  if (lapPercent <= 25) zetaL = 1.2;
-  else if (lapPercent <= 50) zetaL = 1.4;
-  else zetaL = 1.6;
+  const zetaL = lapFactor(lapPercent);
   const llE = Math.ceil(zetaL * laE);
-  return Math.max(llE, 300);
+  return Math.max(llE, LAP_MIN_LENGTH);
 }
 
 /**
@@ -114,7 +110,7 @@ export function calcLlE(
  * 22G101: 弯折段 = 15d (梁筋弯锚入柱，22G101-1 标准)
  */
 export function calcBendLength(diameter: number): number {
-  return 15 * diameter;
+  return BENT_ANCHOR_FACTOR * diameter;
 }
 
 /**
@@ -141,10 +137,10 @@ export function calcBeamEndAnchor(
   const laE = calcLaE(rebarGrade, diameter, concreteGrade, seismicGrade);
   const availableDepth = hc - cover; // 柱内可用锚固深度
   const canStraight = laE <= availableDepth;
-  const straightLen = Math.max(laE, Math.ceil(0.5 * hc + 5 * diameter));
+  const straightLen = Math.max(laE, Math.ceil(BEAM_END_STRAIGHT.hcFactor * hc + BEAM_END_STRAIGHT.dFactor * diameter));
   // 22G101: 弯锚直段伸至柱对侧纵筋内侧 ≈ hc-cover，且 ≥ 0.4laE
-  const bentStraightPart = Math.max(Math.ceil(0.4 * laE), hc - cover);
-  const bentBendPart = 15 * diameter;
+  const bentStraightPart = Math.max(Math.ceil(BEAM_END_BENT_STRAIGHT_RATIO * laE), hc - cover);
+  const bentBendPart = BENT_ANCHOR_FACTOR * diameter;
 
   return { canStraight, straightLen, bentStraightPart, bentBendPart, laE, hc };
 }
@@ -155,7 +151,8 @@ export function calcBeamEndAnchor(
  * ln: 梁净跨
  */
 export function calcSupportRebarLength(beamNetSpan: number, row: 1 | 2 = 1): number {
-  return row === 1 ? Math.ceil(beamNetSpan / 3) : Math.ceil(beamNetSpan / 4);
+  const ratio = row === 1 ? SUPPORT_BAR_EXTEND_RATIO.row1 : SUPPORT_BAR_EXTEND_RATIO.row2;
+  return Math.ceil(beamNetSpan * ratio);
 }
 
 /**
@@ -168,7 +165,7 @@ export function calcBottomBarAnchor(
   concreteGrade: ConcreteGrade, seismicGrade: SeismicGrade
 ): number {
   const laE = calcLaE(rebarGrade, diameter, concreteGrade, seismicGrade);
-  return Math.max(laE, 12 * diameter);
+  return Math.max(laE, BOTTOM_BAR_MIN_ANCHOR_D_FACTOR * diameter);
 }
 
 /**
@@ -183,7 +180,7 @@ export function calcBottomBarLapAtMiddleJoint(
 ): number {
   const llE = calcLlE(rebarGrade, diameter, concreteGrade, seismicGrade);
   const h0 = beamH - cover - diameter / 2;
-  return Math.max(llE, Math.ceil(1.5 * h0));
+  return Math.max(llE, Math.ceil(BOTTOM_BAR_LAP_H0_FACTOR * h0));
 }
 
 /**
@@ -195,7 +192,7 @@ export function calcSlabBottomAnchor(
   concreteGrade: ConcreteGrade
 ): number {
   const la = calcLa(rebarGrade, diameter, concreteGrade);
-  return Math.max(5 * diameter, Math.ceil(la / 2));
+  return Math.max(SLAB_BOTTOM_ANCHOR.dFactor * diameter, Math.ceil(SLAB_BOTTOM_ANCHOR.laRatio * la));
 }
 
 /**
@@ -203,8 +200,8 @@ export function calcSlabBottomAnchor(
  * 22G101: 柱纵筋连接区域在柱净高下部 1/6 以上、根部 500mm 以上
  */
 export function calcColumnLapZone(columnNetHeight: number): { start: number; end: number } {
-  const start = Math.max(500, Math.ceil(columnNetHeight / 6));
-  const end = start + 500; // 搭接区域长度约 500mm
+  const start = Math.max(COLUMN_LAP_ZONE.minStart, Math.ceil(columnNetHeight * COLUMN_LAP_ZONE.heightRatio));
+  const end = start + COLUMN_LAP_ZONE.zoneLength;
   return { start, end };
 }
 

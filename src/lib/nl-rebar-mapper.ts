@@ -29,13 +29,14 @@ export function distributedSpecToNotation(spec: DistributedRebarSpec): string {
   return `${gradeLetter(spec.grade)}${spec.diameter}@${spec.spacing}`;
 }
 
-/** StirrupSpec → "A8@100/200(2)" */
+/** StirrupSpec → "B-A8@100/200(4)" or "A8@100/200(2)" */
 export function stirrupSpecToNotation(spec: StirrupSpec): string {
   const g = gradeLetter(spec.grade);
+  const typePrefix = spec.typeCode ? `${spec.typeCode}-` : '';
   if (spec.spacingDense === spec.spacingNormal) {
-    return `${g}${spec.diameter}@${spec.spacingDense}/${spec.spacingDense}(${spec.legs})`;
+    return `${typePrefix}${g}${spec.diameter}@${spec.spacingDense}/${spec.spacingDense}(${spec.legs})`;
   }
-  return `${g}${spec.diameter}@${spec.spacingDense}/${spec.spacingNormal}(${spec.legs})`;
+  return `${typePrefix}${g}${spec.diameter}@${spec.spacingDense}/${spec.spacingNormal}(${spec.legs})`;
 }
 
 // ─── 辅助: notation string → spec ───
@@ -59,7 +60,15 @@ export function notationToDistributedSpec(notation: string): DistributedRebarSpe
 
 export function notationToStirrupSpec(notation: string): StirrupSpec {
   const info = parseStirrup(notation);
-  return { grade: gradeFullName(info.grade), diameter: info.diameter, spacingDense: info.spacingDense, spacingNormal: info.spacingNormal, legs: info.legs };
+  const spec: StirrupSpec = { 
+    grade: gradeFullName(info.grade), 
+    diameter: info.diameter, 
+    spacingDense: info.spacingDense, 
+    spacingNormal: info.spacingNormal, 
+    legs: info.legs 
+  };
+  if (info.typeCode) spec.typeCode = info.typeCode;
+  return spec;
 }
 
 // ─── mapSchemaToParams ───
@@ -68,8 +77,8 @@ function beamSchemaToParams(s: BeamSchema): Partial<BeamParams> {
   const p: Partial<BeamParams> = {};
   if (s.sectionWidth !== undefined) p.b = s.sectionWidth;
   if (s.sectionHeight !== undefined) p.h = s.sectionHeight;
-  if (s.topRebar) p.top = rebarSpecToNotation(s.topRebar);
-  if (s.bottomRebar) p.bottom = rebarSpecToNotation(s.bottomRebar);
+  if (s.topRebar) p.top = typeof s.topRebar === 'string' ? s.topRebar : rebarSpecToNotation(s.topRebar);
+  if (s.bottomRebar) p.bottom = typeof s.bottomRebar === 'string' ? s.bottomRebar : rebarSpecToNotation(s.bottomRebar);
   if (s.stirrup) p.stirrup = stirrupSpecToNotation(s.stirrup);
   if (s.leftSupportRebar) p.leftSupport = rebarSpecToNotation(s.leftSupportRebar);
   if (s.rightSupportRebar) p.rightSupport = rebarSpecToNotation(s.rightSupportRebar);
@@ -93,6 +102,9 @@ function columnSchemaToParams(s: ColumnSchema): Partial<ColumnParams> {
   if (s.sectionWidth !== undefined) p.b = s.sectionWidth;
   if (s.sectionHeight !== undefined) p.h = s.sectionHeight;
   if (s.mainRebar) p.main = rebarSpecToNotation(s.mainRebar);
+  if (s.cornerRebar) p.cornerMain = rebarSpecToNotation(s.cornerRebar);
+  if (s.bMiddleRebar) p.bMiddleMain = rebarSpecToNotation(s.bMiddleRebar);
+  if (s.hMiddleRebar) p.hMiddleMain = rebarSpecToNotation(s.hMiddleRebar);
   if (s.stirrup) p.stirrup = stirrupSpecToNotation(s.stirrup);
   if (s.concreteGrade) p.concreteGrade = s.concreteGrade;
   if (s.seismicGrade) p.seismicGrade = s.seismicGrade;
@@ -168,8 +180,8 @@ function beamParamsToSchema(p: BeamParams): BeamSchema {
   const s: BeamSchema = { componentType: 'beam' };
   s.sectionWidth = p.b;
   s.sectionHeight = p.h;
-  s.topRebar = notationToRebarSpec(p.top);
-  s.bottomRebar = notationToRebarSpec(p.bottom);
+  s.topRebar = p.top.includes('+') ? p.top : notationToRebarSpec(p.top);
+  s.bottomRebar = p.bottom.includes('+') ? p.bottom : notationToRebarSpec(p.bottom);
   s.stirrup = notationToStirrupSpec(p.stirrup);
   if (p.leftSupport) s.leftSupportRebar = notationToRebarSpec(p.leftSupport);
   if (p.rightSupport) s.rightSupportRebar = notationToRebarSpec(p.rightSupport);
@@ -194,7 +206,7 @@ function beamParamsToSchema(p: BeamParams): BeamSchema {
 }
 
 function columnParamsToSchema(p: ColumnParams): ColumnSchema {
-  return {
+  const s: ColumnSchema = {
     componentType: 'column',
     sectionWidth: p.b, sectionHeight: p.h,
     mainRebar: notationToRebarSpec(p.main),
@@ -202,6 +214,10 @@ function columnParamsToSchema(p: ColumnParams): ColumnSchema {
     concreteGrade: p.concreteGrade, seismicGrade: p.seismicGrade,
     cover: p.cover, height: p.height,
   };
+  if (p.cornerMain) s.cornerRebar = notationToRebarSpec(p.cornerMain);
+  if (p.bMiddleMain) s.bMiddleRebar = notationToRebarSpec(p.bMiddleMain);
+  if (p.hMiddleMain) s.hMiddleRebar = notationToRebarSpec(p.hMiddleMain);
+  return s;
 }
 
 function shearWallParamsToSchema(p: ShearWallParams): ShearWallSchema {

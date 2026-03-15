@@ -1,4 +1,4 @@
-import type { RebarInfo, StirrupInfo } from './types';
+import type { RebarInfo, RebarSegment, StirrupInfo } from './types';
 
 export const GRADE_MAP: Record<string, string> = {
   A: 'HPB300 (一级)',
@@ -8,11 +8,43 @@ export const GRADE_MAP: Record<string, string> = {
   E: 'HRBF400',
 };
 
+/** 解析单段钢筋标注 (如 "2C25") */
+function parseSingleSegment(s: string): RebarSegment | null {
+  const m = s.trim().match(/(\d+)([A-Za-z])(\d+)/);
+  if (!m) return null;
+  return { count: parseInt(m[1]), grade: m[2].toUpperCase(), diameter: parseInt(m[3]) };
+}
+
 export function parseRebar(str: string): RebarInfo {
   // 支持 22G101 平法格式:
   // 基本: "2C25" → 2根C25
   // 带排数: "6C25(2)" → 6根C25分2排
   // 每排分配: "5C25(3/2)" → 5根C25第一排3根第二排2根
+  // 混合直径: "2C25+2C22" → 外排2根Φ25 + 内排2根Φ22
+
+  // ── 混合直径检测: 含 "+" 分隔符 ──
+  if (str.includes('+')) {
+    const parts = str.split('+');
+    const segments: RebarSegment[] = [];
+    for (const part of parts) {
+      const seg = parseSingleSegment(part);
+      if (seg) segments.push(seg);
+    }
+    if (segments.length >= 2) {
+      const totalCount = segments.reduce((s, seg) => s + seg.count, 0);
+      const maxDiaSeg = segments.reduce((a, b) => a.diameter >= b.diameter ? a : b);
+      const perRow = segments.map(seg => seg.count);
+      return {
+        count: totalCount,
+        grade: maxDiaSeg.grade,
+        diameter: maxDiaSeg.diameter,
+        rows: segments.length,
+        perRow,
+        segments,
+      };
+    }
+  }
+
   const m = str.match(/(\d+)([A-Za-z])(\d+)/);
   if (!m) return { count: 2, grade: 'C', diameter: 20 };
   const count = parseInt(m[1]);
@@ -64,19 +96,180 @@ export function parseSlabRebar(str: string): { grade: string; diameter: number; 
 }
 
 export function parseStirrup(str: string): StirrupInfo {
+  // Support optional type code prefix: "B-A10@100/200(4)" or legacy "A10@100/200(4)"
+  const withType = str.match(/^([A-F])-([A-Za-z])(\d+)@(\d+)(?:\/(\d+))?\((\d+)\)$/);
+  if (withType) {
+    const typeCode = withType[1];
+    const inferredLegs = getStirrupLegs(typeCode);
+    return {
+      grade: withType[2].toUpperCase(),
+      diameter: parseInt(withType[3]),
+      spacingDense: parseInt(withType[4]),
+      spacingNormal: withType[5] ? parseInt(withType[5]) : parseInt(withType[4]),
+      legs: parseInt(withType[6]) || inferredLegs,
+      typeCode,
+    };
+  }
+
+  // Legacy format without type code
   const m = str.match(/([A-Za-z])(\d+)@(\d+)(?:\/(\d+))?\((\d+)\)/);
   if (!m) return { grade: 'A', diameter: 8, spacingDense: 100, spacingNormal: 200, legs: 2 };
+  const legs = parseInt(m[5]);
   return {
     grade: m[1].toUpperCase(),
     diameter: parseInt(m[2]),
     spacingDense: parseInt(m[3]),
     spacingNormal: m[4] ? parseInt(m[4]) : parseInt(m[3]),
-    legs: parseInt(m[5]),
+    legs,
+    typeCode: inferStirrupType(legs),
   };
 }
 
 export function gradeLabel(grade: string): string {
   return GRADE_MAP[grade] || grade;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 箍筋类型编号 (22G101-1 表 2.2.2-2)
+// ═══════════════════════════════════════════════════════════════════
+
+export interface StirrupTypeInfo {
+  code: string;           // 类型编号 (A, B, C, D, E, F, G, H)
+  name: string;           // 名称
+  legs: number;           // 肢数
+  description: string;    // 描述
+}
+
+export const STIRRUP_TYPES: Record<string, StirrupTypeInfo> = {
+  'A': { code: 'A', name: '基本箍', legs: 2, description: '单个矩形箍筋' },
+  'B': { code: 'B', name: '复合箍-1拉筋', legs: 4, description: '外箍+1根拉筋' },
+  'C': { code: 'C', name: '复合箍-2拉筋', legs: 6, description: '外箍+2根拉筋' },
+  'D': { code: 'D', name: '复合箍-3拉筋', legs: 8, description: '外箍+3根拉筋' },
+  'E': { code: 'E', name: '复合箍-4拉筋', legs: 10, description: '外箍+4根拉筋' },
+  'F': { code: 'F', name: '复合箍-5拉筋', legs: 12, description: '外箍+5根拉筋' },
+};
+
+/** 根据肢数推断箍筋类型编号 */
+export function inferStirrupType(legs: number): string {
+  if (legs <= 2) return 'A';
+  if (legs === 4) return 'B';
+  if (legs === 6) return 'C';
+  if (legs === 8) return 'D';
+  if (legs === 10) return 'E';
+  if (legs >= 12) return 'F';
+  return 'A';
+}
+
+/** 根据类型编号获取肢数 */
+export function getStirrupLegs(typeCode: string): number {
+  return STIRRUP_TYPES[typeCode]?.legs ?? 2;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 22G101-1 柱纵筋分项解析
+// ═══════════════════════════════════════════════════════════════════
+
+export interface ColumnBarPos {
+  x: number;    // position in scene units (relative to column center)
+  z: number;
+  diameter: number;
+  grade: string;
+  role: 'corner' | 'bMiddle' | 'hMiddle';
+}
+
+export interface ColumnBarsResolved {
+  bars: ColumnBarPos[];
+  corner: RebarInfo;
+  bMiddle: RebarInfo | null;
+  hMiddle: RebarInfo | null;
+  totalCount: number;
+  /** 是否使用了 22G101-1 分项标注 */
+  isDetailed: boolean;
+}
+
+/**
+ * 22G101-1 柱纵筋解析：
+ * - 若提供 cornerMain, 使用分项标注（角筋 + b边中部筋 + h边中部筋）
+ * - 否则退回到 legacy main 均匀分布
+ *
+ * @param innerW  柱截面内净宽 (b - 2*cover)，已经是场景单位
+ * @param innerH  柱截面内净高 (h - 2*cover)，已经是场景单位
+ */
+export function resolveColumnBars(
+  main: string,
+  cornerMain: string | undefined,
+  bMiddleMain: string | undefined,
+  hMiddleMain: string | undefined,
+  innerW: number,
+  innerH: number,
+): ColumnBarsResolved {
+  const isDetailed = !!cornerMain;
+
+  if (isDetailed) {
+    const cornerR = parseRebar(cornerMain!);
+    const bMidR = bMiddleMain ? parseRebar(bMiddleMain) : null;
+    const hMidR = hMiddleMain ? parseRebar(hMiddleMain) : null;
+
+    const bars: ColumnBarPos[] = [];
+    const hw = innerW / 2, hh = innerH / 2;
+
+    // 4个角筋 (固定在四角)
+    bars.push({ x: -hw, z: -hh, diameter: cornerR.diameter, grade: cornerR.grade, role: 'corner' });
+    bars.push({ x:  hw, z: -hh, diameter: cornerR.diameter, grade: cornerR.grade, role: 'corner' });
+    bars.push({ x:  hw, z:  hh, diameter: cornerR.diameter, grade: cornerR.grade, role: 'corner' });
+    bars.push({ x: -hw, z:  hh, diameter: cornerR.diameter, grade: cornerR.grade, role: 'corner' });
+
+    // b边中部筋 — 沿 b 方向 (x轴)，上下两侧各 count 根
+    if (bMidR && bMidR.count > 0) {
+      const n = bMidR.count;
+      for (let i = 0; i < n; i++) {
+        const x = -hw + (innerW * (i + 1)) / (n + 1);
+        bars.push({ x, z: -hh, diameter: bMidR.diameter, grade: bMidR.grade, role: 'bMiddle' });
+        bars.push({ x, z:  hh, diameter: bMidR.diameter, grade: bMidR.grade, role: 'bMiddle' });
+      }
+    }
+
+    // h边中部筋 — 沿 h 方向 (z轴)，左右两侧各 count 根
+    if (hMidR && hMidR.count > 0) {
+      const n = hMidR.count;
+      for (let i = 0; i < n; i++) {
+        const z = -hh + (innerH * (i + 1)) / (n + 1);
+        bars.push({ x: -hw, z, diameter: hMidR.diameter, grade: hMidR.grade, role: 'hMiddle' });
+        bars.push({ x:  hw, z, diameter: hMidR.diameter, grade: hMidR.grade, role: 'hMiddle' });
+      }
+    }
+
+    return { bars, corner: cornerR, bMiddle: bMidR, hMiddle: hMidR, totalCount: bars.length, isDetailed: true };
+  }
+
+  // Legacy: 用 main 均匀分布
+  const mainR = parseRebar(main);
+  const perSide = Math.max(Math.round(mainR.count / 4), 2);
+  const hw = innerW / 2, hh = innerH / 2;
+  const bars: ColumnBarPos[] = [];
+
+  // Top side (z = -hh)
+  for (let i = 0; i < perSide; i++) {
+    const isCorner = i === 0 || i === perSide - 1;
+    bars.push({ x: -hw + (innerW * i) / (perSide - 1), z: -hh, diameter: mainR.diameter, grade: mainR.grade, role: isCorner ? 'corner' : 'bMiddle' });
+  }
+  // Right side (x = hw)
+  for (let i = 1; i < perSide; i++) {
+    const isCorner = i === perSide - 1;
+    bars.push({ x: hw, z: -hh + (innerH * i) / (perSide - 1), diameter: mainR.diameter, grade: mainR.grade, role: isCorner ? 'corner' : 'hMiddle' });
+  }
+  // Bottom side (z = hh)
+  for (let i = 1; i < perSide; i++) {
+    const isCorner = i === perSide - 1;
+    bars.push({ x: hw - (innerW * i) / (perSide - 1), z: hh, diameter: mainR.diameter, grade: mainR.grade, role: isCorner ? 'corner' : 'bMiddle' });
+  }
+  // Left side (x = -hw)
+  for (let i = 1; i < perSide - 1; i++) {
+    bars.push({ x: -hw, z: hh - (innerH * i) / (perSide - 1), diameter: mainR.diameter, grade: mainR.grade, role: 'hMiddle' });
+  }
+
+  const trimmed = bars.slice(0, mainR.count);
+  return { bars: trimmed, corner: mainR, bMiddle: null, hMiddle: null, totalCount: trimmed.length, isDetailed: false };
 }
 
 /**
@@ -173,15 +366,24 @@ export const BEAM_PRESETS = {
     haunchType: 'none' as const, haunchLength: 0, haunchHeight: 0, haunchSide: 'both' as const,
     sideBar: 'G4C12', spanCount: 3,
   },
+  mixedDia: {
+    id: 'KL6(2)', b: 350, h: 700, top: '2C25+2C22', bottom: '4C25+2C22',
+    stirrup: 'A10@100/200(4)', leftSupport: '4C25', rightSupport: '4C25',
+    concreteGrade: 'C35' as const, seismicGrade: '二级' as const, cover: 25, spanLength: 6000, hc: 600,
+    haunchType: 'none' as const, haunchLength: 0, haunchHeight: 0, haunchSide: 'both' as const,
+    sideBar: 'G4C12',
+  },
 } as const;
 
 export const COLUMN_PRESETS = {
   simple:   {
     id: 'KZ1', b: 400, h: 400, main: '8C20', stirrup: 'A8@100/200(2)',
+    cornerMain: '4C20', bMiddleMain: '', hMiddleMain: '',
     concreteGrade: 'C30' as const, seismicGrade: '三级' as const, cover: 25, height: 3000,
   },
   standard: {
     id: 'KZ2', b: 500, h: 500, main: '12C25', stirrup: 'A10@100/200(4)',
+    cornerMain: '4C25', bMiddleMain: '2C22', hMiddleMain: '2C22',
     concreteGrade: 'C30' as const, seismicGrade: '三级' as const, cover: 25, height: 3000,
   },
 } as const;
@@ -278,5 +480,118 @@ export const STAIR_PRESETS = {
     beamB: 200, beamH: 300,
     topBar: 'C8@250', bottomBar: 'C10@200', distBar: 'A6@300',
     concreteGrade: 'C25' as const, cover: 15,
+  },
+} as const;
+
+export const FOUNDATION_PRESETS = {
+  simple: {
+    id: 'DJ-1', shape: 'stepped' as const,
+    bx: 1500, by: 1500, h: 500,
+    stepCount: 1,
+    stepDims: [{ bx: 1500, by: 1500, h: 500 }],
+    bottomBarX: 'C12@150', bottomBarY: 'C12@150',
+    colBx: 400, colBy: 400, colMain: '8C20',
+    concreteGrade: 'C30' as const, cover: 40,
+  },
+  standard: {
+    id: 'DJ-2', shape: 'stepped' as const,
+    bx: 2400, by: 2400, h: 800,
+    stepCount: 2,
+    stepDims: [
+      { bx: 2400, by: 2400, h: 400 },
+      { bx: 1600, by: 1600, h: 400 },
+    ],
+    bottomBarX: 'C14@150', bottomBarY: 'C14@150',
+    colBx: 500, colBy: 500, colMain: '12C25',
+    concreteGrade: 'C35' as const, cover: 40,
+  },
+  tapered: {
+    id: 'DJ-3', shape: 'tapered' as const,
+    bx: 2000, by: 2000, h: 600,
+    stepCount: 1,
+    stepDims: [{ bx: 2000, by: 2000, h: 600 }],
+    bottomBarX: 'C12@200', bottomBarY: 'C12@200',
+    colBx: 400, colBy: 400, colMain: '8C22',
+    concreteGrade: 'C30' as const, cover: 40,
+  },
+  dualColumn: {
+    id: 'DJ-4', shape: 'stepped' as const,
+    bx: 4200, by: 2000, h: 800,
+    stepCount: 2,
+    stepDims: [
+      { bx: 4200, by: 2000, h: 400 },
+      { bx: 3400, by: 1400, h: 400 },
+    ],
+    bottomBarX: 'C14@150', bottomBarY: 'C14@150',
+    colBx: 500, colBy: 500, colMain: '12C25',
+    columnCount: 2 as const, colSpacing: 2400,
+    topBarX: 'C14@150', topBarY: 'C10@200',
+    concreteGrade: 'C35' as const, cover: 40,
+  },
+} as const;
+
+export const PILECAP_PRESETS = {
+  twoPile: {
+    id: 'CT-1',
+    bx: 1800, by: 800, h: 800,
+    bottomBarX: 'C14@150', bottomBarY: 'C14@150',
+    colBx: 400, colBy: 400, colMain: '8C20',
+    pileLayout: 'grid' as const,
+    pileDiameter: 600, pileCount: 2,
+    pileSpacingX: 1200, pileSpacingY: 0,
+    pileLength: 8000,
+    concreteGrade: 'C30' as const, cover: 50,
+  },
+  fourPile: {
+    id: 'CT-2',
+    bx: 2000, by: 2000, h: 1000,
+    bottomBarX: 'C16@150', bottomBarY: 'C16@150',
+    colBx: 500, colBy: 500, colMain: '12C25',
+    pileLayout: 'grid' as const,
+    pileDiameter: 600, pileCount: 4,
+    pileSpacingX: 1200, pileSpacingY: 1200,
+    pileLength: 12000,
+    concreteGrade: 'C35' as const, cover: 50,
+  },
+  sixPile: {
+    id: 'CT-3',
+    bx: 3000, by: 2000, h: 1200,
+    bottomBarX: 'C18@150', bottomBarY: 'C18@150',
+    colBx: 600, colBy: 600, colMain: '16C25',
+    pileLayout: 'grid' as const,
+    pileDiameter: 800, pileCount: 6,
+    pileSpacingX: 1200, pileSpacingY: 1200,
+    pileLength: 15000,
+    concreteGrade: 'C35' as const, cover: 50,
+  },
+} as const;
+
+export const RAFT_PRESETS = {
+  small: {
+    id: 'FB-1',
+    lx: 9000, ly: 9000, h: 500,
+    bottomBarX: 'C14@150', bottomBarY: 'C14@150',
+    topBarX: 'C12@200', topBarY: 'C12@200',
+    colBx: 400, colBy: 400, colMain: '8C20',
+    colCountX: 2, colCountY: 2, colSpacingX: 6000, colSpacingY: 6000,
+    concreteGrade: 'C30' as const, seismicGrade: '三级' as const, cover: 40,
+  },
+  standard: {
+    id: 'FB-2',
+    lx: 18000, ly: 12000, h: 700,
+    bottomBarX: 'C16@150', bottomBarY: 'C16@150',
+    topBarX: 'C14@200', topBarY: 'C14@200',
+    colBx: 500, colBy: 500, colMain: '12C25',
+    colCountX: 3, colCountY: 2, colSpacingX: 7500, colSpacingY: 9000,
+    concreteGrade: 'C35' as const, seismicGrade: '三级' as const, cover: 40,
+  },
+  large: {
+    id: 'FB-3',
+    lx: 30000, ly: 18000, h: 1000,
+    bottomBarX: 'C20@150', bottomBarY: 'C20@150',
+    topBarX: 'C16@150', topBarY: 'C16@150',
+    colBx: 600, colBy: 600, colMain: '16C25',
+    colCountX: 4, colCountY: 3, colSpacingX: 8000, colSpacingY: 7500,
+    concreteGrade: 'C35' as const, seismicGrade: '二级' as const, cover: 50,
   },
 } as const;

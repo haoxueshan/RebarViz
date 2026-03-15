@@ -1,5 +1,5 @@
 import type { FormulaStep } from './calc';
-import type { BeamParams, ColumnParams, SlabParams, ShearWallParams, StairParams } from './types';
+import type { BeamParams, ColumnParams, SlabParams, ShearWallParams, StairParams, FoundationParams, PileCapParams, RaftFoundationParams } from './types';
 
 // ═══════════════════════════════════════════════════════════════════
 // 混凝土工程量计算 — 按清单规范 GB50854 / GB50500
@@ -231,4 +231,92 @@ export function calcStairConcrete(p: StairParams): ConcreteCalcResult {
 
   const totalVolume = items.reduce((s, it) => s + it.volume, 0);
   return { items, totalVolume };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 独立基础 (DJ) — 混凝土工程量
+// ═══════════════════════════════════════════════════════════════════
+
+export function calcFoundationConcrete(p: FoundationParams): ConcreteCalcResult {
+  const items: ConcreteCalcItem[] = [];
+
+  if (p.shape === 'stepped') {
+    // 阶形基础: 各阶体积之和
+    for (let i = 0; i < p.stepDims.length; i++) {
+      const s = p.stepDims[i];
+      const vol = (s.bx / 1000) * (s.by / 1000) * (s.h / 1000);
+      const steps: FormulaStep[] = [
+        { label: `第${i + 1}阶体积`, formula: 'V = bx × by × h', substitution: `= ${s.bx/1000} × ${s.by/1000} × ${s.h/1000}`, result: `= ${vol.toFixed(4)} m³` },
+      ];
+      items.push({ name: `第${i + 1}阶`, volume: vol, description: `${s.bx}×${s.by}×${s.h}mm`, formulaSteps: steps, color: i === 0 ? '#94A3B8' : '#CBD5E1' });
+    }
+  } else {
+    // 锥形基础: V = h/6 × (A_bottom + A_top + √(A_bottom × A_top))
+    const aBot = (p.bx / 1000) * (p.by / 1000);
+    const aTop = (p.colBx / 1000) * (p.colBy / 1000);
+    const hM = p.h / 1000;
+    const vol = (hM / 6) * (aBot + aTop + Math.sqrt(aBot * aTop));
+    const steps: FormulaStep[] = [
+      { label: '底面积', formula: 'A底 = bx × by', substitution: `= ${p.bx/1000} × ${p.by/1000}`, result: `= ${aBot.toFixed(4)} m²` },
+      { label: '顶面积', formula: 'A顶 = colBx × colBy', substitution: `= ${p.colBx/1000} × ${p.colBy/1000}`, result: `= ${aTop.toFixed(4)} m²` },
+      { label: '棱台体积', formula: 'V = h/6 × (A底 + A顶 + √(A底×A顶))', substitution: `= ${hM}/6 × (${aBot.toFixed(4)} + ${aTop.toFixed(4)} + √(${(aBot*aTop).toFixed(6)}))`, result: `= ${vol.toFixed(4)} m³` },
+    ];
+    items.push({ name: '锥形基础', volume: vol, description: `底${p.bx}×${p.by}mm → 顶${p.colBx}×${p.colBy}mm，高${p.h}mm`, formulaSteps: steps, color: '#94A3B8' });
+  }
+
+  const total = items.reduce((s, it) => s + it.volume, 0);
+  return { items, totalVolume: total };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 承台 (CT) — 混凝土工程量
+// ═══════════════════════════════════════════════════════════════════
+
+export function calcPileCapConcrete(p: PileCapParams): ConcreteCalcResult {
+  const items: ConcreteCalcItem[] = [];
+
+  // 承台体积 = bx × by × h
+  const bxM = p.bx / 1000;
+  const byM = p.by / 1000;
+  const hM = p.h / 1000;
+  const capVol = bxM * byM * hM;
+  const capSteps: FormulaStep[] = [
+    { label: '承台体积', formula: 'V = bx × by × h', substitution: `= ${bxM} × ${byM} × ${hM}`, result: `= ${capVol.toFixed(4)} m³` },
+  ];
+  items.push({ name: '承台', volume: capVol, description: `${p.bx}×${p.by}×${p.h}mm`, formulaSteps: capSteps, color: '#94A3B8' });
+
+  // 桩体积 = n × π/4 × d² × L
+  const dM = p.pileDiameter / 1000;
+  const lM = p.pileLength / 1000;
+  const singlePileVol = Math.PI / 4 * dM * dM * lM;
+  const totalPileVol = p.pileCount * singlePileVol;
+  const pileSteps: FormulaStep[] = [
+    { label: '单桩体积', formula: 'V桩 = π/4 × d² × L', substitution: `= π/4 × ${dM}² × ${lM}`, result: `= ${singlePileVol.toFixed(4)} m³` },
+    { label: '桩总体积', formula: 'V总 = n × V桩', substitution: `= ${p.pileCount} × ${singlePileVol.toFixed(4)}`, result: `= ${totalPileVol.toFixed(4)} m³` },
+  ];
+  items.push({ name: `桩基 (${p.pileCount}根)`, volume: totalPileVol, description: `Φ${p.pileDiameter}mm × ${p.pileLength}mm`, formulaSteps: pileSteps, color: '#7F8C8D' });
+
+  const total = items.reduce((s, it) => s + it.volume, 0);
+  return { items, totalVolume: total };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 筏板基础 (FB) — 混凝土工程量
+// ═══════════════════════════════════════════════════════════════════
+
+export function calcRaftConcrete(p: RaftFoundationParams): ConcreteCalcResult {
+  const items: ConcreteCalcItem[] = [];
+
+  // 筏板体积 = lx × ly × h
+  const lxM = p.lx / 1000;
+  const lyM = p.ly / 1000;
+  const hM = p.h / 1000;
+  const raftVol = lxM * lyM * hM;
+  const raftSteps: FormulaStep[] = [
+    { label: '筏板体积', formula: 'V = lx × ly × h', substitution: `= ${lxM} × ${lyM} × ${hM}`, result: `= ${raftVol.toFixed(4)} m³` },
+  ];
+  items.push({ name: '筏板', volume: raftVol, description: `${p.lx}×${p.ly}×${p.h}mm`, formulaSteps: raftSteps, color: '#94A3B8' });
+
+  const totalVol = items.reduce((s, it) => s + it.volume, 0);
+  return { items, totalVolume: totalVol };
 }

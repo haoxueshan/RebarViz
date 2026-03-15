@@ -5,7 +5,7 @@ import type { ComponentType } from './types';
 import { JSON_SCHEMAS } from './nl-rebar-schema';
 
 const COMPONENT_NAMES: Record<ComponentType, string> = {
-  beam: '框架梁', column: '框架柱', shearwall: '剪力墙', slab: '楼板', joint: '梁柱节点', stair: '楼梯',
+  beam: '框架梁', column: '框架柱', shearwall: '剪力墙', slab: '楼板', joint: '梁柱节点', stair: '楼梯', foundation: '独立基础', pilecap: '承台', raft: '筏板基础',
 };
 
 const SIDEBAR_SYSTEM_BASE = `你是一位资深结构工程师和22G101图集专家。你同时具备两项能力：
@@ -107,22 +107,50 @@ const BEAM_EXAMPLES = `
 \`\`\`rebar-json
 {"componentType":"beam","sectionWidth":300,"sectionHeight":600,"topRebar":{"count":2,"grade":"HRB400","diameter":25},"bottomRebar":{"count":4,"grade":"HRB400","diameter":25},"stirrup":{"grade":"HPB300","diameter":8,"spacingDense":100,"spacingNormal":200,"legs":2}}
 \`\`\`
-已解析平法标注：KL1(3) 截面300×600，上部2C25，下部4C25，箍筋A8@100/200(2)。`;
+已解析平法标注：KL1(3) 截面300×600，上部2C25，下部4C25，箍筋A8@100/200(2)。
+
+示例4 — 混合直径:
+用户: 上部筋改成2根25加2根22
+\`\`\`rebar-json
+{"componentType":"beam","topRebar":"2C25+2C22"}
+\`\`\`
+已将上部通长筋改为混合直径：外排2根Φ25+内排2根Φ22。`;
 
 const COLUMN_EXAMPLES = `
-示例1 — 完整描述:
+示例1 — 完整描述(legacy):
 用户: 500×500柱子，12根25的三级钢纵筋，箍筋10的加密100非加密200四肢箍
 \`\`\`rebar-json
 {"componentType":"column","sectionWidth":500,"sectionHeight":500,"mainRebar":{"count":12,"grade":"HRB400","diameter":25},"stirrup":{"grade":"HPB300","diameter":10,"spacingDense":100,"spacingNormal":200,"legs":4}}
 \`\`\`
 柱截面500×500mm，12根HRB400 Φ25纵筋，箍筋HPB300 Φ10@100/200(4)。
 
-示例2 — 增量修改:
+示例2 — 22G101-1分项标注:
+用户: 500×500柱，角筋4根25，b边中部筋每侧2根22，h边中部筋每侧2根22
+\`\`\`rebar-json
+{"componentType":"column","sectionWidth":500,"sectionHeight":500,"mainRebar":{"count":12,"grade":"HRB400","diameter":25},"cornerRebar":{"count":4,"grade":"HRB400","diameter":25},"bMiddleRebar":{"count":2,"grade":"HRB400","diameter":22},"hMiddleRebar":{"count":2,"grade":"HRB400","diameter":22},"stirrup":{"grade":"HPB300","diameter":10,"spacingDense":100,"spacingNormal":200,"legs":4}}
+\`\`\`
+柱截面500×500mm，角筋4C25，b边中部筋每侧2C22，h边中部筋每侧2C22（22G101-1分项标注），箍筋Φ10@100/200(4)。
+
+示例3 — 增量修改:
 用户: 纵筋加粗到28
 \`\`\`rebar-json
 {"componentType":"column","mainRebar":{"count":12,"grade":"HRB400","diameter":28}}
 \`\`\`
-已将纵筋直径由25改为28mm。`;
+已将纵筋直径由25改为28mm。
+
+示例4 — 修改中部筋:
+用户: b边中部筋改成每侧3根20
+\`\`\`rebar-json
+{"componentType":"column","bMiddleRebar":{"count":3,"grade":"HRB400","diameter":20}}
+\`\`\`
+已将b边中部筋改为每侧3根Φ20。
+
+示例5 — 箍筋类型编号:
+用户: 箍筋改成B型复合箍，直径10，加密100非加密200
+\`\`\`rebar-json
+{"componentType":"column","stirrup":{"grade":"HPB300","diameter":10,"spacingDense":100,"spacingNormal":200,"legs":4,"typeCode":"B"}}
+\`\`\`
+已将箍筋改为B型复合箍（4肢），HPB300 Φ10@100/200。`;
 
 const SLAB_EXAMPLES = `
 示例1:
@@ -181,6 +209,38 @@ const COMPONENT_EXAMPLES: Record<ComponentType, string> = {
 {"componentType":"stair","stepCount":11,"stepHeight":150,"stepWidth":280}
 \`\`\`
 已设置为11步楼梯。`,
+  foundation: `示例1:
+用户: 2400×2400独立基础，高800，底筋C14@150
+\`\`\`rebar-json
+{"componentType":"foundation","bx":2400,"by":2400,"h":800,"bottomBarX":"C14@150","bottomBarY":"C14@150"}
+\`\`\`
+已设置为2400×2400独立基础。
+
+示例2:
+用户: 双柱基础，4200×2000，柱距2400，顶部纵筋C14@150
+\`\`\`rebar-json
+{"componentType":"foundation","bx":4200,"by":2000,"h":800,"columnCount":2,"colSpacing":2400,"topBarX":"C14@150","topBarY":"C10@200"}
+\`\`\`
+已设置为双柱独立基础。`,
+  raft: `示例1:
+用户: 18×12米筏板基础，板厚700，底筋C16@150
+\`\`\`rebar-json
+{"componentType":"raft","lx":18000,"ly":12000,"h":700,"bottomBarX":"C16@150","bottomBarY":"C16@150"}
+\`\`\`
+已设置为18×12m筏板基础。
+
+示例2:
+用户: 3×2柱网，柱距7500/9000
+\`\`\`rebar-json
+{"componentType":"raft","colCountX":3,"colCountY":2,"colSpacingX":7500,"colSpacingY":9000}
+\`\`\`
+已设置3×2柱网。`,
+  pilecap: `示例:
+用户: 四桩承台，2000×2000，高1000，桩径600
+\`\`\`rebar-json
+{"componentType":"pilecap","bx":2000,"by":2000,"h":1000,"pileDiameter":600,"pileCount":4}
+\`\`\`
+已设置为四桩承台。`,
 };
 
 /** 构建完整 system prompt */
@@ -212,14 +272,16 @@ export const PARAM_SUGGESTIONS: Record<ComponentType, string[]> = {
     '300×600梁，4根25下部筋',
     '上部筋改成3根22的',
     '箍筋加密改成80间距',
-    '加左支座负筋2根2C25',
+    '上部筋改成2C25+2C22',
     '加构造腰筋G4C12',
     '混凝土改C35',
   ],
   column: [
     '500×500柱，12根25纵筋',
+    '角筋4根25，b边中部每侧2根22',
     '纵筋加粗到28',
     '箍筋改4肢箍',
+    'b边中部筋改成每侧3根20',
   ],
   shearwall: [
     '200厚墙，竖向C10@200',
@@ -237,6 +299,21 @@ export const PARAM_SUGGESTIONS: Record<ComponentType, string[]> = {
     '11步楼梯，踏步高150宽280',
     '梯板厚改成140',
     '下部纵筋改成C12@150',
+  ],
+  foundation: [
+    '2400×2400独立基础，高800',
+    '底筋改成C14@150',
+    '改成双柱基础，柱距2400',
+  ],
+  raft: [
+    '18×12米筏板，板厚700',
+    '底筋改成C16@150',
+    '3×2柱网，柱距7500/9000',
+  ],
+  pilecap: [
+    '四桩承台，2000×2000，高1000',
+    '桩径改成800',
+    '底筋改成C16@150',
   ],
 };
 
@@ -273,6 +350,21 @@ export const ANALYSIS_SUGGESTIONS: Record<ComponentType, string[]> = {
     '生成梯板配筋计算书（含配筋率、锚固长度）',
     '梯板厚度和配筋经济性分析',
   ],
+  foundation: [
+    '分析当前基础配筋方案的合理性',
+    '生成基础配筋计算书（含冲切验算）',
+    '基础尺寸和配筋经济性分析',
+  ],
+  raft: [
+    '分析当前筏板基础配筋方案的合理性',
+    '生成筏板配筋计算书（含配筋率、冲切验算）',
+    '筏板板厚和配筋经济性分析',
+  ],
+  pilecap: [
+    '分析当前承台配筋方案的合理性',
+    '生成承台配筋计算书（含冲切验算）',
+    '承台尺寸与桩位布置合理性分析',
+  ],
 };
 
 /** 知识问答建议 */
@@ -287,6 +379,9 @@ export const QA_SUGGESTIONS: Record<ComponentType, string[]> = {
   column: [
     '柱纵筋搭接位置在哪？',
     '箍筋加密区范围？',
+    '22G101-1柱纵筋分项标注怎么看？',
+    '角筋和中部筋有什么区别？',
+    '箍筋类型编号A/B/C型有什么区别？',
   ],
   shearwall: [
     '约束边缘构件范围怎么确定？',
@@ -304,5 +399,20 @@ export const QA_SUGGESTIONS: Record<ComponentType, string[]> = {
     'AT型楼梯纵筋锚固要求？',
     '梯板厚度怎么确定？',
     '分布筋间距要求？',
+  ],
+  foundation: [
+    '独立基础底筋锚固要求？',
+    '柱插筋弯折长度怎么算？',
+    '阶形基础各阶高度要求？',
+  ],
+  raft: [
+    '筏板基础板厚怎么确定？',
+    '筏板配筋率最小要求？',
+    '柱插筋锥入筏板长度要求？',
+  ],
+  pilecap: [
+    '承台高度怎么确定？',
+    '桩中心距要求是什么？',
+    '桩伸入承台长度要求？',
   ],
 };

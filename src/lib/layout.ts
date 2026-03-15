@@ -4,6 +4,7 @@
  */
 
 import { S } from './constants';
+import { MIN_CLEAR_SPACING, rebarArea } from './construction-rules';
 
 /**
  * GB50010: 同排钢筋净间距 ≥ max(d, 25mm)
@@ -12,7 +13,7 @@ import { S } from './constants';
  * @returns 每排最大根数
  */
 export function maxBarsPerRow(zRange: number, dia: number): number {
-  const minClear = Math.max(dia * S, 25 * S);
+  const minClear = MIN_CLEAR_SPACING.horizontal(dia) * S;
   return Math.max(Math.floor((zRange + minClear) / (dia * S + minClear)), 1);
 }
 
@@ -33,11 +34,13 @@ export interface RebarLayout {
   diameter: number;
   rows?: number;
   perRow?: number[];
+  segments?: { count: number; grade: string; diameter: number }[];
 }
 
 export interface BarPosition {
   y: number;
   z: number;
+  diameter?: number; // 混合直径时每根钢筋的实际直径 (mm)
 }
 
 /**
@@ -81,7 +84,8 @@ export function layoutBars(
   for (let row = 0; row < perRow.length; row++) {
     if (row >= yPositions.length) break;
     const zArr = distributeZ(zRange, perRow[row]);
-    zArr.forEach(z => bars.push({ y: yPositions[row], z }));
+    const rowDia = rebar.segments && rebar.segments[row] ? rebar.segments[row].diameter : undefined;
+    zArr.forEach(z => bars.push({ y: yPositions[row], z, diameter: rowDia }));
   }
   return bars;
 }
@@ -107,6 +111,7 @@ export function calcEffectiveDepth(
   count: number,
   rows?: number,
   perRow?: number[],
+  segments?: { count: number; diameter: number }[],
 ): { as_mm: number; h0: number } {
   const rowCount = rows || (perRow && perRow.length >= 2 ? perRow.length : 1);
 
@@ -129,22 +134,30 @@ export function calcEffectiveDepth(
     }
   }
 
+  // 各排直径 (混合直径时各排不同)
+  const rowDia = (i: number) => segments && segments[i] ? segments[i].diameter : rebarDia;
+
   // 各排到近边缘距离 asi (mm)
-  // 第一排: cover + stirDia + d/2
-  // 第 i 排: 前一排 + d/2 + clearV + d/2 (clearV = max(d, 25))
-  const clearV = Math.max(rebarDia, 25);
-  const rowDistances: number[] = [cover + stirDia + rebarDia / 2];
+  // 第一排: cover + stirDia + d0/2
+  // 第 i 排: 前一排 + d(i-1)/2 + clearV + d(i)/2
+  const d0 = rowDia(0);
+  const rowDistances: number[] = [cover + stirDia + d0 / 2];
   for (let i = 1; i < pr.length; i++) {
-    rowDistances.push(rowDistances[i - 1] + rebarDia / 2 + clearV + rebarDia / 2);
+    const dPrev = rowDia(i - 1);
+    const dCur = rowDia(i);
+    const clearV = MIN_CLEAR_SPACING.verticalMixed(dPrev, dCur);
+    rowDistances.push(rowDistances[i - 1] + dPrev / 2 + clearV + dCur / 2);
   }
 
-  // 加权平均: as = Σ(ni × asi) / Σni  (同直径时面积比等于根数比)
-  let sumNA = 0, sumN = 0;
+  // 加权平均: as = Σ(Asi × asi) / ΣAsi
+  // Asi = ni × π × di² / 4
+  let sumAA = 0, sumA = 0;
   for (let i = 0; i < pr.length; i++) {
-    sumNA += pr[i] * rowDistances[i];
-    sumN += pr[i];
+    const Ai = pr[i] * rebarArea(rowDia(i));
+    sumAA += Ai * rowDistances[i];
+    sumA += Ai;
   }
-  const as_mm = sumNA / sumN;
+  const as_mm = sumA > 0 ? sumAA / sumA : rowDistances[0];
   return { as_mm, h0: h - as_mm };
 }
 

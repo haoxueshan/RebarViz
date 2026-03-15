@@ -1,11 +1,19 @@
 import type { ConcreteGrade, SeismicGrade } from './anchor';
 
+/** 混合直径钢筋分段 (22G101: 2C25+2C22) */
+export interface RebarSegment {
+  count: number;
+  grade: string;
+  diameter: number;
+}
+
 export interface RebarInfo {
   count: number;
   grade: string;
   diameter: number;
   rows?: number; // 排数，如 6C25(2) 表示2排
   perRow?: number[]; // 每排根数，如 [4,2] 表示第一排4根第二排2根
+  segments?: RebarSegment[]; // 混合直径分段，如 2C25+2C22 → [{count:2,grade:'C',diameter:25},{count:2,grade:'C',diameter:22}]
 }
 
 export interface StirrupInfo {
@@ -14,6 +22,7 @@ export interface StirrupInfo {
   spacingDense: number;
   spacingNormal: number;
   legs: number;
+  typeCode?: string;  // 22G101-1 箍筋类型编号 (A, B, C, D, E, F)
 }
 
 export type HaunchType = 'none' | 'horizontal' | 'vertical';
@@ -50,8 +59,12 @@ export interface ColumnParams {
   id: string;
   b: number;
   h: number;
-  main: string;
+  main: string;            // 全部纵筋 (legacy, e.g. "12C25")
+  cornerMain?: string;     // 角筋 (22G101-1, e.g. "4C25")
+  bMiddleMain?: string;    // b边中部筋 (e.g. "2C20")
+  hMiddleMain?: string;    // h边中部筋 (e.g. "2C20")
   stirrup: string;
+  stirrupType?: string;    // 箍筋类型编号 (22G101-1, e.g. "A", "B", "C")
   // 新增
   concreteGrade: ConcreteGrade;
   seismicGrade: SeismicGrade;
@@ -137,15 +150,127 @@ export interface StairParams {
   cover: number;               // 保护层 (mm)
 }
 
-export type ComponentType = 'beam' | 'column' | 'slab' | 'joint' | 'shearwall' | 'stair';
+// ═══════════════════════════════════════════════════════════════════
+// 基础参数 (22G101-3)
+// ═══════════════════════════════════════════════════════════════════
+
+/** 独立基础形状 */
+export type FoundationShape = 'stepped' | 'tapered';
+
+/** 阶形基础每阶尺寸 */
+export interface FoundationStepDim {
+  bx: number;  // 该阶 X 向宽 (mm)
+  by: number;  // 该阶 Y 向宽 (mm)
+  h: number;   // 该阶高度 (mm)
+}
+
+/** 独立基础参数 */
+export interface FoundationParams {
+  id: string;
+  shape: FoundationShape;        // 阶形 / 锥形
+  // 底面尺寸
+  bx: number;                    // 基础底面 X 向宽 (mm)
+  by: number;                    // 基础底面 Y 向宽 (mm)
+  h: number;                     // 基础总高 (mm)
+  // 阶形基础
+  stepCount: number;             // 台阶数 (1~3)
+  stepDims: FoundationStepDim[]; // 各阶尺寸（从底到顶）
+  // 底部配筋
+  bottomBarX: string;            // X 向底筋 e.g. C12@150
+  bottomBarY: string;            // Y 向底筋 e.g. C12@150
+  // 柱
+  colBx: number;                 // 柱截面 X 向 (mm)
+  colBy: number;                 // 柱截面 Y 向 (mm)
+  colMain: string;               // 柱插筋 e.g. 8C20
+  // 双柱基础 (22G101-3 p2-12)
+  columnCount?: 1 | 2;           // 柱数 (默认1)
+  colSpacing?: number;           // 双柱中心距 (mm), 仅 columnCount=2 时有效
+  topBarX?: string;              // 顶部柱间纵向受力钢筋 e.g. C14@150
+  topBarY?: string;              // 顶部柱间分布钢筋 e.g. C10@200
+  // 材料
+  concreteGrade: import('./anchor').ConcreteGrade;
+  seismicGrade?: import('./anchor').SeismicGrade;
+  cover: number;                 // 保护层 (mm)
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 承台参数 (22G101-3)
+// ═══════════════════════════════════════════════════════════════════
+
+/** 桩排布方式 */
+export type PileLayout = 'grid' | 'circular';
+
+/** 承台参数 */
+export interface PileCapParams {
+  id: string;
+  // 承台尺寸
+  bx: number;                    // 承台 X 向宽 (mm)
+  by: number;                    // 承台 Y 向宽 (mm)
+  h: number;                     // 承台高度 (mm)
+  // 底部配筋
+  bottomBarX: string;            // X 向底筋 e.g. C14@150
+  bottomBarY: string;            // Y 向底筋 e.g. C14@150
+  // 柱
+  colBx: number;                 // 柱截面 X 向 (mm)
+  colBy: number;                 // 柱截面 Y 向 (mm)
+  colMain: string;               // 柱插筋 e.g. 8C20
+  // 桩参数
+  pileLayout: PileLayout;        // 桩排布方式
+  pileDiameter: number;          // 桩径 (mm)
+  pileCount: number;             // 桩数
+  pileSpacingX: number;          // X 向桩距 (mm, 中心到中心)
+  pileSpacingY: number;          // Y 向桩距 (mm, 中心到中心)
+  pileLength: number;            // 桩长 (mm, 用于显示)
+  // 材料
+  concreteGrade: import('./anchor').ConcreteGrade;
+  seismicGrade?: import('./anchor').SeismicGrade;
+  cover: number;                 // 保护层 (mm)
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 筏板基础参数
+// ═══════════════════════════════════════════════════════════════════
+
+/** 筏板基础参数 */
+export interface RaftFoundationParams {
+  id: string;
+  // 筏板尺寸
+  lx: number;                    // X 向长度 (mm)
+  ly: number;                    // Y 向宽度 (mm)
+  h: number;                     // 板厚 (mm)
+  // 底部配筋
+  bottomBarX: string;            // X 向底筋 e.g. C14@150
+  bottomBarY: string;            // Y 向底筋 e.g. C14@150
+  // 顶部配筋
+  topBarX: string;               // X 向面筋 e.g. C12@200
+  topBarY: string;               // Y 向面筋 e.g. C12@200
+  // 柱网 (简化: 单柱或矩形柱网)
+  colBx: number;                 // 柱截面 X 向 (mm)
+  colBy: number;                 // 柱截面 Y 向 (mm)
+  colMain: string;               // 柱插筋 e.g. 8C20
+  colCountX: number;             // X 向柱数
+  colCountY: number;             // Y 向柱数
+  colSpacingX: number;           // X 向柱距 (mm)
+  colSpacingY: number;           // Y 向柱距 (mm)
+  // 材料
+  concreteGrade: import('./anchor').ConcreteGrade;
+  seismicGrade: import('./anchor').SeismicGrade;
+  cover: number;                 // 保护层 (mm)
+}
+
+export type ComponentType = 'beam' | 'column' | 'slab' | 'joint' | 'shearwall' | 'stair' | 'foundation' | 'pilecap' | 'raft';
 
 export interface RebarMeshInfo {
   type: 'top' | 'bottom' | 'stirrup' | 'leftSupport' | 'rightSupport' | 'leftSupport2' | 'rightSupport2' | 'main'
+    | 'corner' | 'bMiddle' | 'hMiddle'
     | 'bottomX' | 'bottomY' | 'topX' | 'topY' | 'distribution'
     | 'colMain' | 'colStirrup' | 'beamTop' | 'beamBottom' | 'beamStirrup' | 'jointStirrup' | 'anchor'
     | 'vertBar' | 'horizBar' | 'boundaryMain' | 'boundaryStirrup'
     | 'sideBar' | 'erection' | 'tieBar'
-    | 'stairTop' | 'stairBottom' | 'stairDist' | 'stairPlatform';
+    | 'stairTop' | 'stairBottom' | 'stairDist' | 'stairPlatform'
+    | 'foundBottomX' | 'foundBottomY' | 'foundColMain' | 'foundTopX' | 'foundTopY'
+    | 'pcBottomX' | 'pcBottomY' | 'pcColMain' | 'pcPile'
+    | 'raftBottomX' | 'raftBottomY' | 'raftTopX' | 'raftTopY' | 'raftColMain';
   label: string;
   detail: string;
 }

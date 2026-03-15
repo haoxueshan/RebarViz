@@ -9,6 +9,7 @@ import * as THREE from 'three';
 import type { BeamParams, RebarMeshInfo } from '@/lib/types';
 import { parseRebar, parseRebarBottom, parseStirrup, parseSideBar, parseTieBar, autoTieBar, tieBarToString, gradeLabel } from '@/lib/rebar';
 import { calcSupportRebarLength, calcBeamEndAnchor, calcLaE } from '@/lib/anchor';
+import { beamDenseZoneLength } from '@/lib/construction-rules';
 import { RebarDetailPanel } from './RebarDetailPanel';
 import {
   S,
@@ -225,10 +226,10 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
   const botAnchor = calcBeamEndAnchor(botR.grade, botR.diameter, params.concreteGrade, params.seismicGrade, params.hc || 500, params.cover || 25);
 
   // 22G101 dense zone: max(2h, 500mm) from column face
-  const denseZoneMm = Math.max(2 * params.h, 500);
+  const denseZoneMm = beamDenseZoneLength(params.h);
   const denseZone = denseZoneMm * S;
   // stirrups useMemo 专用原始值（避免依赖整个 params）
-  const botDia = botR.diameter;
+  const botDiaBase = botR.diameter;
   const seismicGrade = params.seismicGrade;
   const beamH = params.h;
 
@@ -239,7 +240,7 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
     const normalS = stir.spacingNormal * S;
 
     // 当有加腋时，加腋区箍筋由加腋模块单独生成，常规箍筋跳过加腋加密区
-    const h0 = hm - COVER - (botDia * S / 2);
+    const h0 = hm - COVER - (botDiaBase * S / 2);
     const hbCoeff = seismicGrade === '一级' ? 2.0 : 1.5;
     const haunchDense1 = haunchType !== 'none'
       ? Math.max(hbCoeff * beamH * S, 0.5, (haunchLen + 0.5 * h0))
@@ -256,32 +257,38 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
     const rightEnd = halfLen - rightSkip - 0.05;
     for (let x = halfLen - denseZone; x < rightEnd; x += denseS) positions.push({ x, zone: 'dense' });
     return positions;
-  }, [stir.spacingDense, stir.spacingNormal, BEAM_LEN, denseZone, haunchType, hasLeftHaunch, hasRightHaunch, haunchLen, hm, COVER, botDia, seismicGrade, beamH]);
+  }, [stir.spacingDense, stir.spacingNormal, BEAM_LEN, denseZone, haunchType, hasLeftHaunch, hasRightHaunch, haunchLen, hm, COVER, botDiaBase, seismicGrade, beamH]);
 
 
   // ============ 钢筋 Y 坐标计算 (22G101 构造) ============
+  // 各排直径辅助 (混合直径时各排不同)
+  const topDia = (row: number) => topR.segments?.[row]?.diameter ?? topR.diameter;
+  const botDia = (row: number) => botR.segments?.[row]?.diameter ?? botR.diameter;
+
   // 上部钢筋多排布置
-  const topBarY1 = hm - COVER - STIR_D - topR.diameter * S / 2;
-  const topClearV = Math.max(topR.diameter * S, 25 * S);
+  const topBarY1 = hm - COVER - STIR_D - topDia(0) * S / 2;
   const topRowCount = topR.rows || (topR.perRow ? topR.perRow.length : 1);
   const topBarYPositions = (() => {
     const positions = [topBarY1];
     for (let i = 1; i < topRowCount; i++) {
-      const prevY = positions[i - 1];
-      positions.push(prevY - topR.diameter * S / 2 - topClearV - topR.diameter * S / 2);
+      const dPrev = topDia(i - 1);
+      const dCur = topDia(i);
+      const clearV = Math.max(Math.max(dPrev, dCur) * S, 25 * S);
+      positions.push(positions[i - 1] - dPrev * S / 2 - clearV - dCur * S / 2);
     }
     return positions;
   })();
 
   // 下部钢筋多排布置
-  const botBarY1 = COVER + STIR_D + botR.diameter * S / 2;
-  const botClear = Math.max(botR.diameter * S, 25 * S);
+  const botBarY1 = COVER + STIR_D + botDia(0) * S / 2;
   const botRowCount = botR.rows || (botR.perRow ? botR.perRow.length : 1);
   const botBarYPositions = (() => {
     const positions = [botBarY1];
     for (let i = 1; i < botRowCount; i++) {
-      const prevY = positions[i - 1];
-      positions.push(prevY + botR.diameter * S / 2 + botClear + botR.diameter * S / 2);
+      const dPrev = botDia(i - 1);
+      const dCur = botDia(i);
+      const clearV = Math.max(Math.max(dPrev, dCur) * S, 25 * S);
+      positions.push(positions[i - 1] + dPrev * S / 2 + clearV + dCur * S / 2);
     }
     return positions;
   })();
@@ -468,103 +475,133 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
 
       {/* Top through bars (full beam length) */}
       <group visible={gv('top')}>
-      {topBars.map((bar, i) => (
-        <RebarBar key={`t${i}`} position={[0, bar.y, bar.z]} length={TOTAL_NET} diameter={topR.diameter}
+      {topBars.map((bar, i) => {
+        const d = bar.diameter || topR.diameter;
+        return (
+        <RebarBar key={`t${i}`} position={[0, bar.y, bar.z]} length={TOTAL_NET} diameter={d}
           color={COLOR_REBAR} hiColor={COLOR_REBAR_HI}
-          info={{ type: 'top', label: '上部通长筋', detail: `${params.top} · ${topR.count}根 ${gradeLabel(topR.grade)} Φ${topR.diameter}，端锚: ${topAnchorDesc}` }}
+          info={{ type: 'top', label: '上部通长筋', detail: `${params.top} · ${topR.count}根 ${topR.segments ? '混合直径' : `${gradeLabel(topR.grade)} Φ${topR.diameter}`}，端锚: ${topAnchorDesc}` }}
           selected={isSelected('top')} onSelect={onSelect} />
-      ))}
+        );
+      })}
 
       {/* Top bar anchor bends at end columns */}
-      {!topAnchor.canStraight && topBars.map((bar, i) => (
+      {!topAnchor.canStraight && topBars.map((bar, i) => {
+        const d = bar.diameter || topR.diameter;
+        const barAnchor = d !== topR.diameter
+          ? calcBeamEndAnchor(topR.grade, d, params.concreteGrade, params.seismicGrade, params.hc || 500, params.cover || 25)
+          : topAnchor;
+        return (
         <group key={`ta-l${i}`}>
           <BentRebarEnd
             position={[-TOTAL_NET / 2, bar.y, bar.z]}
-            straightLen={topAnchor.bentStraightPart * S}
-            bendLen={topAnchor.bentBendPart * S}
-            diameter={topR.diameter} direction="down" color={COLOR_REBAR}
+            straightLen={barAnchor.bentStraightPart * S}
+            bendLen={barAnchor.bentBendPart * S}
+            diameter={d} direction="down" color={COLOR_REBAR}
             hiColor={COLOR_REBAR_HI}
             info={{ type: 'top', label: '上部筋弯锚', detail: topAnchorDesc }}
             selected={isSelected('top')} onSelect={onSelect}
             xDir={-1} />
           <BentRebarEnd
             position={[TOTAL_NET / 2, bar.y, bar.z]}
-            straightLen={topAnchor.bentStraightPart * S}
-            bendLen={topAnchor.bentBendPart * S}
-            diameter={topR.diameter} direction="down" color={COLOR_REBAR}
+            straightLen={barAnchor.bentStraightPart * S}
+            bendLen={barAnchor.bentBendPart * S}
+            diameter={d} direction="down" color={COLOR_REBAR}
             hiColor={COLOR_REBAR_HI}
             info={{ type: 'top', label: '上部筋弯锚', detail: topAnchorDesc }}
             selected={isSelected('top')} onSelect={onSelect}
             xDir={1} />
         </group>
-      ))}
+        );
+      })}
 
       {/* Top bar straight anchor extensions into end columns */}
-      {topAnchor.canStraight && topBars.map((bar, i) => (
+      {topAnchor.canStraight && topBars.map((bar, i) => {
+        const d = bar.diameter || topR.diameter;
+        const barAnchor = d !== topR.diameter
+          ? calcBeamEndAnchor(topR.grade, d, params.concreteGrade, params.seismicGrade, params.hc || 500, params.cover || 25)
+          : topAnchor;
+        return (
         <group key={`ta-s${i}`}>
-          <RebarBar position={[-TOTAL_NET / 2 - topAnchor.straightLen * S / 2, bar.y, bar.z]}
-            length={topAnchor.straightLen * S} diameter={topR.diameter}
+          <RebarBar position={[-TOTAL_NET / 2 - barAnchor.straightLen * S / 2, bar.y, bar.z]}
+            length={barAnchor.straightLen * S} diameter={d}
             color={COLOR_REBAR} hiColor={COLOR_REBAR_HI}
             info={{ type: 'top', label: '上部筋直锚', detail: topAnchorDesc }}
             selected={isSelected('top')} onSelect={onSelect} />
-          <RebarBar position={[TOTAL_NET / 2 + topAnchor.straightLen * S / 2, bar.y, bar.z]}
-            length={topAnchor.straightLen * S} diameter={topR.diameter}
+          <RebarBar position={[TOTAL_NET / 2 + barAnchor.straightLen * S / 2, bar.y, bar.z]}
+            length={barAnchor.straightLen * S} diameter={d}
             color={COLOR_REBAR} hiColor={COLOR_REBAR_HI}
             info={{ type: 'top', label: '上部筋直锚', detail: topAnchorDesc }}
             selected={isSelected('top')} onSelect={onSelect} />
         </group>
-      ))}
+        );
+      })}
 
       </group>
 
       {/* Bottom through bars (full beam length) */}
       <group visible={gv('bottom')}>
-      {botBars.map((bar, i) => (
-        <RebarBar key={`b${i}`} position={[0, bar.y, bar.z]} length={TOTAL_NET} diameter={botR.diameter}
+      {botBars.map((bar, i) => {
+        const d = bar.diameter || botR.diameter;
+        return (
+        <RebarBar key={`b${i}`} position={[0, bar.y, bar.z]} length={TOTAL_NET} diameter={d}
           color={COLOR_REBAR} hiColor={COLOR_REBAR_HI}
-          info={{ type: 'bottom', label: '下部通长筋', detail: `${params.bottom} · ${botR.count}根 ${gradeLabel(botR.grade)} Φ${botR.diameter}，端锚: ${botAnchorDesc}` }}
+          info={{ type: 'bottom', label: '下部通长筋', detail: `${params.bottom} · ${botR.count}根 ${botR.segments ? '混合直径' : `${gradeLabel(botR.grade)} Φ${botR.diameter}`}，端锚: ${botAnchorDesc}` }}
           selected={isSelected('bottom')} onSelect={onSelect} />
-      ))}
+        );
+      })}
 
       {/* Bottom bar anchor bends at end columns */}
-      {!botAnchor.canStraight && botBars.map((bar, i) => (
+      {!botAnchor.canStraight && botBars.map((bar, i) => {
+        const d = bar.diameter || botR.diameter;
+        const barAnchor = d !== botR.diameter
+          ? calcBeamEndAnchor(botR.grade, d, params.concreteGrade, params.seismicGrade, params.hc || 500, params.cover || 25)
+          : botAnchor;
+        return (
         <group key={`ba-l${i}`}>
           <BentRebarEnd
             position={[-TOTAL_NET / 2, bar.y, bar.z]}
-            straightLen={botAnchor.bentStraightPart * S}
-            bendLen={botAnchor.bentBendPart * S}
-            diameter={botR.diameter} direction="up" color={COLOR_REBAR}
+            straightLen={barAnchor.bentStraightPart * S}
+            bendLen={barAnchor.bentBendPart * S}
+            diameter={d} direction="up" color={COLOR_REBAR}
             hiColor={COLOR_REBAR_HI}
             info={{ type: 'bottom', label: '下部筋弯锚', detail: botAnchorDesc }}
             selected={isSelected('bottom')} onSelect={onSelect}
             xDir={-1} />
           <BentRebarEnd
             position={[TOTAL_NET / 2, bar.y, bar.z]}
-            straightLen={botAnchor.bentStraightPart * S}
-            bendLen={botAnchor.bentBendPart * S}
-            diameter={botR.diameter} direction="up" color={COLOR_REBAR}
+            straightLen={barAnchor.bentStraightPart * S}
+            bendLen={barAnchor.bentBendPart * S}
+            diameter={d} direction="up" color={COLOR_REBAR}
             hiColor={COLOR_REBAR_HI}
             info={{ type: 'bottom', label: '下部筋弯锚', detail: botAnchorDesc }}
             selected={isSelected('bottom')} onSelect={onSelect}
             xDir={1} />
         </group>
-      ))}
+        );
+      })}
 
       {/* Bottom bar straight anchor extensions into end columns */}
-      {botAnchor.canStraight && botBars.map((bar, i) => (
+      {botAnchor.canStraight && botBars.map((bar, i) => {
+        const d = bar.diameter || botR.diameter;
+        const barAnchor = d !== botR.diameter
+          ? calcBeamEndAnchor(botR.grade, d, params.concreteGrade, params.seismicGrade, params.hc || 500, params.cover || 25)
+          : botAnchor;
+        return (
         <group key={`ba-s${i}`}>
-          <RebarBar position={[-TOTAL_NET / 2 - botAnchor.straightLen * S / 2, bar.y, bar.z]}
-            length={botAnchor.straightLen * S} diameter={botR.diameter}
+          <RebarBar position={[-TOTAL_NET / 2 - barAnchor.straightLen * S / 2, bar.y, bar.z]}
+            length={barAnchor.straightLen * S} diameter={d}
             color={COLOR_REBAR} hiColor={COLOR_REBAR_HI}
             info={{ type: 'bottom', label: '下部筋直锚', detail: botAnchorDesc }}
             selected={isSelected('bottom')} onSelect={onSelect} />
-          <RebarBar position={[TOTAL_NET / 2 + botAnchor.straightLen * S / 2, bar.y, bar.z]}
-            length={botAnchor.straightLen * S} diameter={botR.diameter}
+          <RebarBar position={[TOTAL_NET / 2 + barAnchor.straightLen * S / 2, bar.y, bar.z]}
+            length={barAnchor.straightLen * S} diameter={d}
             color={COLOR_REBAR} hiColor={COLOR_REBAR_HI}
             info={{ type: 'bottom', label: '下部筋直锚', detail: botAnchorDesc }}
             selected={isSelected('bottom')} onSelect={onSelect} />
         </group>
-      ))}
+        );
+      })}
 
       </group>
 

@@ -2,8 +2,8 @@
 
 import { useRef, useEffect, useState, useCallback, type RefObject } from 'react';
 import { Download } from 'lucide-react';
-import type { BeamParams, ColumnParams, SlabParams, ShearWallParams, StairParams } from '@/lib/types';
-import { parseRebar, parseRebarBottom, parseStirrup, parseSlabRebar, parseSideBar } from '@/lib/rebar';
+import type { BeamParams, ColumnParams, SlabParams, ShearWallParams, StairParams, FoundationParams, PileCapParams, RaftFoundationParams } from '@/lib/types';
+import { parseRebar, parseRebarBottom, parseStirrup, parseSlabRebar, parseSideBar, resolveColumnBars } from '@/lib/rebar';
 import {
   setupHiDPI, drawConcreteSection, drawRebarDot, drawRebarCross,
   drawStirrup, drawInnerTies, drawDimLine, drawCoverDim, drawLabel,
@@ -112,7 +112,7 @@ export function BeamCrossSection({ params, cutPosition }: { params: BeamParams; 
     const stirH = dh - cover;
     drawStirrup(ctx, stirX, stirY, stirW, stirH, '#27AE60', 8);
 
-    // ── Top rebars (through bars, multi-row support) ──
+    // ── Top rebars (through bars, multi-row support, mixed diameter) ──
     const topY = sectionTop + cover;
     const topRowCount = topR.rows || (topR.perRow ? topR.perRow.length : 1);
     const topPerRow: number[] = topR.perRow && topR.perRow.length >= 2
@@ -120,17 +120,23 @@ export function BeamCrossSection({ params, cutPosition }: { params: BeamParams; 
       : topRowCount >= 2
         ? (() => { const pr: number[] = []; let rem = topR.count; for (let r = 0; r < topRowCount; r++) { const n = Math.ceil(rem / (topRowCount - r)); pr.push(n); rem -= n; } return pr; })()
         : [topR.count];
-    const topClearV = Math.max(topR.diameter * scale, 25 * scale);
+    const topDiaFn = (row: number) => topR.segments?.[row]?.diameter ?? topR.diameter;
+    let topCurY = topY;
     for (let row = 0; row < topPerRow.length; row++) {
-      const rowY = topY + row * (topR.diameter * scale + topClearV);
+      const rowDia = topDiaFn(row);
+      if (row > 0) {
+        const prevDia = topDiaFn(row - 1);
+        const clearV = Math.max(Math.max(prevDia, rowDia) * scale, 25 * scale);
+        topCurY += prevDia * scale / 2 + clearV + rowDia * scale / 2;
+      }
       const rowCount = topPerRow[row];
       const rowSpacing = innerW / Math.max(rowCount - 1, 1);
       for (let i = 0; i < rowCount; i++) {
         const x = sectionLeft + cover + i * rowSpacing;
-        drawRebarDot(ctx, x, rowY, Math.max(topR.diameter * scale / 2, 4), '#C0392B');
+        drawRebarDot(ctx, x, topCurY, Math.max(rowDia * scale / 2, 4), '#C0392B');
       }
     }
-    const topLastRowY = topY + (topPerRow.length - 1) * (topR.diameter * scale + topClearV);
+    const topLastRowY = topCurY;
 
     // ── Support rebars (1st row) ──
     const showLeftSupport = hasCut ? inLeftSupport : !!leftR;
@@ -163,7 +169,7 @@ export function BeamCrossSection({ params, cutPosition }: { params: BeamParams; 
       drawLabel(ctx, row2Label, sectionRight + 8, row2Y + 4, '#A569BD', LW);
     }
 
-    // ── Bottom rebars (multi-row support) ──
+    // ── Bottom rebars (multi-row support, mixed diameter) ──
     const botY = sectionBottom - cover;
     const botRowCount = botR.rows || (botR.perRow ? botR.perRow.length : 1);
     const botPerRow: number[] = botR.perRow && botR.perRow.length >= 2
@@ -171,14 +177,20 @@ export function BeamCrossSection({ params, cutPosition }: { params: BeamParams; 
       : botRowCount >= 2
         ? (() => { const pr: number[] = []; let rem = botR.count; for (let r = 0; r < botRowCount; r++) { const n = Math.ceil(rem / (botRowCount - r)); pr.push(n); rem -= n; } return pr; })()
         : [botR.count];
-    const botClearV = Math.max(botR.diameter * scale, 25 * scale);
+    const botDiaFn = (row: number) => botR.segments?.[row]?.diameter ?? botR.diameter;
+    let botCurY = botY;
     for (let row = 0; row < botPerRow.length; row++) {
-      const rowY = botY - row * (botR.diameter * scale + botClearV);
+      const rowDia = botDiaFn(row);
+      if (row > 0) {
+        const prevDia = botDiaFn(row - 1);
+        const clearV = Math.max(Math.max(prevDia, rowDia) * scale, 25 * scale);
+        botCurY -= prevDia * scale / 2 + clearV + rowDia * scale / 2;
+      }
       const rowCount = botPerRow[row];
       const rowSpacing = innerW / Math.max(rowCount - 1, 1);
       for (let i = 0; i < rowCount; i++) {
         const x = sectionLeft + cover + i * rowSpacing;
-        drawRebarDot(ctx, x, rowY, Math.max(botR.diameter * scale / 2, 4), '#C0392B');
+        drawRebarDot(ctx, x, botCurY, Math.max(rowDia * scale / 2, 4), '#C0392B');
       }
     }
 
@@ -276,11 +288,11 @@ export function ColumnCrossSection({ params, cutPosition }: { params: ColumnPara
     const colH = (params.height || 3000) * 0.001;
     const inDenseZone = cutY <= 0.5 || cutY >= (colH - 0.5);
 
-    const mainR = parseRebar(params.main);
     const stir = parseStirrup(params.stirrup);
     const innerW = dw - 2 * cover;
     const innerH = dh - 2 * cover;
-    const perSide = Math.max(Math.round(mainR.count / 4), 2);
+
+    const resolved = resolveColumnBars(params.main, params.cornerMain, params.bMiddleMain, params.hMiddleMain, innerW, innerH);
 
     const sectionLeft = cx - dw / 2;
     const sectionTop = cy - dh / 2;
@@ -300,37 +312,12 @@ export function ColumnCrossSection({ params, cutPosition }: { params: ColumnPara
     // ── Inner ties (composite stirrup) ──
     drawInnerTies(ctx, stir.legs, stirX, stirY, stirW, stirH, '#27AE60', 6);
 
-    // ── Main rebars ──
-    const pts: { x: number; y: number; isCorner: boolean }[] = [];
-    // Top side
-    for (let i = 0; i < perSide; i++) pts.push({
-      x: -innerW / 2 + (innerW * i) / (perSide - 1),
-      y: -innerH / 2,
-      isCorner: i === 0 || i === perSide - 1,
-    });
-    // Right side
-    for (let i = 1; i < perSide; i++) pts.push({
-      x: innerW / 2,
-      y: -innerH / 2 + (innerH * i) / (perSide - 1),
-      isCorner: i === perSide - 1,
-    });
-    // Bottom side
-    for (let i = 1; i < perSide; i++) pts.push({
-      x: innerW / 2 - (innerW * i) / (perSide - 1),
-      y: innerH / 2,
-      isCorner: i === perSide - 1,
-    });
-    // Left side
-    for (let i = 1; i < perSide - 1; i++) pts.push({
-      x: -innerW / 2,
-      y: innerH / 2 - (innerH * i) / (perSide - 1),
-      isCorner: false,
-    });
-
-    const baseR = Math.max(mainR.diameter * scale / 2, 4);
-    pts.slice(0, mainR.count).forEach(p => {
-      const r = p.isCorner ? baseR * 1.15 : baseR;
-      drawRebarDot(ctx, cx + p.x, cy + p.y, r, '#C0392B');
+    // ── Main rebars (using resolveColumnBars) ──
+    const roleColor: Record<string, string> = { corner: '#C0392B', bMiddle: '#E67E22', hMiddle: '#8E44AD' };
+    resolved.bars.forEach(bar => {
+      const r = Math.max(bar.diameter * scale / 2, 4) * (bar.role === 'corner' ? 1.15 : 1);
+      const color = resolved.isDetailed ? (roleColor[bar.role] || '#C0392B') : '#C0392B';
+      drawRebarDot(ctx, cx + bar.x, cy + bar.z, r, color);
     });
 
     // ── Cover dimension ──
@@ -342,15 +329,23 @@ export function ColumnCrossSection({ params, cutPosition }: { params: ColumnPara
 
     // ── Labels ──
     const labelX = sectionRight + 8;
-    drawLabel(ctx, `纵筋: ${params.main}`, labelX, cy - 6, '#C0392B', LW);
+    let labelY = cy - 18;
+    if (resolved.isDetailed) {
+      drawLabel(ctx, `角筋: ${params.cornerMain}`, labelX, labelY, '#C0392B', LW); labelY += 16;
+      if (params.bMiddleMain) { drawLabel(ctx, `b中: ${params.bMiddleMain}`, labelX, labelY, '#E67E22', LW); labelY += 16; }
+      if (params.hMiddleMain) { drawLabel(ctx, `h中: ${params.hMiddleMain}`, labelX, labelY, '#8E44AD', LW); labelY += 16; }
+    } else {
+      drawLabel(ctx, `纵筋: ${params.main}`, labelX, labelY, '#C0392B', LW); labelY += 16;
+    }
 
+    const typeInfo = stir.typeCode ? ` [${stir.typeCode}型]` : '';
     const stirLabel = hasCut
-      ? `箍: Φ${stir.diameter}@${inDenseZone ? stir.spacingDense : stir.spacingNormal} (${inDenseZone ? '加密区' : '非加密区'})`
-      : `箍筋: ${params.stirrup}`;
-    drawLabel(ctx, stirLabel, labelX, cy + 12, '#27AE60', LW);
+      ? `箍: Φ${stir.diameter}@${inDenseZone ? stir.spacingDense : stir.spacingNormal} (${inDenseZone ? '加密区' : '非加密区'})${typeInfo}`
+      : `箍筋: ${params.stirrup}${typeInfo}`;
+    drawLabel(ctx, stirLabel, labelX, labelY, '#27AE60', LW); labelY += 16;
 
     if (stir.legs > 2) {
-      drawLabel(ctx, `${stir.legs}肢箍`, labelX, cy + 28, '#27AE60', LW);
+      drawLabel(ctx, `${stir.legs}肢箍（含拉筋）`, labelX, labelY, '#27AE60', LW); labelY += 16;
     }
 
     if (hasCut) {
@@ -696,6 +691,356 @@ export function StairCrossSection({ params }: { params: StairParams }) {
   return (
     <div ref={containerRef} className="relative w-full">
       <ExportButton canvasRef={canvasRef} filename="stair-section.png" />
+      <canvas ref={canvasRef} className="max-w-full" />
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// FOUNDATION (独立基础 俯视截面)
+// ═══════════════════════════════════════════════════════════════════
+export function FoundationCrossSection({ params }: { params: FoundationParams }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const containerW = useContainerWidth(containerRef, 420);
+  const LW = Math.min(Math.max(containerW, 320), 560);
+  const LH = LW * 0.75;
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = setupHiDPI(canvas, LW, LH);
+    if (!ctx) return;
+
+    const bx = params.bx;
+    const by = params.by;
+    const cover = params.cover || 40;
+    const barX = parseSlabRebar(params.bottomBarX);
+    const barY = parseSlabRebar(params.bottomBarY);
+
+    const margin = 40;
+    const drawW = LW - margin * 2;
+    const drawH = LH - margin * 2;
+    const scale = Math.min(drawW / bx, drawH / by);
+    const cx = LW / 2;
+    const cy = LH / 2;
+    const secW = bx * scale;
+    const secH = by * scale;
+    const secL = cx - secW / 2;
+    const secR = cx + secW / 2;
+    const secT = cy - secH / 2;
+    const secB = cy + secH / 2;
+    const coverS = cover * scale;
+
+    // 基础底面轮廓
+    drawConcreteSection(ctx, secL, secT, secW, secH);
+
+    // 柱截面轮廓 (虚线)
+    const isDual = (params.columnCount || 1) === 2;
+    const colW = params.colBx * scale;
+    const colH = params.colBy * scale;
+    const colCenters: number[] = isDual && params.colSpacing
+      ? [cx - params.colSpacing * scale / 2, cx + params.colSpacing * scale / 2]
+      : [cx];
+
+    ctx.setLineDash([4, 3]);
+    ctx.strokeStyle = '#64748B';
+    ctx.lineWidth = 1.5;
+    for (const colCx of colCenters) {
+      ctx.strokeRect(colCx - colW / 2, cy - colH / 2, colW, colH);
+    }
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#64748B';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'center';
+    for (const colCx of colCenters) {
+      ctx.fillText('柱', colCx, cy + 4);
+    }
+
+    // X 向底筋 (水平方向圆点)
+    const xBarY = secB - coverS - barX.diameter * scale / 2;
+    const xCount = Math.floor((bx - 2 * cover) / barX.spacing) + 1;
+    const xStart = secL + coverS + barX.diameter * scale / 2;
+    const xEnd = secR - coverS - barX.diameter * scale / 2;
+    const xStep = xCount > 1 ? (xEnd - xStart) / (xCount - 1) : 0;
+    for (let i = 0; i < xCount; i++) {
+      drawRebarDot(ctx, xStart + i * xStep, xBarY, Math.max(barX.diameter * scale * 0.5, 3.5), '#C0392B');
+    }
+
+    // Y 向底筋 (垂直方向圆点)
+    const yBarX = secL + coverS + barY.diameter * scale / 2;
+    const yCount = Math.floor((by - 2 * cover) / barY.spacing) + 1;
+    const yStart = secT + coverS + barY.diameter * scale / 2;
+    const yEnd = secB - coverS - barY.diameter * scale / 2;
+    const yStep = yCount > 1 ? (yEnd - yStart) / (yCount - 1) : 0;
+    for (let i = 0; i < yCount; i++) {
+      drawRebarDot(ctx, yBarX, yStart + i * yStep, Math.max(barY.diameter * scale * 0.5, 3.5), '#2980B9');
+    }
+
+    // 双柱: 顶部柱间配筋区域标示
+    if (isDual && params.colSpacing && colCenters.length === 2) {
+      const regionL = colCenters[0] + colW / 2;
+      const regionR = colCenters[1] - colW / 2;
+      const regionT = secT + coverS;
+      const regionB = secB - coverS;
+      ctx.fillStyle = 'rgba(230,126,34,0.08)';
+      ctx.fillRect(regionL, regionT, regionR - regionL, regionB - regionT);
+      ctx.setLineDash([3, 3]);
+      ctx.strokeStyle = '#E67E22';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(regionL, regionT, regionR - regionL, regionB - regionT);
+      ctx.setLineDash([]);
+    }
+
+    // 保护层标注
+    drawCoverDim(ctx, secL, secB, coverS, cover);
+
+    // 尺寸标注
+    drawDimLine(ctx, secL, secB, secR, secB, `${bx}`, 'bottom', 16);
+    drawDimLine(ctx, secL, secT, secL, secB, `${by}`, 'left', 18);
+    if (isDual && params.colSpacing) {
+      drawDimLine(ctx, colCenters[0], secT, colCenters[1], secT, `s=${params.colSpacing}`, 'top', 14);
+    }
+
+    // 钢筋标注
+    const labelX = secR + 8;
+    let labelY = cy - 16;
+    drawLabel(ctx, `X向底: ${params.bottomBarX}`, labelX, labelY, '#C0392B', LW);
+    labelY += 14;
+    drawLabel(ctx, `Y向底: ${params.bottomBarY}`, labelX, labelY, '#2980B9', LW);
+    if (isDual && params.topBarX) {
+      labelY += 14;
+      drawLabel(ctx, `顶纵: ${params.topBarX}`, labelX, labelY, '#E67E22', LW);
+    }
+    if (isDual && params.topBarY) {
+      labelY += 14;
+      drawLabel(ctx, `顶分: ${params.topBarY}`, labelX, labelY, '#27AE60', LW);
+    }
+  }, [params, LW, LH]);
+
+  return (
+    <div ref={containerRef} className="relative w-full">
+      <ExportButton canvasRef={canvasRef} filename="foundation-section.png" />
+      <canvas ref={canvasRef} className="max-w-full" />
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// PILE CAP (承台 俯视截面)
+// ═══════════════════════════════════════════════════════════════════
+export function PileCapCrossSection({ params }: { params: PileCapParams }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const containerW = useContainerWidth(containerRef, 420);
+  const LW = Math.min(Math.max(containerW, 320), 560);
+  const LH = LW * 0.75;
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = setupHiDPI(canvas, LW, LH);
+    if (!ctx) return;
+
+    const bx = params.bx;
+    const by = params.by;
+    const cover = params.cover || 50;
+
+    const margin = 40;
+    const drawW = LW - margin * 2;
+    const drawH = LH - margin * 2;
+    const scale = Math.min(drawW / bx, drawH / by);
+    const cx = LW / 2;
+    const cy = LH / 2;
+    const secW = bx * scale;
+    const secH = by * scale;
+    const secL = cx - secW / 2;
+    const secR = cx + secW / 2;
+    const secT = cy - secH / 2;
+    const secB = cy + secH / 2;
+    const coverS = cover * scale;
+
+    // 承台轮廓
+    drawConcreteSection(ctx, secL, secT, secW, secH);
+
+    // 柱截面轮廓 (虚线)
+    const colW = params.colBx * scale;
+    const colH = params.colBy * scale;
+    ctx.setLineDash([4, 3]);
+    ctx.strokeStyle = '#64748B';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(cx - colW / 2, cy - colH / 2, colW, colH);
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#64748B';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('柱', cx, cy + 4);
+
+    // 桩位 (圆圈)
+    const pileR = params.pileDiameter * scale / 2;
+    const { pileCount, pileSpacingX, pileSpacingY } = params;
+    const pilePositions: { px: number; py: number }[] = [];
+    if (pileCount === 1) {
+      pilePositions.push({ px: cx, py: cy });
+    } else if (pileCount === 2) {
+      pilePositions.push({ px: cx - pileSpacingX * scale / 2, py: cy });
+      pilePositions.push({ px: cx + pileSpacingX * scale / 2, py: cy });
+    } else if (pileCount === 3) {
+      pilePositions.push({ px: cx - pileSpacingX * scale / 2, py: cy + pileSpacingY * scale / 3 });
+      pilePositions.push({ px: cx + pileSpacingX * scale / 2, py: cy + pileSpacingY * scale / 3 });
+      pilePositions.push({ px: cx, py: cy - pileSpacingY * scale * 2 / 3 });
+    } else {
+      const cols = pileSpacingY > 0 ? Math.ceil(Math.sqrt(pileCount * (pileSpacingX / Math.max(pileSpacingY, 1)))) : pileCount;
+      const rows = Math.ceil(pileCount / cols);
+      const totalW = (cols - 1) * pileSpacingX * scale;
+      const totalH2 = (rows - 1) * (pileSpacingY || pileSpacingX) * scale;
+      let idx = 0;
+      for (let r = 0; r < rows && idx < pileCount; r++) {
+        for (let c = 0; c < cols && idx < pileCount; c++) {
+          pilePositions.push({
+            px: cx - totalW / 2 + c * pileSpacingX * scale,
+            py: cy - totalH2 / 2 + r * (pileSpacingY || pileSpacingX) * scale,
+          });
+          idx++;
+        }
+      }
+    }
+    for (const p of pilePositions) {
+      ctx.beginPath();
+      ctx.arc(p.px, p.py, pileR, 0, Math.PI * 2);
+      ctx.strokeStyle = '#7F8C8D';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(127,140,141,0.15)';
+      ctx.fill();
+    }
+
+    // 保护层标注
+    drawCoverDim(ctx, secL, secB, coverS, cover);
+
+    // 尺寸标注
+    drawDimLine(ctx, secL, secB, secR, secB, `${bx}`, 'bottom', 16);
+    drawDimLine(ctx, secL, secT, secL, secB, `${by}`, 'left', 18);
+
+    // 桩标注
+    const labelX = secR + 8;
+    drawLabel(ctx, `桩: Φ${params.pileDiameter} × ${pileCount}根`, labelX, cy - 16, '#7F8C8D', LW);
+    drawLabel(ctx, `X向: ${params.bottomBarX}`, labelX, cy, '#C0392B', LW);
+    drawLabel(ctx, `Y向: ${params.bottomBarY}`, labelX, cy + 16, '#2980B9', LW);
+  }, [params, LW, LH]);
+
+  return (
+    <div ref={containerRef} className="relative w-full">
+      <ExportButton canvasRef={canvasRef} filename="pilecap-section.png" />
+      <canvas ref={canvasRef} className="max-w-full" />
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// RAFT FOUNDATION (筏板基础 俯视截面)
+// ═══════════════════════════════════════════════════════════════════
+export function RaftCrossSection({ params }: { params: RaftFoundationParams }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const containerW = useContainerWidth(containerRef, 420);
+  const LW = Math.min(Math.max(containerW, 320), 560);
+  const LH = LW * 0.75;
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = setupHiDPI(canvas, LW, LH);
+    if (!ctx) return;
+
+    const lx = params.lx;
+    const ly = params.ly;
+    const cover = params.cover || 40;
+    const botX = parseSlabRebar(params.bottomBarX);
+    const botY = parseSlabRebar(params.bottomBarY);
+
+    const margin = 40;
+    const drawW = LW - margin * 2;
+    const drawH = LH - margin * 2;
+    const scale = Math.min(drawW / lx, drawH / ly);
+    const cx = LW / 2;
+    const cy = LH / 2;
+    const secW = lx * scale;
+    const secH = ly * scale;
+    const secL = cx - secW / 2;
+    const secR = cx + secW / 2;
+    const secT = cy - secH / 2;
+    const secB = cy + secH / 2;
+    const coverS = cover * scale;
+
+    // 筏板轮廓
+    drawConcreteSection(ctx, secL, secT, secW, secH);
+
+    // 柱网 (虚线矩形)
+    const colW = params.colBx * scale;
+    const colH = params.colBy * scale;
+    const halfGridX = ((params.colCountX - 1) * params.colSpacingX * scale) / 2;
+    const halfGridY = ((params.colCountY - 1) * params.colSpacingY * scale) / 2;
+    ctx.setLineDash([4, 3]);
+    ctx.strokeStyle = '#64748B';
+    ctx.lineWidth = 1.5;
+    for (let ix = 0; ix < params.colCountX; ix++) {
+      for (let iy = 0; iy < params.colCountY; iy++) {
+        const colCx = cx - halfGridX + ix * params.colSpacingX * scale;
+        const colCy = cy - halfGridY + iy * params.colSpacingY * scale;
+        ctx.strokeRect(colCx - colW / 2, colCy - colH / 2, colW, colH);
+      }
+    }
+    ctx.setLineDash([]);
+
+    // X 向底筋 (水平方向圆点)
+    const xCount = Math.min(Math.floor((lx - 2 * cover) / botX.spacing) + 1, 30);
+    const xStart = secL + coverS;
+    const xEnd = secR - coverS;
+    const xStep = xCount > 1 ? (xEnd - xStart) / (xCount - 1) : 0;
+    const xBarY = secB - coverS;
+    for (let i = 0; i < xCount; i++) {
+      drawRebarDot(ctx, xStart + i * xStep, xBarY, Math.max(botX.diameter * scale * 0.5, 2.5), '#C0392B');
+    }
+
+    // Y 向底筋 (垂直方向圆点)
+    const yCount = Math.min(Math.floor((ly - 2 * cover) / botY.spacing) + 1, 30);
+    const yStart = secT + coverS;
+    const yEnd = secB - coverS;
+    const yStep = yCount > 1 ? (yEnd - yStart) / (yCount - 1) : 0;
+    const yBarX = secL + coverS;
+    for (let i = 0; i < yCount; i++) {
+      drawRebarDot(ctx, yBarX, yStart + i * yStep, Math.max(botY.diameter * scale * 0.5, 2.5), '#2980B9');
+    }
+
+    // 保护层标注
+    drawCoverDim(ctx, secL, secB, coverS, cover);
+
+    // 尺寸标注
+    drawDimLine(ctx, secL, secB, secR, secB, `${lx}`, 'bottom', 16);
+    drawDimLine(ctx, secL, secT, secL, secB, `${ly}`, 'left', 18);
+
+    // 钢筋标注
+    const labelX = secR + 8;
+    let labelYPos = cy - 24;
+    drawLabel(ctx, `X底: ${params.bottomBarX}`, labelX, labelYPos, '#C0392B', LW);
+    labelYPos += 14;
+    drawLabel(ctx, `Y底: ${params.bottomBarY}`, labelX, labelYPos, '#2980B9', LW);
+    if (params.topBarX) {
+      labelYPos += 14;
+      drawLabel(ctx, `X面: ${params.topBarX}`, labelX, labelYPos, '#E67E22', LW);
+    }
+    if (params.topBarY) {
+      labelYPos += 14;
+      drawLabel(ctx, `Y面: ${params.topBarY}`, labelX, labelYPos, '#27AE60', LW);
+    }
+    labelYPos += 14;
+    drawLabel(ctx, `柱网: ${params.colCountX}×${params.colCountY}`, labelX, labelYPos, '#64748B', LW);
+  }, [params, LW, LH]);
+
+  return (
+    <div ref={containerRef} className="relative w-full">
+      <ExportButton canvasRef={canvasRef} filename="raft-section.png" />
       <canvas ref={canvasRef} className="max-w-full" />
     </div>
   );

@@ -143,12 +143,12 @@ export function HistoryPanel({
               <span className="text-xs font-medium text-gray-600">最近记录 ({history.length})</span>
             </div>
             <div className="flex items-center gap-1">
-              <button
+              <span
                 onClick={(e) => { e.stopPropagation(); onClearHistory(); }}
                 className="text-[10px] text-gray-400 hover:text-red-500 cursor-pointer"
               >
                 清空
-              </button>
+              </span>
               {showHistory ? <ChevronUp className="w-3.5 h-3.5 text-gray-400" /> : <ChevronDown className="w-3.5 h-3.5 text-gray-400" />}
             </div>
           </button>

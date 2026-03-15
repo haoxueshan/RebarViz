@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import type { ColumnParams } from '@/lib/types';
-import { COLUMN_PRESETS } from '@/lib/rebar';
+import { COLUMN_PRESETS, parseRebar, STIRRUP_TYPES } from '@/lib/rebar';
 import { calcColumn } from '@/lib/calc';
 import { validateRebar, validateStirrup, validateDimension } from '@/lib/validate';
 import { ColumnCrossSection } from '@/components/CrossSection';
@@ -57,6 +57,23 @@ export function ColumnPageClient() {
   const [showAI, setShowAI] = useState(!!aiMessage);
 
   const update = (patch: Partial<ColumnParams>) => setParams(p => ({ ...p, ...patch }));
+
+  // Auto-sync: when detailed fields change, auto-compute main for backward compat
+  useEffect(() => {
+    if (!params.cornerMain) return;
+    const corner = parseRebar(params.cornerMain);
+    if (!corner.count) return;
+    const bMid = params.bMiddleMain ? parseRebar(params.bMiddleMain) : null;
+    const hMid = params.hMiddleMain ? parseRebar(params.hMiddleMain) : null;
+    const total = corner.count + (bMid ? bMid.count * 2 : 0) + (hMid ? hMid.count * 2 : 0);
+    const maxDia = Math.max(corner.diameter, bMid?.diameter ?? 0, hMid?.diameter ?? 0);
+    const grade = corner.grade;
+    const synced = `${total}${grade}${maxDia}`;
+    if (synced !== params.main) {
+      setParams(p => ({ ...p, main: synced }));
+    }
+  }, [params.cornerMain, params.bMiddleMain, params.hMiddleMain]);
+
   const calcResult = useMemo(() => calcColumn(params), [params]);
   const concreteResult = useMemo(() => calcColumnConcrete(params), [params]);
   const aiContext = useMemo(() => buildColumnContext(params), [params]);
@@ -65,6 +82,9 @@ export function ColumnPageClient() {
     b: validateDimension(params.b, 'b', 200, 1200),
     h: validateDimension(params.h, 'h', 200, 1200),
     main: validateRebar(params.main, 'main'),
+    cornerMain: params.cornerMain ? validateRebar(params.cornerMain, 'cornerMain') : null,
+    bMiddleMain: params.bMiddleMain ? validateRebar(params.bMiddleMain, 'bMiddleMain') : null,
+    hMiddleMain: params.hMiddleMain ? validateRebar(params.hMiddleMain, 'hMiddleMain') : null,
     stirrup: validateStirrup(params.stirrup, 'stirrup'),
   }), [params]);
 
@@ -100,7 +120,26 @@ export function ColumnPageClient() {
               <NumField label="截面宽 b (mm)" value={params.b} onChange={v => update({ b: v })} error={errors.b?.message} min={200} max={1200} />
               <NumField label="截面高 h (mm)" value={params.h} onChange={v => update({ h: v })} error={errors.h?.message} min={200} max={1200} />
               <Field label="全部纵筋" value={params.main} onChange={v => update({ main: v })} placeholder="如: 12C25" error={errors.main?.message} />
+
+              <div className="pt-1 border-t border-gray-100">
+                <p className="text-[11px] text-muted mb-1.5">22G101-1 分项标注（可选）</p>
+                <div className="space-y-2">
+                  <Field label="角筋" value={params.cornerMain ?? ''} onChange={v => update({ cornerMain: v })} placeholder="如: 4C25" error={errors.cornerMain?.message} />
+                  <Field label="b边中部筋" value={params.bMiddleMain ?? ''} onChange={v => update({ bMiddleMain: v })} placeholder="如: 2C22（每侧根数）" error={errors.bMiddleMain?.message} />
+                  <Field label="h边中部筋" value={params.hMiddleMain ?? ''} onChange={v => update({ hMiddleMain: v })} placeholder="如: 2C22（每侧根数）" error={errors.hMiddleMain?.message} />
+                </div>
+              </div>
+
               <Field label="箍筋" value={params.stirrup} onChange={v => update({ stirrup: v })} placeholder="如: A10@100/200(4)" error={errors.stirrup?.message} />
+              <SelectField 
+                label="箍筋类型 (22G101-1)" 
+                value={params.stirrupType ?? 'A'} 
+                onChange={v => update({ stirrupType: v })}
+                options={Object.values(STIRRUP_TYPES).map(t => ({ 
+                  value: t.code, 
+                  label: `${t.code}型 - ${t.name} (${t.legs}肢)` 
+                }))} 
+              />
             </div>
 
             <Section title="材料与构造">
@@ -114,7 +153,9 @@ export function ColumnPageClient() {
           </div>
 
           <Legend items={[
-            { color: '#C0392B', label: '纵向受力钢筋' },
+            { color: '#C0392B', label: '角筋' },
+            { color: '#E67E22', label: 'b边中部筋' },
+            { color: '#8E44AD', label: 'h边中部筋' },
             { color: '#27AE60', label: '箍筋' },
             { color: '#BDC3C7', label: '混凝土截面（半透明）', opacity: 0.6 },
           ]} />

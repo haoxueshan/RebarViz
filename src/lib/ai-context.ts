@@ -1,13 +1,11 @@
 /**
  * Build context strings from component params for AI assistant
  */
-import type { BeamParams, ColumnParams, SlabParams, JointParams, ShearWallParams, StairParams } from './types';
-import { parseRebar, parseStirrup, parseSlabRebar, gradeLabel } from './rebar';
+import type { BeamParams, ColumnParams, SlabParams, JointParams, ShearWallParams, StairParams, FoundationParams, PileCapParams, RaftFoundationParams } from './types';
+import { parseRebar, parseStirrup, parseSlabRebar, gradeLabel, resolveColumnBars } from './rebar';
 import { calcLaE, FT, FY } from './anchor';
 import type { ConcreteGrade, SeismicGrade } from './anchor';
-
-/** 单根钢筋截面面积 mm² */
-function As(d: number): number { return Math.PI * d * d / 4; }
+import { rebarArea } from './construction-rules';
 
 export function buildBeamContext(p: BeamParams): string {
   const topR = parseRebar(p.top);
@@ -15,8 +13,9 @@ export function buildBeamContext(p: BeamParams): string {
   const stir = parseStirrup(p.stirrup);
   const cover = p.cover || 25;
   const h0 = p.h - cover - botR.diameter / 2;
-  const AsTop = topR.count * As(topR.diameter);
-  const AsBot = botR.count * As(botR.diameter);
+  const segArea = (segs: {count:number;diameter:number}[]) => segs.reduce((s, seg) => s + seg.count * rebarArea(seg.diameter), 0);
+  const AsTop = topR.segments ? segArea(topR.segments) : topR.count * rebarArea(topR.diameter);
+  const AsBot = botR.segments ? segArea(botR.segments) : botR.count * rebarArea(botR.diameter);
   const bh0 = p.b * h0;
   const rhoTop = (AsTop / bh0 * 100).toFixed(3);
   const rhoBot = (AsBot / bh0 * 100).toFixed(3);
@@ -26,10 +25,16 @@ export function buildBeamContext(p: BeamParams): string {
   const laETop = calcLaE(topR.grade, topR.diameter, p.concreteGrade as ConcreteGrade, (p.seismicGrade || '三级') as SeismicGrade);
   const laEBot = calcLaE(botR.grade, botR.diameter, p.concreteGrade as ConcreteGrade, (p.seismicGrade || '三级') as SeismicGrade);
   const canStraightAnchor = laETop <= (p.hc || 500) - cover;
+  const topDesc = topR.segments
+    ? topR.segments.map((seg, i) => `${i === 0 ? '外排' : `第${i+1}排`}${seg.count}根${seg.grade}${seg.diameter}`).join('+')
+    : `${topR.count}根 ${gradeLabel(topR.grade)} Φ${topR.diameter}`;
+  const botDesc = botR.segments
+    ? botR.segments.map((seg, i) => `${i === 0 ? '外排' : `第${i+1}排`}${seg.count}根${seg.grade}${seg.diameter}`).join('+')
+    : `${botR.count}根 ${gradeLabel(botR.grade)} Φ${botR.diameter}`;
   return `构件类型: 框架梁 ${p.id}
 截面: ${p.b}×${p.h}mm，有效高度 h₀=${h0.toFixed(0)}mm
-上部通长筋: ${p.top} (${topR.count}根 ${gradeLabel(topR.grade)} Φ${topR.diameter}，As=${AsTop.toFixed(0)}mm²)
-下部通长筋: ${p.bottom} (${botR.count}根 ${gradeLabel(botR.grade)} Φ${botR.diameter}，As=${AsBot.toFixed(0)}mm²)
+上部通长筋: ${p.top} (${topDesc}，As=${AsTop.toFixed(0)}mm²)${topR.segments ? ' [混合直径]' : ''}
+下部通长筋: ${p.bottom} (${botDesc}，As=${AsBot.toFixed(0)}mm²)${botR.segments ? ' [混合直径]' : ''}
 配筋率: 上部ρ=${rhoTop}%，下部ρ=${rhoBot}%，最小配筋率ρmin=${rhoMin}%
 箍筋: ${p.stirrup} (${gradeLabel(stir.grade)} Φ${stir.diameter} 加密${stir.spacingDense}/非加密${stir.spacingNormal} ${stir.legs}肢箍)
 锚固长度: 上部laE=${laETop}mm，下部laE=${laEBot}mm，${canStraightAnchor ? '可直锚(laE≤hc-c)' : '需弯锚(laE>hc-c)'}
@@ -41,17 +46,30 @@ export function buildBeamContext(p: BeamParams): string {
 }
 
 export function buildColumnContext(p: ColumnParams): string {
-  const mainR = parseRebar(p.main);
   const stir = parseStirrup(p.stirrup);
   const cover = p.cover || 25;
-  const AsMain = mainR.count * As(mainR.diameter);
+  const innerW = p.b - 2 * cover;
+  const innerH = p.h - 2 * cover;
+  const resolved = resolveColumnBars(p.main, p.cornerMain, p.bMiddleMain, p.hMiddleMain, innerW, innerH);
+  const AsMain = resolved.bars.reduce((sum, bar) => sum + rebarArea(bar.diameter), 0);
   const Ag = p.b * p.h;
   const rho = (AsMain / Ag * 100).toFixed(3);
   const ft = FT[p.concreteGrade] || 1.43;
+
+  let barDesc: string;
+  if (resolved.isDetailed) {
+    const parts = [`角筋: ${p.cornerMain} (4根 ${gradeLabel(resolved.corner.grade)} Φ${resolved.corner.diameter})`];
+    if (resolved.bMiddle) parts.push(`b边中部筋: ${p.bMiddleMain} (每侧${resolved.bMiddle.count}根 ${gradeLabel(resolved.bMiddle.grade)} Φ${resolved.bMiddle.diameter})`);
+    if (resolved.hMiddle) parts.push(`h边中部筋: ${p.hMiddleMain} (每侧${resolved.hMiddle.count}根 ${gradeLabel(resolved.hMiddle.grade)} Φ${resolved.hMiddle.diameter})`);
+    barDesc = parts.join('\n') + `\n总计: ${resolved.totalCount}根，22G101-1分项标注`;
+  } else {
+    barDesc = `全部纵筋: ${p.main} (${resolved.totalCount}根 ${gradeLabel(resolved.corner.grade)} Φ${resolved.corner.diameter})`;
+  }
+
   return `构件类型: 框架柱 ${p.id}
 截面: ${p.b}×${p.h}mm，截面面积Ag=${Ag}mm²
-纵筋: ${p.main} (${mainR.count}根 ${gradeLabel(mainR.grade)} Φ${mainR.diameter}，总As=${AsMain.toFixed(0)}mm²)
-全截面配筋率: ρ=${rho}%
+${barDesc}
+总As=${AsMain.toFixed(0)}mm²，全截面配筋率: ρ=${rho}%
 箍筋: ${p.stirrup} (${gradeLabel(stir.grade)} Φ${stir.diameter} 加密${stir.spacingDense}/非加密${stir.spacingNormal} ${stir.legs}肢箍)
 混凝土等级: ${p.concreteGrade}(ft=${ft}MPa)，抗震等级: ${p.seismicGrade}
 保护层: ${cover}mm，柱净高: ${p.height}mm`;
@@ -62,10 +80,10 @@ export function buildSlabContext(p: SlabParams): string {
   const h0 = p.thickness - cover - 5; // 估算有效高度
   const botX = parseSlabRebar(p.bottomX);
   const botY = parseSlabRebar(p.bottomY);
-  const AsPerMBotX = (As(botX.diameter) * 1000 / botX.spacing).toFixed(0);
-  const AsPerMBotY = (As(botY.diameter) * 1000 / botY.spacing).toFixed(0);
-  const rhoBotX = (As(botX.diameter) * 1000 / botX.spacing / (1000 * h0) * 100).toFixed(3);
-  const rhoBotY = (As(botY.diameter) * 1000 / botY.spacing / (1000 * h0) * 100).toFixed(3);
+  const AsPerMBotX = (rebarArea(botX.diameter) * 1000 / botX.spacing).toFixed(0);
+  const AsPerMBotY = (rebarArea(botY.diameter) * 1000 / botY.spacing).toFixed(0);
+  const rhoBotX = (rebarArea(botX.diameter) * 1000 / botX.spacing / (1000 * h0) * 100).toFixed(3);
+  const rhoBotY = (rebarArea(botY.diameter) * 1000 / botY.spacing / (1000 * h0) * 100).toFixed(3);
   const ft = FT[p.concreteGrade] || 1.43;
   const fy = FY[botX.grade] || 360;
   const rhoMin = Math.max(0.2, 0.45 * ft / fy * 100).toFixed(3);
@@ -103,11 +121,11 @@ export function buildShearWallContext(p: ShearWallParams): string {
   const horiz = parseSlabRebar(p.horizBar);
   const boundaryR = parseRebar(p.boundaryMain);
   // 竖向配筋率 (双排)
-  const AsVert = 2 * As(vert.diameter) * 1000 / vert.spacing;
+  const AsVert = 2 * rebarArea(vert.diameter) * 1000 / vert.spacing;
   const rhoVert = (AsVert / (p.bw * 1000) * 100).toFixed(3);
-  const AsHoriz = 2 * As(horiz.diameter) * 1000 / horiz.spacing;
+  const AsHoriz = 2 * rebarArea(horiz.diameter) * 1000 / horiz.spacing;
   const rhoHoriz = (AsHoriz / (p.bw * 1000) * 100).toFixed(3);
-  const AsBoundary = boundaryR.count * As(boundaryR.diameter);
+  const AsBoundary = boundaryR.count * rebarArea(boundaryR.diameter);
   return `构件类型: 剪力墙 ${p.id}
 墙厚 bw: ${p.bw}mm，墙长 lw: ${p.lw}mm，墙净高 hw: ${p.hw}mm
 竖向分布筋: ${p.vertBar} (${gradeLabel(vert.grade)} Φ${vert.diameter}@${vert.spacing}，双排，ρv=${rhoVert}%)
@@ -128,7 +146,7 @@ export function buildStairContext(p: StairParams): string {
   const slabLen = Math.round(Math.sqrt(totalRise * totalRise + totalRun * totalRun));
   const cover = p.cover || 15;
   const h0 = p.slabThickness - cover - botR.diameter / 2;
-  const AsPerM = As(botR.diameter) * 1000 / botR.spacing;
+  const AsPerM = rebarArea(botR.diameter) * 1000 / botR.spacing;
   const rhoBot = (AsPerM / (1000 * h0) * 100).toFixed(3);
   const ft = FT[p.concreteGrade] || 1.43;
   const fy = FY[botR.grade] || 360;
@@ -144,4 +162,83 @@ export function buildStairContext(p: StairParams): string {
 分布筋: ${p.distBar} (${gradeLabel(distR.grade)} Φ${distR.diameter}@${distR.spacing})
 最小配筋率: ρmin=${rhoMin}%
 混凝土等级: ${p.concreteGrade}(ft=${ft}MPa)，保护层: ${cover}mm`;
+}
+
+export function buildFoundationContext(p: FoundationParams): string {
+  const barX = parseSlabRebar(p.bottomBarX);
+  const barY = parseSlabRebar(p.bottomBarY);
+  const colR = parseRebar(p.colMain);
+  const cover = p.cover || 40;
+  const AsX = rebarArea(barX.diameter) * 1000 / barX.spacing;
+  const AsY = rebarArea(barY.diameter) * 1000 / barY.spacing;
+  const h0x = p.h - cover - barX.diameter / 2;
+  const h0y = p.h - cover - barX.diameter - barY.diameter / 2;
+  const rhoX = (AsX / (1000 * h0x) * 100).toFixed(3);
+  const rhoY = (AsY / (1000 * h0y) * 100).toFixed(3);
+  const AsBoundary = colR.count * rebarArea(colR.diameter);
+  const stepDesc = p.shape === 'stepped'
+    ? p.stepDims.map((s, i) => `第${i+1}阶: ${s.bx}×${s.by}×${s.h}mm`).join('，')
+    : `锥形: 底${p.bx}×${p.by} → 顶${p.colBx}×${p.colBy}mm`;
+  const isDual = (p.columnCount || 1) === 2;
+  const dualInfo = isDual ? `\n柱数: 双柱，柱中心距: ${p.colSpacing}mm
+顶部纵向筋: ${p.topBarX || '未设置'} (柱间受力钢筋)
+顶部分布筋: ${p.topBarY || '未设置'} (柱间分布钢筋)` : '';
+
+  return `构件类型: ${isDual ? '双柱' : ''}独立基础 ${p.id}
+形状: ${p.shape === 'stepped' ? '阶形' : '锥形'}，${stepDesc}
+底面尺寸: ${p.bx}×${p.by}mm，基础总高: ${p.h}mm
+X向底筋: ${p.bottomBarX} (${gradeLabel(barX.grade)} Φ${barX.diameter}@${barX.spacing}，As=${AsX.toFixed(0)}mm²/m，ρ=${rhoX}%)
+Y向底筋: ${p.bottomBarY} (${gradeLabel(barY.grade)} Φ${barY.diameter}@${barY.spacing}，As=${AsY.toFixed(0)}mm²/m，ρ=${rhoY}%)
+柱截面: ${p.colBx}×${p.colBy}mm${isDual ? ' ×2' : ''}
+柱插筋: ${p.colMain} (${colR.count}根 ${gradeLabel(colR.grade)} Φ${colR.diameter}，总As=${AsBoundary.toFixed(0)}mm²${isDual ? '，×2柱' : ''})${dualInfo}
+混凝土等级: ${p.concreteGrade}，保护层: ${cover}mm`;
+}
+
+export function buildPileCapContext(p: PileCapParams): string {
+  const barX = parseSlabRebar(p.bottomBarX);
+  const barY = parseSlabRebar(p.bottomBarY);
+  const colR = parseRebar(p.colMain);
+  const cover = p.cover || 50;
+  const AsX = rebarArea(barX.diameter) * 1000 / barX.spacing;
+  const AsY = rebarArea(barY.diameter) * 1000 / barY.spacing;
+  const h0x = p.h - cover - barX.diameter / 2;
+  const rhoX = (AsX / (1000 * h0x) * 100).toFixed(3);
+  const AsBoundary = colR.count * rebarArea(colR.diameter);
+  return `构件类型: 承台 ${p.id}
+承台尺寸: ${p.bx}×${p.by}×${p.h}mm
+桩基: Φ${p.pileDiameter}mm × ${p.pileCount}根，${p.pileLayout === 'grid' ? '矩形排布' : '环形排布'}
+X向桩距: ${p.pileSpacingX}mm，Y向桩距: ${p.pileSpacingY}mm，桩长: ${p.pileLength}mm
+X向底筋: ${p.bottomBarX} (${gradeLabel(barX.grade)} Φ${barX.diameter}@${barX.spacing}，As=${AsX.toFixed(0)}mm²/m，ρ=${rhoX}%)
+Y向底筋: ${p.bottomBarY} (${gradeLabel(barY.grade)} Φ${barY.diameter}@${barY.spacing}，As=${AsY.toFixed(0)}mm²/m)
+柱截面: ${p.colBx}×${p.colBy}mm
+柱插筋: ${p.colMain} (${colR.count}根 ${gradeLabel(colR.grade)} Φ${colR.diameter}，总As=${AsBoundary.toFixed(0)}mm²)
+混凝土等级: ${p.concreteGrade}，保护层: ${cover}mm`;
+}
+
+export function buildRaftContext(p: RaftFoundationParams): string {
+  const botX = parseSlabRebar(p.bottomBarX);
+  const botY = parseSlabRebar(p.bottomBarY);
+  const topX = p.topBarX ? parseSlabRebar(p.topBarX) : null;
+  const topY = p.topBarY ? parseSlabRebar(p.topBarY) : null;
+  const colR = parseRebar(p.colMain);
+  const cover = p.cover || 40;
+  const AsBotX = rebarArea(botX.diameter) * 1000 / botX.spacing;
+  const AsBotY = rebarArea(botY.diameter) * 1000 / botY.spacing;
+  const h0 = p.h - cover - botX.diameter / 2;
+  const rhoBotX = (AsBotX / (1000 * h0) * 100).toFixed(3);
+  const rhoBotY = (AsBotY / (1000 * h0) * 100).toFixed(3);
+  const colTotal = p.colCountX * p.colCountY;
+  const AsCol = colR.count * rebarArea(colR.diameter);
+  const topInfo = topX && topY
+    ? `\nX向面筋: ${p.topBarX} (${gradeLabel(topX.grade)} Φ${topX.diameter}@${topX.spacing})
+Y向面筋: ${p.topBarY} (${gradeLabel(topY.grade)} Φ${topY.diameter}@${topY.spacing})`
+    : '';
+  return `构件类型: 筏板基础 ${p.id}
+筏板尺寸: ${p.lx}×${p.ly}×${p.h}mm (${(p.lx / 1000).toFixed(1)}×${(p.ly / 1000).toFixed(1)}m)
+X向底筋: ${p.bottomBarX} (${gradeLabel(botX.grade)} Φ${botX.diameter}@${botX.spacing}，As=${AsBotX.toFixed(0)}mm²/m，ρ=${rhoBotX}%)
+Y向底筋: ${p.bottomBarY} (${gradeLabel(botY.grade)} Φ${botY.diameter}@${botY.spacing}，As=${AsBotY.toFixed(0)}mm²/m，ρ=${rhoBotY}%)${topInfo}
+柱网: ${p.colCountX}×${p.colCountY} (共${colTotal}根柱)，柱距 ${p.colSpacingX}×${p.colSpacingY}mm
+柱截面: ${p.colBx}×${p.colBy}mm
+柱插筋: ${p.colMain} (每柱${colR.count}根 ${gradeLabel(colR.grade)} Φ${colR.diameter}，As=${AsCol.toFixed(0)}mm²)
+混凝土等级: ${p.concreteGrade}，抗震等级: ${p.seismicGrade}，保护层: ${cover}mm`;
 }

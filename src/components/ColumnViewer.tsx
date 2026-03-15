@@ -1,22 +1,15 @@
 'use client';
 
 import { useMemo, useState, useEffect } from 'react';
-import { Canvas, useThree } from '@react-three/fiber';
+import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Grid } from '@react-three/drei';
 import { Maximize2, Minimize2 } from 'lucide-react';
 import { useFullscreen } from '@/lib/useFullscreen';
 import * as THREE from 'three';
 import type { ColumnParams, RebarMeshInfo } from '@/lib/types';
-import { parseRebar, parseStirrup, gradeLabel } from '@/lib/rebar';
+import { parseStirrup, gradeLabel, resolveColumnBars } from '@/lib/rebar';
+import { CameraController } from '@/components/InstancedRebar';
 import { S } from '@/lib/constants';
-
-function CameraController({ targetPosition }: { targetPosition: [number, number, number] | null }) {
-  const { camera } = useThree();
-  useEffect(() => {
-    if (targetPosition) { camera.position.set(...targetPosition); camera.updateProjectionMatrix(); }
-  }, [targetPosition, camera]);
-  return null;
-}
 
 function ClickableBar({ position, height, diameter, color, hiColor, info, selected, onSelect }: {
   position: [number, number, number]; height: number; diameter: number;
@@ -38,6 +31,24 @@ function ClickableBar({ position, height, diameter, color, hiColor, info, select
   );
 }
 
+const COLOR_CORNER = '#C0392B';
+const COLOR_CORNER_HI = '#E74C3C';
+const COLOR_B_MID = '#E67E22';
+const COLOR_B_MID_HI = '#F39C12';
+const COLOR_H_MID = '#8E44AD';
+const COLOR_H_MID_HI = '#9B59B6';
+
+function barColor(role: string): string {
+  if (role === 'bMiddle') return COLOR_B_MID;
+  if (role === 'hMiddle') return COLOR_H_MID;
+  return COLOR_CORNER;
+}
+function barHiColor(role: string): string {
+  if (role === 'bMiddle') return COLOR_B_MID_HI;
+  if (role === 'hMiddle') return COLOR_H_MID_HI;
+  return COLOR_CORNER_HI;
+}
+
 function ColumnScene({ params, selected, onSelect, cutPosition, concreteOpacity }: {
   params: ColumnParams; selected: RebarMeshInfo | null;
   onSelect: (info: RebarMeshInfo | null) => void; cutPosition: number | null; concreteOpacity: number;
@@ -46,20 +57,13 @@ function ColumnScene({ params, selected, onSelect, cutPosition, concreteOpacity 
   const hm = params.h * S;
   const COVER = (params.cover || 25) * S;
   const COL_H = (params.height || 3000) * S;
-  const mainR = parseRebar(params.main);
   const stir = parseStirrup(params.stirrup);
   const innerW = bm - 2 * COVER;
   const innerH = hm - 2 * COVER;
 
-  const rebarPositions = useMemo(() => {
-    const perSide = Math.max(Math.round(mainR.count / 4), 2);
-    const pts: { x: number; z: number }[] = [];
-    for (let i = 0; i < perSide; i++) pts.push({ x: -innerW / 2 + (innerW * i) / (perSide - 1), z: innerH / 2 });
-    for (let i = 1; i < perSide; i++) pts.push({ x: innerW / 2, z: innerH / 2 - (innerH * i) / (perSide - 1) });
-    for (let i = 1; i < perSide; i++) pts.push({ x: innerW / 2 - (innerW * i) / (perSide - 1), z: -innerH / 2 });
-    for (let i = 1; i < perSide - 1; i++) pts.push({ x: -innerW / 2, z: -innerH / 2 + (innerH * i) / (perSide - 1) });
-    return pts.slice(0, mainR.count);
-  }, [mainR.count, innerW, innerH]);
+  const resolved = useMemo(() =>
+    resolveColumnBars(params.main, params.cornerMain, params.bMiddleMain, params.hMiddleMain, innerW, innerH),
+  [params.main, params.cornerMain, params.bMiddleMain, params.hMiddleMain, innerW, innerH]);
 
   const stirrups = useMemo(() => {
     const positions: number[] = [];
@@ -92,10 +96,36 @@ function ColumnScene({ params, selected, onSelect, cutPosition, concreteOpacity 
 
   const [stirHovered, setStirHovered] = useState(false);
   const stirSelected = selected?.type === 'stirrup';
-  const mainSelected = selected?.type === 'main';
+  const cornerSelected = selected?.type === 'corner';
+  const bMidSelected = selected?.type === 'bMiddle';
+  const hMidSelected = selected?.type === 'hMiddle';
+  const anyMainSelected = selected?.type === 'main'; // legacy
 
   const stirInfo: RebarMeshInfo = { type: 'stirrup', label: '箍筋', detail: `${params.stirrup} · ${gradeLabel(stir.grade)} Φ${stir.diameter} 加密${stir.spacingDense}/非加密${stir.spacingNormal} ${stir.legs}肢箍` };
-  const mainInfo: RebarMeshInfo = { type: 'main', label: '纵向钢筋', detail: `${params.main} · ${mainR.count}根 ${gradeLabel(mainR.grade)} Φ${mainR.diameter}，沿截面周边均匀布置` };
+
+  // Per-role info objects
+  const cornerInfo: RebarMeshInfo = resolved.isDetailed
+    ? { type: 'corner', label: '角筋', detail: `${params.cornerMain} · 4根 ${gradeLabel(resolved.corner.grade)} Φ${resolved.corner.diameter}` }
+    : { type: 'main', label: '纵向钢筋', detail: `${params.main} · ${resolved.totalCount}根 ${gradeLabel(resolved.corner.grade)} Φ${resolved.corner.diameter}` };
+  const bMidInfo: RebarMeshInfo | null = resolved.bMiddle
+    ? { type: 'bMiddle', label: 'b边中部筋', detail: `${params.bMiddleMain} · 每侧${resolved.bMiddle.count}根 ${gradeLabel(resolved.bMiddle.grade)} Φ${resolved.bMiddle.diameter}` }
+    : null;
+  const hMidInfo: RebarMeshInfo | null = resolved.hMiddle
+    ? { type: 'hMiddle', label: 'h边中部筋', detail: `${params.hMiddleMain} · 每侧${resolved.hMiddle.count}根 ${gradeLabel(resolved.hMiddle.grade)} Φ${resolved.hMiddle.diameter}` }
+    : null;
+
+  function infoForRole(role: string): RebarMeshInfo {
+    if (role === 'bMiddle' && bMidInfo) return bMidInfo;
+    if (role === 'hMiddle' && hMidInfo) return hMidInfo;
+    return cornerInfo;
+  }
+  function isBarSelected(role: string): boolean {
+    if (!resolved.isDetailed) return anyMainSelected;
+    if (role === 'corner') return cornerSelected;
+    if (role === 'bMiddle') return bMidSelected;
+    if (role === 'hMiddle') return hMidSelected;
+    return false;
+  }
 
   return (
     <>
@@ -113,9 +143,11 @@ function ColumnScene({ params, selected, onSelect, cutPosition, concreteOpacity 
         <lineBasicMaterial color="#94A3B8" />
       </lineSegments>
 
-      {rebarPositions.map((p, i) => (
-        <ClickableBar key={`r${i}`} position={[p.x, COL_H / 2, p.z]} height={COL_H} diameter={mainR.diameter}
-          color="#C0392B" hiColor="#E74C3C" info={mainInfo} selected={mainSelected} onSelect={onSelect} />
+      {resolved.bars.map((bar, i) => (
+        <ClickableBar key={`r${i}`} position={[bar.x, COL_H / 2, bar.z]} height={COL_H} diameter={bar.diameter}
+          color={resolved.isDetailed ? barColor(bar.role) : COLOR_CORNER}
+          hiColor={resolved.isDetailed ? barHiColor(bar.role) : COLOR_CORNER_HI}
+          info={infoForRole(bar.role)} selected={isBarSelected(bar.role)} onSelect={onSelect} />
       ))}
 
       {stirrups.map((y, i) => (
@@ -154,6 +186,9 @@ function ColumnScene({ params, selected, onSelect, cutPosition, concreteOpacity 
 function InfoTooltip({ info }: { info: RebarMeshInfo }) {
   const colorMap: Record<string, string> = {
     main: 'bg-red-50 border-red-200 text-red-800',
+    corner: 'bg-red-50 border-red-200 text-red-800',
+    bMiddle: 'bg-orange-50 border-orange-200 text-orange-800',
+    hMiddle: 'bg-purple-50 border-purple-200 text-purple-800',
     stirrup: 'bg-green-50 border-green-200 text-green-800',
   };
   const cls = colorMap[info.type] || 'bg-gray-50 border-gray-200 text-gray-800';

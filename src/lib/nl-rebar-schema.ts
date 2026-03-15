@@ -29,6 +29,7 @@ export interface StirrupSpec {
   spacingDense: number;
   spacingNormal: number;
   legs: number;
+  typeCode?: string;  // 22G101-1 箍筋类型编号 (A, B, C, D, E, F)
 }
 
 // ─── 钢筋等级映射 ───
@@ -53,8 +54,8 @@ export interface BeamSchema {
   componentType: 'beam';
   sectionWidth?: number;
   sectionHeight?: number;
-  topRebar?: RebarSpec;
-  bottomRebar?: RebarSpec;
+  topRebar?: RebarSpec | string;   // RebarSpec 或混合直径字符串如 "2C25+2C22"
+  bottomRebar?: RebarSpec | string; // RebarSpec 或混合直径字符串如 "4C25+2C22";
   stirrup?: StirrupSpec;
   leftSupportRebar?: RebarSpec;
   rightSupportRebar?: RebarSpec;
@@ -74,6 +75,9 @@ export interface ColumnSchema {
   sectionWidth?: number;
   sectionHeight?: number;
   mainRebar?: RebarSpec;
+  cornerRebar?: RebarSpec;     // 22G101-1 角筋 (e.g. 4C25)
+  bMiddleRebar?: RebarSpec;    // 22G101-1 b边中部筋 (每侧根数)
+  hMiddleRebar?: RebarSpec;    // 22G101-1 h边中部筋 (每侧根数)
   stirrup?: StirrupSpec;
   concreteGrade?: ConcreteGrade;
   seismicGrade?: SeismicGrade;
@@ -131,14 +135,14 @@ export type RebarGenSchema = BeamSchema | ColumnSchema | ShearWallSchema | SlabS
 
 const REBAR_SPEC_SCHEMA = `{ "count": number, "grade": "HPB300|HRB335|HRB400|RRB400|HRBF400", "diameter": number }`;
 const DISTRIBUTED_SPEC_SCHEMA = `{ "grade": "HPB300|HRB335|HRB400|RRB400|HRBF400", "diameter": number, "spacing": number }`;
-const STIRRUP_SPEC_SCHEMA = `{ "grade": "HPB300|HRB335|HRB400|RRB400|HRBF400", "diameter": number, "spacingDense": number, "spacingNormal": number, "legs": number }`;
+const STIRRUP_SPEC_SCHEMA = `{ "grade": "HPB300|HRB335|HRB400|RRB400|HRBF400", "diameter": number, "spacingDense": number, "spacingNormal": number, "legs": number, "typeCode": "A|B|C|D|E|F" (可选) }`;
 
 export const BEAM_JSON_SCHEMA = `{
   "componentType": "beam",
   "sectionWidth": number (mm, 150-1200),
   "sectionHeight": number (mm, 200-2000),
-  "topRebar": ${REBAR_SPEC_SCHEMA},
-  "bottomRebar": ${REBAR_SPEC_SCHEMA},
+  "topRebar": ${REBAR_SPEC_SCHEMA} 或 "2C25+2C22" (混合直径字符串),
+  "bottomRebar": ${REBAR_SPEC_SCHEMA} 或 "4C25+2C22" (混合直径字符串),
   "stirrup": ${STIRRUP_SPEC_SCHEMA},
   "leftSupportRebar": ${REBAR_SPEC_SCHEMA} (可选),
   "rightSupportRebar": ${REBAR_SPEC_SCHEMA} (可选),
@@ -155,7 +159,10 @@ export const COLUMN_JSON_SCHEMA = `{
   "componentType": "column",
   "sectionWidth": number (mm, 200-1200),
   "sectionHeight": number (mm, 200-1200),
-  "mainRebar": ${REBAR_SPEC_SCHEMA},
+  "mainRebar": ${REBAR_SPEC_SCHEMA} (全部纵筋, legacy写法),
+  "cornerRebar": ${REBAR_SPEC_SCHEMA} (可选, 22G101-1角筋, 固定4根),
+  "bMiddleRebar": ${REBAR_SPEC_SCHEMA} (可选, b边中部筋, count=每侧根数),
+  "hMiddleRebar": ${REBAR_SPEC_SCHEMA} (可选, h边中部筋, count=每侧根数),
   "stirrup": ${STIRRUP_SPEC_SCHEMA},
   "concreteGrade": "C20-C60" (可选),
   "seismicGrade": "一级|二级|三级|四级|非抗震" (可选),
@@ -227,6 +234,65 @@ const STAIR_JSON_SCHEMA = `{
   "cover": number (mm, 可选)
 }`;
 
+const FOUNDATION_JSON_SCHEMA = `{
+  "componentType": "foundation",
+  "shape": "stepped" | "tapered" (可选，默认stepped),
+  "bx": number (底面X向宽mm, 800-8000),
+  "by": number (底面Y向宽mm, 800-4000),
+  "h": number (基础总高mm, 300-2000),
+  "bottomBarX": "等级+直径@间距" (X向底筋，如C12@150),
+  "bottomBarY": "等级+直径@间距" (Y向底筋，如C12@150),
+  "colBx": number (柱截面X向mm, 可选),
+  "colBy": number (柱截面Y向mm, 可选),
+  "colMain": "数量+等级+直径" (柱插筋，如8C20, 可选),
+  "columnCount": 1 | 2 (柱数，可选，默认1),
+  "colSpacing": number (双柱中心距mm, 仅columnCount=2时, 可选),
+  "topBarX": "等级+直径@间距" (顶部柱间纵向筋, 仅双柱, 可选),
+  "topBarY": "等级+直径@间距" (顶部柱间分布筋, 仅双柱, 可选),
+  "concreteGrade": "C20"-"C80" (可选),
+  "cover": number (mm, 可选)
+}`;
+
+const PILECAP_JSON_SCHEMA = `{
+  "componentType": "pilecap",
+  "bx": number (承台X向宽mm, 600-6000),
+  "by": number (承台Y向宽mm, 600-6000),
+  "h": number (承台高度mm, 500-3000),
+  "bottomBarX": "等级+直径@间距" (X向底筋，如C14@150),
+  "bottomBarY": "等级+直径@间距" (Y向底筋，如C14@150),
+  "colBx": number (柱截面X向mm, 可选),
+  "colBy": number (柱截面Y向mm, 可选),
+  "colMain": "数量+等级+直径" (柱插筋，如8C20, 可选),
+  "pileDiameter": number (桩径mm, 300-2000),
+  "pileCount": number (桩数, 1-16),
+  "pileSpacingX": number (X向桩距mm, 可选),
+  "pileSpacingY": number (Y向桩距mm, 可选),
+  "pileLength": number (桩长mm, 可选),
+  "concreteGrade": "C20"-"C80" (可选),
+  "cover": number (mm, 可选)
+}`;
+
+const RAFT_JSON_SCHEMA = `{
+  "componentType": "raft",
+  "lx": number (X向长度mm, 6000-60000),
+  "ly": number (Y向宽度mm, 6000-40000),
+  "h": number (板厚mm, 300-2000),
+  "bottomBarX": "等级+直径@间距" (X向底筋，如C16@150),
+  "bottomBarY": "等级+直径@间距" (Y向底筋，如C16@150),
+  "topBarX": "等级+直径@间距" (X向面筋，如C12@200),
+  "topBarY": "等级+直径@间距" (Y向面筋，如C12@200),
+  "colBx": number (柱截面X向mm, 可选),
+  "colBy": number (柱截面Y向mm, 可选),
+  "colMain": "数量+等级+直径" (柱插筋，如8C20, 可选),
+  "colCountX": number (X向柱数, 1-10),
+  "colCountY": number (Y向柱数, 1-10),
+  "colSpacingX": number (X向柱距mm, 可选),
+  "colSpacingY": number (Y向柱距mm, 可选),
+  "concreteGrade": "C20"-"C60" (可选),
+  "seismicGrade": "一级"|"二级"|"三级"|"四级"|"非抗震" (可选),
+  "cover": number (mm, 可选)
+}`;
+
 export const JSON_SCHEMAS: Record<string, string> = {
   beam: BEAM_JSON_SCHEMA,
   column: COLUMN_JSON_SCHEMA,
@@ -234,4 +300,7 @@ export const JSON_SCHEMAS: Record<string, string> = {
   slab: SLAB_JSON_SCHEMA,
   joint: JOINT_JSON_SCHEMA,
   stair: STAIR_JSON_SCHEMA,
+  foundation: FOUNDATION_JSON_SCHEMA,
+  pilecap: PILECAP_JSON_SCHEMA,
+  raft: RAFT_JSON_SCHEMA,
 };

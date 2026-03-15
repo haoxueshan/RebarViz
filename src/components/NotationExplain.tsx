@@ -1,9 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import type { BeamParams, ColumnParams, SlabParams, ShearWallParams, StairParams } from '@/lib/types';
-import { parseRebar, parseStirrup, parseSlabRebar, parseSideBar, gradeLabel } from '@/lib/rebar';
+import type { BeamParams, ColumnParams, SlabParams, ShearWallParams, StairParams, FoundationParams, PileCapParams, RaftFoundationParams } from '@/lib/types';
+import { parseRebar, parseStirrup, parseSlabRebar, parseSideBar, gradeLabel, resolveColumnBars } from '@/lib/rebar';
 import { calcAnchorAll, calcSupportRebarLength, calcSlabBottomAnchor, calcColumnLapZone, calcLaE, calcLlE, calcBendLength, calcBeamEndAnchor, calcBottomBarLapAtMiddleJoint } from '@/lib/anchor';
+import { determineColFoundAnchor } from '@/lib/construction-rules';
 
 function ExplainSection({ title, defaultOpen = false, children }: {
   title: string; defaultOpen?: boolean; children: React.ReactNode;
@@ -61,11 +62,21 @@ export function BeamExplain({ params }: { params: BeamParams }) {
       <ExplainSection title="集中标注" defaultOpen>
         <div className="p-3 bg-red-50 rounded-lg">
           <p className="font-medium text-red-800">上部通长筋: {params.top}</p>
-          <p className="text-xs text-red-600 mt-1">{topR.count} 根 {gradeLabel(topR.grade)} Φ{topR.diameter}</p>
+          <p className="text-xs text-red-600 mt-1">
+            {topR.segments
+              ? topR.segments.map((seg, i) => `${i === 0 ? '外排' : `第${i+1}排`}: ${seg.count}根 ${gradeLabel(seg.grade)} Φ${seg.diameter}`).join('，')
+              : `${topR.count} 根 ${gradeLabel(topR.grade)} Φ${topR.diameter}`}
+          </p>
+          {topR.segments && <p className="text-xs text-red-500 mt-0.5">22G101: 混合直径时，大直径钢筋放外排(靠截面边缘)，小直径放内排</p>}
         </div>
         <div className="p-3 bg-red-50 rounded-lg">
           <p className="font-medium text-red-800">下部通长筋: {params.bottom}</p>
-          <p className="text-xs text-red-600 mt-1">{botR.count} 根 {gradeLabel(botR.grade)} Φ{botR.diameter}</p>
+          <p className="text-xs text-red-600 mt-1">
+            {botR.segments
+              ? botR.segments.map((seg, i) => `${i === 0 ? '外排' : `第${i+1}排`}: ${seg.count}根 ${gradeLabel(seg.grade)} Φ${seg.diameter}`).join('，')
+              : `${botR.count} 根 ${gradeLabel(botR.grade)} Φ${botR.diameter}`}
+          </p>
+          {botR.segments && <p className="text-xs text-red-500 mt-0.5">22G101: 不同直径钢筋以"+"连接，如 2C25+2C22</p>}
         </div>
         <div className="p-3 bg-green-50 rounded-lg">
           <p className="font-medium text-green-800">箍筋: {params.stirrup}</p>
@@ -223,26 +234,48 @@ export function BeamExplain({ params }: { params: BeamParams }) {
 }
 
 export function ColumnExplain({ params }: { params: ColumnParams }) {
-  const mainR = parseRebar(params.main);
+  const coverMm = params.cover || 25;
+  const resolved = resolveColumnBars(params.main, params.cornerMain, params.bMiddleMain, params.hMiddleMain, params.b - 2 * coverMm, params.h - 2 * coverMm);
   const stir = parseStirrup(params.stirrup);
-  const anchor = calcAnchorAll(mainR.grade, mainR.diameter, params.concreteGrade, params.seismicGrade);
+  const anchor = calcAnchorAll(resolved.corner.grade, resolved.corner.diameter, params.concreteGrade, params.seismicGrade);
   const lapZone = calcColumnLapZone(params.height || 3000);
 
   return (
     <div className="space-y-2 text-sm">
       <div className="p-3 bg-blue-50 rounded-lg">
         <p className="font-semibold text-primary">{params.id}</p>
-        <p className="text-xs text-muted mt-1">框架柱</p>
-      </div>
-      <div className="p-3 bg-gray-50 rounded-lg">
-        <p className="font-medium">截面: {params.b}×{params.h}mm</p>
+        <p className="text-xs text-muted mt-1">框架柱 · 截面 {params.b}×{params.h}mm</p>
       </div>
 
       <ExplainSection title="配筋" defaultOpen>
-        <div className="p-3 bg-red-50 rounded-lg">
-          <p className="font-medium text-red-800">全部纵筋: {params.main}</p>
-          <p className="text-xs text-red-600 mt-1">{mainR.count} 根 {gradeLabel(mainR.grade)} Φ{mainR.diameter}，沿截面周边均匀布置</p>
-        </div>
+        {resolved.isDetailed ? (
+          <>
+            <div className="p-3 bg-red-50 rounded-lg">
+              <p className="font-medium text-red-800">角筋: {params.cornerMain}</p>
+              <p className="text-xs text-red-600 mt-1">4根 {gradeLabel(resolved.corner.grade)} Φ{resolved.corner.diameter}，固定于四角</p>
+            </div>
+            {resolved.bMiddle && (
+              <div className="p-3 bg-orange-50 rounded-lg">
+                <p className="font-medium text-orange-800">b边中部筋: {params.bMiddleMain}</p>
+                <p className="text-xs text-orange-600 mt-1">每侧 {resolved.bMiddle.count} 根 {gradeLabel(resolved.bMiddle.grade)} Φ{resolved.bMiddle.diameter}，沿 b 方向分布</p>
+              </div>
+            )}
+            {resolved.hMiddle && (
+              <div className="p-3 bg-purple-50 rounded-lg">
+                <p className="font-medium text-purple-800">h边中部筋: {params.hMiddleMain}</p>
+                <p className="text-xs text-purple-600 mt-1">每侧 {resolved.hMiddle.count} 根 {gradeLabel(resolved.hMiddle.grade)} Φ{resolved.hMiddle.diameter}，沿 h 方向分布</p>
+              </div>
+            )}
+            <div className="p-2 bg-gray-50 rounded-lg text-xs text-muted">
+              总计 {resolved.totalCount} 根纵筋（22G101-1 分项标注）
+            </div>
+          </>
+        ) : (
+          <div className="p-3 bg-red-50 rounded-lg">
+            <p className="font-medium text-red-800">全部纵筋: {params.main}</p>
+            <p className="text-xs text-red-600 mt-1">{resolved.totalCount} 根 {gradeLabel(resolved.corner.grade)} Φ{resolved.corner.diameter}，沿截面周边均匀布置</p>
+          </div>
+        )}
         <div className="p-3 bg-green-50 rounded-lg">
           <p className="font-medium text-green-800">箍筋: {params.stirrup}</p>
           <p className="text-xs text-green-600 mt-1">
@@ -255,7 +288,7 @@ export function ColumnExplain({ params }: { params: ColumnParams }) {
         <div className="p-3 bg-cyan-50 rounded-lg">
           <p className="font-medium text-cyan-800">锚固/搭接计算 ({params.concreteGrade}, {params.seismicGrade})</p>
           <div className="mt-1.5 space-y-1 text-xs text-cyan-700">
-            <p>Φ{mainR.diameter}: lab={anchor.lab}mm, la={anchor.la}mm, laE={anchor.laE}mm</p>
+            <p>Φ{resolved.corner.diameter}: lab={anchor.lab}mm, la={anchor.la}mm, laE={anchor.laE}mm</p>
             <p>搭接: ll={anchor.ll}mm, llE={anchor.llE}mm</p>
             <p>搭接区域: 柱根 {lapZone.start}mm ~ {lapZone.end}mm</p>
             <p>保护层厚度: {params.cover}mm</p>
@@ -265,11 +298,13 @@ export function ColumnExplain({ params }: { params: ColumnParams }) {
 
       <ExplainSection title="识图要点">
         <div className="p-3 bg-amber-50 rounded-lg">
-          <p className="font-medium text-amber-800">识图要点</p>
+          <p className="font-medium text-amber-800">22G101-1 柱平法制图规则</p>
           <ul className="mt-1.5 space-y-1 text-xs text-amber-700 list-disc list-inside">
-            <li>纵筋沿截面周边均匀分布</li>
-            <li>箍筋加密区在柱端（塑性铰区域）</li>
-            <li>加密区长度取 Hn/6、500mm、hc 三者最大值</li>
+            <li>柱纵筋分角筋、b边中部筋、h边中部筋三项分别注写</li>
+            <li>对称配筋的矩形截面柱，可仅注写一侧中部筋</li>
+            <li>箍筋用"/"区分加密区与非加密区间距</li>
+            <li>全高等间距箍筋不使用"/"</li>
+            <li>箍筋加密区在柱端（塑性铰区域），长度取 Hn/6、500mm、hc 三者最大值</li>
             <li>角筋必须有箍筋弯钩固定</li>
           </ul>
         </div>
@@ -615,6 +650,296 @@ export function StairExplain({ params }: { params: StairParams }) {
             <li>剖面注写: 标注梯板厚度和配筋</li>
             <li>梯梁（梯板端支座梁）单独标注截面和配筋</li>
             <li>梯板纵筋沿行走方向布置，分布筋垂直于纵筋</li>
+          </ul>
+        </div>
+      </ExplainSection>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// FOUNDATION 独立基础标注解读
+// ═══════════════════════════════════════════════════════════════════
+export function FoundationExplain({ params }: { params: FoundationParams }) {
+  const barX = parseSlabRebar(params.bottomBarX);
+  const barY = parseSlabRebar(params.bottomBarY);
+  const colR = parseRebar(params.colMain);
+  const isDual = (params.columnCount || 1) === 2;
+  const topX = isDual && params.topBarX ? parseSlabRebar(params.topBarX) : null;
+  const topY = isDual && params.topBarY ? parseSlabRebar(params.topBarY) : null;
+
+  return (
+    <div className="space-y-1">
+      <ExplainSection title="基础参数" defaultOpen>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs p-2 bg-gray-50 rounded-lg">
+          <div><span className="text-gray-400">编号</span> <span className="font-medium">{params.id}</span></div>
+          <div><span className="text-gray-400">形状</span> <span className="font-medium">{params.shape === 'stepped' ? '阶形' : '锥形'}{isDual ? '（双柱）' : ''}</span></div>
+          <div><span className="text-gray-400">底面 bx×by</span> <span className="font-medium">{params.bx}×{params.by}mm</span></div>
+          <div><span className="text-gray-400">总高 h</span> <span className="font-medium">{params.h}mm</span></div>
+          <div><span className="text-gray-400">柱截面</span> <span className="font-medium">{params.colBx}×{params.colBy}mm{isDual ? ' ×2' : ''}</span></div>
+          <div><span className="text-gray-400">保护层</span> <span className="font-medium">{params.cover}mm</span></div>
+          {isDual && params.colSpacing && (
+            <div><span className="text-gray-400">柱距</span> <span className="font-medium">{params.colSpacing}mm</span></div>
+          )}
+        </div>
+      </ExplainSection>
+
+      <ExplainSection title="配筋解读" defaultOpen>
+        <div className="space-y-2">
+          <div className="p-2 bg-red-50 rounded-lg">
+            <p className="text-xs font-medium text-red-700">X向底筋: {params.bottomBarX}</p>
+            <p className="text-[11px] text-red-600 mt-0.5">
+              {gradeLabel(barX.grade)} Φ{barX.diameter}@{barX.spacing} · 单根长 {params.by - 2 * (params.cover || 40)}mm
+            </p>
+          </div>
+          <div className="p-2 bg-blue-50 rounded-lg">
+            <p className="text-xs font-medium text-blue-700">Y向底筋: {params.bottomBarY}</p>
+            <p className="text-[11px] text-blue-600 mt-0.5">
+              {gradeLabel(barY.grade)} Φ{barY.diameter}@{barY.spacing} · 单根长 {params.bx - 2 * (params.cover || 40)}mm
+            </p>
+          </div>
+          <div className="p-2 bg-purple-50 rounded-lg">
+            <p className="text-xs font-medium text-purple-700">柱插筋: {params.colMain}</p>
+            <p className="text-[11px] text-purple-600 mt-0.5">
+              {colR.count}根 {gradeLabel(colR.grade)} Φ{colR.diameter}{isDual ? ' ×2柱' : ''}
+            </p>
+          </div>
+          {topX && (
+            <div className="p-2 bg-orange-50 rounded-lg">
+              <p className="text-xs font-medium text-orange-700">顶部纵向筋: {params.topBarX}</p>
+              <p className="text-[11px] text-orange-600 mt-0.5">
+                {gradeLabel(topX.grade)} Φ{topX.diameter}@{topX.spacing} · 柱间顶面受力钢筋
+              </p>
+            </div>
+          )}
+          {topY && (
+            <div className="p-2 bg-green-50 rounded-lg">
+              <p className="text-xs font-medium text-green-700">顶部分布筋: {params.topBarY}</p>
+              <p className="text-[11px] text-green-600 mt-0.5">
+                {gradeLabel(topY.grade)} Φ{topY.diameter}@{topY.spacing} · 柱间顶面分布钢筋
+              </p>
+            </div>
+          )}
+        </div>
+      </ExplainSection>
+
+      <ExplainSection title="构造要求">
+        <div className="p-3 bg-amber-50 rounded-lg">
+          <p className="font-medium text-amber-800">22G101-3 独立基础构造要点</p>
+          <ul className="mt-1.5 space-y-1 text-xs text-amber-700 list-disc list-inside">
+            <li>基础高度 h ≥ 300mm</li>
+            <li>底部钢筋保护层厚度：有垫层 40mm，无垫层 70mm</li>
+            <li>底板受力钢筋最小直径 ≥ 10mm，间距 100~200mm</li>
+            <li>柱插筋伸入基础内，弯折段 ≥ 200mm 且 ≥ 12d</li>
+            <li>阶形基础各阶高度宜相等，每阶高度 ≥ 300mm</li>
+            <li>锥形基础边缘高度 ≥ 200mm</li>
+            {isDual && (
+              <>
+                <li>双柱基础底部双向交叉钢筋，ex较大方向在下</li>
+                <li>顶部柱间纵向受力钢筋伸至柱纵筋内侧</li>
+                <li>顶部柱间分布钢筋间距 ≤ s&quot;（纵筋间距）</li>
+              </>
+            )}
+          </ul>
+        </div>
+      </ExplainSection>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// PILE CAP 承台标注解读
+// ═══════════════════════════════════════════════════════════════════
+export function PileCapExplain({ params }: { params: PileCapParams }) {
+  const barX = parseSlabRebar(params.bottomBarX);
+  const barY = parseSlabRebar(params.bottomBarY);
+  const colR = parseRebar(params.colMain);
+
+  return (
+    <div className="space-y-1">
+      <ExplainSection title="承台参数" defaultOpen>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs p-2 bg-gray-50 rounded-lg">
+          <div><span className="text-gray-400">编号</span> <span className="font-medium">{params.id}</span></div>
+          <div><span className="text-gray-400">承台尺寸</span> <span className="font-medium">{params.bx}×{params.by}×{params.h}mm</span></div>
+          <div><span className="text-gray-400">柱截面</span> <span className="font-medium">{params.colBx}×{params.colBy}mm</span></div>
+          <div><span className="text-gray-400">保护层</span> <span className="font-medium">{params.cover}mm</span></div>
+        </div>
+      </ExplainSection>
+
+      <ExplainSection title="桩参数" defaultOpen>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs p-2 bg-gray-50 rounded-lg">
+          <div><span className="text-gray-400">桩径</span> <span className="font-medium">Φ{params.pileDiameter}mm</span></div>
+          <div><span className="text-gray-400">桩数</span> <span className="font-medium">{params.pileCount}根</span></div>
+          <div><span className="text-gray-400">X向桩距</span> <span className="font-medium">{params.pileSpacingX}mm</span></div>
+          <div><span className="text-gray-400">Y向桩距</span> <span className="font-medium">{params.pileSpacingY}mm</span></div>
+          <div><span className="text-gray-400">桩长</span> <span className="font-medium">{params.pileLength}mm</span></div>
+          <div><span className="text-gray-400">排布</span> <span className="font-medium">{params.pileLayout === 'grid' ? '矩形排布' : '环形排布'}</span></div>
+        </div>
+      </ExplainSection>
+
+      <ExplainSection title="配筋解读" defaultOpen>
+        <div className="space-y-2">
+          <div className="p-2 bg-red-50 rounded-lg">
+            <p className="text-xs font-medium text-red-700">X向底筋: {params.bottomBarX}</p>
+            <p className="text-[11px] text-red-600 mt-0.5">
+              {gradeLabel(barX.grade)} Φ{barX.diameter}@{barX.spacing}
+            </p>
+          </div>
+          <div className="p-2 bg-blue-50 rounded-lg">
+            <p className="text-xs font-medium text-blue-700">Y向底筋: {params.bottomBarY}</p>
+            <p className="text-[11px] text-blue-600 mt-0.5">
+              {gradeLabel(barY.grade)} Φ{barY.diameter}@{barY.spacing}
+            </p>
+          </div>
+          <div className="p-2 bg-purple-50 rounded-lg">
+            <p className="text-xs font-medium text-purple-700">柱插筋: {params.colMain}</p>
+            <p className="text-[11px] text-purple-600 mt-0.5">
+              {colR.count}根 {gradeLabel(colR.grade)} Φ{colR.diameter}
+            </p>
+          </div>
+        </div>
+      </ExplainSection>
+
+      <ExplainSection title="构造要求">
+        <div className="p-3 bg-amber-50 rounded-lg">
+          <p className="font-medium text-amber-800">22G101-3 承台构造要点</p>
+          <ul className="mt-1.5 space-y-1 text-xs text-amber-700 list-disc list-inside">
+            <li>承台高度 h ≥ 桩径 d 且 ≥ 500mm</li>
+            <li>桩伸入承台内长度 ≥ 50mm</li>
+            <li>桩中心距宜为 3d~6d（d为桩径）</li>
+            <li>桩边至承台边缘距离 ≥ d/2 且 ≥ 150mm</li>
+            <li>承台底筋保护层 ≥ 50mm（有埫层）或 ≥ 70mm（无埫层）</li>
+            <li>柱插筋伸入承台内弯折段 ≥ 200mm 且 ≥ 12d</li>
+          </ul>
+        </div>
+      </ExplainSection>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// RAFT FOUNDATION 筏板基础标注解读
+// ═══════════════════════════════════════════════════════════════════
+export function RaftExplain({ params }: { params: RaftFoundationParams }) {
+  const botX = parseSlabRebar(params.bottomBarX);
+  const botY = parseSlabRebar(params.bottomBarY);
+  const topX = params.topBarX ? parseSlabRebar(params.topBarX) : null;
+  const topY = params.topBarY ? parseSlabRebar(params.topBarY) : null;
+  const colR = parseRebar(params.colMain);
+  const colTotal = params.colCountX * params.colCountY;
+
+  // 22G101-3 柱插筋锚固计算
+  const cover = params.cover || 40;
+  const laE = calcLaE(colR.grade, colR.diameter, params.concreteGrade, params.seismicGrade);
+  const anchor = determineColFoundAnchor(params.h, cover, colR.diameter, laE);
+  const scenarioMap: Record<string, string> = {
+    a: '(a) 保护层>5d，高度满足直锚',
+    b: '(b) 保护层≤5d，高度满足直锚',
+    c: '(c) 保护层>5d，高度不满足直锚',
+    d: '(d) 保护层≤5d，高度不满足直锚',
+  };
+
+  return (
+    <div className="space-y-1">
+      <ExplainSection title="筏板参数" defaultOpen>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs p-2 bg-gray-50 rounded-lg">
+          <div><span className="text-gray-400">编号</span> <span className="font-medium">{params.id}</span></div>
+          <div><span className="text-gray-400">筏板尺寸</span> <span className="font-medium">{params.lx}×{params.ly}×{params.h}mm</span></div>
+          <div><span className="text-gray-400">柱截面</span> <span className="font-medium">{params.colBx}×{params.colBy}mm</span></div>
+          <div><span className="text-gray-400">保护层</span> <span className="font-medium">{params.cover}mm</span></div>
+          <div><span className="text-gray-400">柱网</span> <span className="font-medium">{params.colCountX}×{params.colCountY} ({colTotal}根柱)</span></div>
+          <div><span className="text-gray-400">柱距</span> <span className="font-medium">{params.colSpacingX}×{params.colSpacingY}mm</span></div>
+          <div><span className="text-gray-400">抗震等级</span> <span className="font-medium">{params.seismicGrade}</span></div>
+        </div>
+      </ExplainSection>
+
+      <ExplainSection title="配筋解读" defaultOpen>
+        <div className="space-y-2">
+          <div className="p-2 bg-red-50 rounded-lg">
+            <p className="text-xs font-medium text-red-700">X向底筋: {params.bottomBarX}</p>
+            <p className="text-[11px] text-red-600 mt-0.5">
+              {gradeLabel(botX.grade)} Φ{botX.diameter}@{botX.spacing} · 单根长 {params.ly - 2 * (params.cover || 40)}mm
+            </p>
+          </div>
+          <div className="p-2 bg-blue-50 rounded-lg">
+            <p className="text-xs font-medium text-blue-700">Y向底筋: {params.bottomBarY}</p>
+            <p className="text-[11px] text-blue-600 mt-0.5">
+              {gradeLabel(botY.grade)} Φ{botY.diameter}@{botY.spacing} · 单根长 {params.lx - 2 * (params.cover || 40)}mm
+            </p>
+          </div>
+          {topX && (
+            <div className="p-2 bg-orange-50 rounded-lg">
+              <p className="text-xs font-medium text-orange-700">X向面筋: {params.topBarX}</p>
+              <p className="text-[11px] text-orange-600 mt-0.5">
+                {gradeLabel(topX.grade)} Φ{topX.diameter}@{topX.spacing}
+              </p>
+            </div>
+          )}
+          {topY && (
+            <div className="p-2 bg-green-50 rounded-lg">
+              <p className="text-xs font-medium text-green-700">Y向面筋: {params.topBarY}</p>
+              <p className="text-[11px] text-green-600 mt-0.5">
+                {gradeLabel(topY.grade)} Φ{topY.diameter}@{topY.spacing}
+              </p>
+            </div>
+          )}
+          <div className="p-2 bg-purple-50 rounded-lg">
+            <p className="text-xs font-medium text-purple-700">柱插筋: {params.colMain}</p>
+            <p className="text-[11px] text-purple-600 mt-0.5">
+              每柱{colR.count}根 {gradeLabel(colR.grade)} Φ{colR.diameter} · 共{colTotal}柱
+            </p>
+          </div>
+        </div>
+      </ExplainSection>
+
+      <ExplainSection title="柱插筋锚固 (22G101-3)" defaultOpen>
+        <div className="space-y-2">
+          <div className={`p-2 rounded-lg ${anchor.canStraight ? 'bg-emerald-50' : 'bg-yellow-50'}`}>
+            <p className={`text-xs font-medium ${anchor.canStraight ? 'text-emerald-700' : 'text-yellow-700'}`}>
+              {anchor.canStraight ? '✓ 直锚' : '⚠ 弯锚'} — {scenarioMap[anchor.scenario]}
+            </p>
+            <div className={`text-[11px] mt-1 space-y-0.5 ${anchor.canStraight ? 'text-emerald-600' : 'text-yellow-600'}`}>
+              <p>laE = {laE}mm · 可用深度 = h−c = {params.h}−{cover} = {params.h - cover}mm</p>
+              <p>保护层 {cover}mm {anchor.isCoverLarge ? '>' : '≤'} 5d = {5 * colR.diameter}mm</p>
+              {anchor.canStraight ? (
+                <p>底弯 = max(6d, 150) = max({6 * colR.diameter}, 150) = {anchor.bendLength}mm</p>
+              ) : (
+                <>
+                  <p>底弯 = 15d = 15×{colR.diameter} = {anchor.bendLength}mm</p>
+                  <p>直段 ≥ max(0.6laE, 20d) = max({Math.ceil(0.6 * laE)}, {20 * colR.diameter}) = {anchor.straightPortion}mm</p>
+                </>
+              )}
+            </div>
+          </div>
+          <div className="p-2 bg-slate-50 rounded-lg">
+            <p className="text-xs font-medium text-slate-700">锚固区箍筋要求</p>
+            <div className="text-[11px] text-slate-600 mt-0.5 space-y-0.5">
+              <p>≥ 2道矩形封闭箍（非复合箍），间距 ≤ 500mm</p>
+              <p>箍筋直径 ≥ d/4 = {colR.diameter}/4 = Φ{anchor.stirrupMinDia}</p>
+              <p>箍筋间距 ≤ min(5d, 100) = min({5 * colR.diameter}, 100) = {anchor.stirrupMaxSpacing}mm</p>
+            </div>
+          </div>
+          {!anchor.isCoverLarge && (
+            <div className="p-2 bg-rose-50 rounded-lg">
+              <p className="text-xs font-medium text-rose-700">⚠ 保护层 ≤ 5d</p>
+              <p className="text-[11px] text-rose-600 mt-0.5">
+                柱插筋自外皮算起 ≤ 5d 的部分应设锚固区横向钢筋（22G101-3 注3）
+              </p>
+            </div>
+          )}
+        </div>
+      </ExplainSection>
+
+      <ExplainSection title="构造要求">
+        <div className="p-3 bg-amber-50 rounded-lg">
+          <p className="font-medium text-amber-800">GB50007 / 22G101-3 筏板基础构造要点</p>
+          <ul className="mt-1.5 space-y-1 text-xs text-amber-700 list-disc list-inside">
+            <li>筏板厚度一般 ≥ 跨度的 1/12~1/8（板式）或 1/8~1/5（梁式）</li>
+            <li>板底受力钢筋最小直径 ≥ 10mm，最大间距 200mm</li>
+            <li>配筋率不小于 0.15%（板底/板面均需满足）</li>
+            <li>底部保护层厚度：有垫层 40mm，无垫层 70mm</li>
+            <li>受力钢筋搭接区域接头面积百分率 ≤ 50%</li>
+            <li>h ≥ 1200mm（轴心/小偏心）时，可仅角筋伸至底板网片，其余锚固在基础顶面下 laE（注4）</li>
           </ul>
         </div>
       </ExplainSection>

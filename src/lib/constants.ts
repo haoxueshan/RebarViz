@@ -122,6 +122,103 @@ export const STAIR_CONSTRUCTION_STEPS: ConstructionStep[] = [
   { groups: new Set(['concrete', 'bottom', 'top', 'dist']), label: '+分布筋' },
 ];
 
+/** 基础底筋 X 向 */
+export const COLOR_FOUND_BOTTOM_X = '#C0392B';
+export const COLOR_FOUND_BOTTOM_X_HI = '#E74C3C';
+
+/** 基础底筋 Y 向 */
+export const COLOR_FOUND_BOTTOM_Y = '#2980B9';
+export const COLOR_FOUND_BOTTOM_Y_HI = '#3498DB';
+
+/** 基础柱插筋 */
+export const COLOR_FOUND_COL = '#8E44AD';
+export const COLOR_FOUND_COL_HI = '#9B59B6';
+
+/** 基础顶筋 X 向 */
+export const COLOR_FOUND_TOP_X = '#E67E22';
+export const COLOR_FOUND_TOP_X_HI = '#F39C12';
+
+/** 基础顶筋 Y 向 */
+export const COLOR_FOUND_TOP_Y = '#27AE60';
+export const COLOR_FOUND_TOP_Y_HI = '#2ECC71';
+
+/** 独立基础施工步骤 */
+export const FOUNDATION_CONSTRUCTION_STEPS: ConstructionStep[] = [
+  { groups: new Set(['concrete']), label: '模板+混凝土' },
+  { groups: new Set(['concrete', 'bottomX']), label: '+X向底筋' },
+  { groups: new Set(['concrete', 'bottomX', 'bottomY']), label: '+Y向底筋' },
+  { groups: new Set(['concrete', 'bottomX', 'bottomY', 'colMain']), label: '+柱插筋' },
+];
+
+/** 双列基础施工步骤 */
+export const FOUNDATION_DUAL_COL_STEPS: ConstructionStep[] = [
+  { groups: new Set(['concrete']), label: '模板+混凝土' },
+  { groups: new Set(['concrete', 'bottomX']), label: '+X向底筋' },
+  { groups: new Set(['concrete', 'bottomX', 'bottomY']), label: '+Y向底筋' },
+  { groups: new Set(['concrete', 'bottomX', 'bottomY', 'topX']), label: '+X向顶筋' },
+  { groups: new Set(['concrete', 'bottomX', 'bottomY', 'topX', 'topY']), label: '+Y向顶筋' },
+  { groups: new Set(['concrete', 'bottomX', 'bottomY', 'topX', 'topY', 'colMain']), label: '+柱插筋' },
+];
+
+// ─── 承台 (Pile Cap) ─────────────────────────────────
+
+/** 承台底筋 X 向 */
+export const COLOR_PC_BOTTOM_X = '#C0392B';
+export const COLOR_PC_BOTTOM_X_HI = '#E74C3C';
+
+/** 承台底筋 Y 向 */
+export const COLOR_PC_BOTTOM_Y = '#2980B9';
+export const COLOR_PC_BOTTOM_Y_HI = '#3498DB';
+
+/** 承台柱插筋 */
+export const COLOR_PC_COL = '#8E44AD';
+export const COLOR_PC_COL_HI = '#9B59B6';
+
+/** 桩体 */
+export const COLOR_PC_PILE = '#7F8C8D';
+export const COLOR_PC_PILE_HI = '#95A5A6';
+
+/** 承台施工步骤 */
+export const PILECAP_CONSTRUCTION_STEPS: ConstructionStep[] = [
+  { groups: new Set(['pile']), label: '桩基施工' },
+  { groups: new Set(['pile', 'concrete']), label: '+承台混凝土' },
+  { groups: new Set(['pile', 'concrete', 'bottomX']), label: '+X向底筋' },
+  { groups: new Set(['pile', 'concrete', 'bottomX', 'bottomY']), label: '+Y向底筋' },
+  { groups: new Set(['pile', 'concrete', 'bottomX', 'bottomY', 'colMain']), label: '+柱插筋' },
+];
+
+// ─── 筏板基础 (Raft) ─────────────────────────────────
+
+/** 筏板底筋 X 向 */
+export const COLOR_RAFT_BOTTOM_X = '#C0392B';
+export const COLOR_RAFT_BOTTOM_X_HI = '#E74C3C';
+
+/** 筏板底筋 Y 向 */
+export const COLOR_RAFT_BOTTOM_Y = '#2980B9';
+export const COLOR_RAFT_BOTTOM_Y_HI = '#3498DB';
+
+/** 筏板面筋 X 向 */
+export const COLOR_RAFT_TOP_X = '#E67E22';
+export const COLOR_RAFT_TOP_X_HI = '#F39C12';
+
+/** 筏板面筋 Y 向 */
+export const COLOR_RAFT_TOP_Y = '#27AE60';
+export const COLOR_RAFT_TOP_Y_HI = '#2ECC71';
+
+/** 筏板柱插筋 */
+export const COLOR_RAFT_COL = '#8E44AD';
+export const COLOR_RAFT_COL_HI = '#9B59B6';
+
+/** 筏板基础施工步骤 */
+export const RAFT_CONSTRUCTION_STEPS: ConstructionStep[] = [
+  { groups: new Set(['concrete']), label: '模板+混凝土' },
+  { groups: new Set(['concrete', 'bottomX']), label: '+X向底筋' },
+  { groups: new Set(['concrete', 'bottomX', 'bottomY']), label: '+Y向底筋' },
+  { groups: new Set(['concrete', 'bottomX', 'bottomY', 'topX']), label: '+X向面筋' },
+  { groups: new Set(['concrete', 'bottomX', 'bottomY', 'topX', 'topY']), label: '+Y向面筋' },
+  { groups: new Set(['concrete', 'bottomX', 'bottomY', 'topX', 'topY', 'colMain']), label: '+柱插筋' },
+];
+
 /** 钢筋材质默认参数 */
 export const REBAR_MATERIAL = {
   roughness: 0.4,

@@ -49,6 +49,7 @@ const presetList = [
   { key: 'simple', label: '简单梁', dot: 'bg-blue-400' },
   { key: 'standard', label: '标准梁', dot: 'bg-green-400' },
   { key: 'complex', label: '复杂梁', dot: 'bg-purple-400' },
+  { key: 'mixedDia', label: '混合直径', dot: 'bg-amber-400' },
   { key: 'haunchH', label: '水平加腘', dot: 'bg-orange-400' },
   { key: 'haunchV', label: '竖向加腘', dot: 'bg-cyan-400' },
   { key: 'multiSpan', label: '多跨连续梁', dot: 'bg-rose-400' },

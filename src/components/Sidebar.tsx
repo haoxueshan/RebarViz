@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Columns3, Box, LayoutGrid, GitMerge, ChevronLeft, ChevronRight, PanelLeftOpen, Settings, Wallpaper, Footprints } from 'lucide-react';
+import { Columns3, Box, LayoutGrid, GitMerge, ChevronLeft, ChevronRight, PanelLeftOpen, Settings, Wallpaper, Footprints, Landmark, Layers } from 'lucide-react';
 import { useState } from 'react';
 import { ContactAuthorButton } from './ContactAuthor';
 
@@ -13,6 +13,9 @@ const NAV = [
   { href: '/slab', label: '板 LB', desc: '楼板', icon: LayoutGrid },
   { href: '/joint', label: '节点', desc: '梁柱节点', icon: GitMerge },
   { href: '/stair', label: '楼梯 LT', desc: 'AT型楼梯', icon: Footprints },
+  { href: '/foundation', label: '基础 DJ', desc: '独立基础', icon: Landmark },
+  { href: '/pilecap', label: '承台 CT', desc: '桩基承台', icon: Layers },
+  { href: '/raft', label: '筏板 FB', desc: '筏板基础', icon: Landmark },
 ];
 
 type SidebarMode = 'expanded' | 'collapsed' | 'hidden';

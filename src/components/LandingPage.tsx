@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
-  ArrowRight, Columns3, Box, LayoutGrid, GitMerge, Wallpaper,
+  ArrowRight, Columns3, Box, LayoutGrid, GitMerge, Wallpaper, Landmark,
   RotateCcw, MousePointerClick, Scissors, BookOpen, Sparkles, Layers,
   ChevronDown, Zap, Eye, Brain,
 } from 'lucide-react';
@@ -215,10 +215,28 @@ const COMPONENTS = [
     tags: ['弯锚', '直锚', '节点区箍筋', '中间/边节点'],
     gradient: 'from-orange-600 to-amber-500', light: 'bg-orange-50 border-orange-100',
   },
+  {
+    href: '/foundation', icon: Landmark, title: '基础', code: 'DJ',
+    desc: '独立基础底部双向配筋、柱插筋、阶形/锥形构造',
+    tags: ['X/Y向底筋', '柱插筋', '阶形基础', '锥形基础'],
+    gradient: 'from-teal-600 to-cyan-500', light: 'bg-teal-50 border-teal-100',
+  },
+  {
+    href: '/pilecap', icon: Layers, title: '承台', code: 'CT',
+    desc: '桩基承台双向配筋、柱插筋、3D桩位排布可视化',
+    tags: ['桩基排布', 'X/Y向底筋', '柱插筋', '桩径/桩距'],
+    gradient: 'from-sky-600 to-blue-500', light: 'bg-sky-50 border-sky-100',
+  },
+  {
+    href: '/raft', icon: Landmark, title: '筏板', code: 'FB',
+    desc: '筏板基础双向配筋、柱网插筋、面筋/底筋 3D 可视化',
+    tags: ['X/Y向底筋', 'X/Y向面筋', '柱网插筋', '板厚'],
+    gradient: 'from-indigo-600 to-violet-500', light: 'bg-indigo-50 border-indigo-100',
+  },
 ];
 
 const STATS = [
-  { value: 5, suffix: '种', label: '构件类型' },
+  { value: 8, suffix: '种', label: '构件类型' },
   { value: 22, suffix: 'G101', label: '图集标准' },
   { value: 3, suffix: '个', label: 'AI 模型接入' },
   { value: 100, suffix: '%', label: '免费开源' },

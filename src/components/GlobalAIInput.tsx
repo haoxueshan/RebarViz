@@ -8,7 +8,7 @@ import type { ComponentType } from '@/lib/types';
 
 const EXAMPLE_PROMPTS = [
   { text: '300×600梁，4根25下部筋，2根20上部筋', type: 'beam' as ComponentType },
-  { text: '500×500柱，12根25纵筋，箍筋10加密100', type: 'column' as ComponentType },
+  { text: '500×500柱，角筋4根25，b边中部每侧2根22', type: 'column' as ComponentType },
   { text: '120厚板，底筋C10@150', type: 'slab' as ComponentType },
   { text: '200厚剪力墙，竖向C10@200', type: 'shearwall' as ComponentType },
   { text: '11步楼梯，踏步高150宽280', type: 'stair' as ComponentType },
@@ -21,6 +21,9 @@ const TYPE_COLORS: Record<ComponentType, string> = {
   shearwall: 'text-rose-400',
   joint: 'text-orange-400',
   stair: 'text-cyan-400',
+  foundation: 'text-teal-400',
+  pilecap: 'text-sky-400',
+  raft: 'text-indigo-400',
 };
 
 export function GlobalAIInput() {
