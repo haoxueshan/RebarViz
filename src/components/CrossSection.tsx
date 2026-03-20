@@ -457,6 +457,38 @@ export function SlabCrossSection({ params }: { params: SlabParams }) {
     // ── Dimension: thickness ──
     drawDimLine(ctx, sectionRight, sectionTop, sectionRight, sectionBottom, `${params.thickness}`, 'right', 14);
 
+    // ── Support negative bars (22G101) ──
+    const negX = params.supportNegX ? parseSlabRebar(params.supportNegX) : null;
+    if (negX) {
+      const negSpacing = negX.spacing * scale;
+      const negY = sectionTop + cover;
+      const negExtent = dw / 4; // ln/4
+      ctx.save();
+      for (let x = sectionLeft + cover; x <= sectionLeft + negExtent; x += negSpacing) {
+        drawRebarDot(ctx, x, negY, Math.max(negX.diameter * scale / 2, 2.5), '#2980B9');
+      }
+      for (let x = sectionRight - negExtent; x <= sectionRight - cover; x += negSpacing) {
+        drawRebarDot(ctx, x, negY, Math.max(negX.diameter * scale / 2, 2.5), '#2980B9');
+      }
+      // dashed line showing ln/4 extent
+      ctx.strokeStyle = '#2980B9';
+      ctx.lineWidth = 0.6;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(sectionLeft + negExtent, sectionTop - 4);
+      ctx.lineTo(sectionLeft + negExtent, sectionBottom + 4);
+      ctx.moveTo(sectionRight - negExtent, sectionTop - 4);
+      ctx.lineTo(sectionRight - negExtent, sectionBottom + 4);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#2980B9';
+      ctx.font = '9px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('ln/4', sectionLeft + negExtent / 2, sectionTop - 6);
+      ctx.fillText('ln/4', sectionRight - negExtent / 2, sectionTop - 6);
+      ctx.restore();
+    }
+
     // ── Direction arrows ──
     ctx.fillStyle = '#94A3B8';
     ctx.font = '10px system-ui, sans-serif';
@@ -469,12 +501,20 @@ export function SlabCrossSection({ params }: { params: SlabParams }) {
     ctx.strokeStyle = '#94A3B8'; ctx.lineWidth = 1; ctx.stroke();
     ctx.fillText('X', cx + 36, arrowY + 3);
 
+    // ── Span info ──
+    const supportLabel = params.supportType === 'simple' ? '简支' : params.supportType === 'continuous' ? '连续' : '悬挑';
+    ctx.fillStyle = '#64748B';
+    ctx.font = '9px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`${supportLabel} · ${params.spanX}×${params.spanY}mm`, cx, arrowY + 14);
+
     // ── Labels ──
     const labelX = sectionRight + 28;
     drawLabel(ctx, `X底: ${params.bottomX}`, labelX, bxY + 3, '#C0392B', LW);
     drawLabel(ctx, `Y底: ${params.bottomY}`, labelX, byY + 3, '#E67E22', LW);
     if (tx) drawLabel(ctx, `X面: ${params.topX}`, labelX, sectionTop + cover + 3, '#8E44AD', LW);
     if (ty) drawLabel(ctx, `Y面: ${params.topY}`, labelX, sectionTop + cover + (tx ? tx.diameter * scale : 0) + 3, '#7D3C98', LW);
+    if (negX) drawLabel(ctx, `负筋: ${params.supportNegX}`, labelX, sectionTop + cover - 12, '#2980B9', LW);
     if (dist) drawLabel(ctx, `分布: ${params.distribution}`, labelX, cy + 3, '#7F8C8D', LW);
   }, [params, LW, LH]);
 

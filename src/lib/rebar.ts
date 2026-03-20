@@ -391,6 +391,8 @@ export const COLUMN_PRESETS = {
 export const SLAB_PRESETS = {
   simple: {
     id: 'LB1', thickness: 120,
+    spanX: 3000, spanY: 3000,
+    supportType: 'simple' as const, supportBeamWidth: 250,
     bottomX: 'C10@150', bottomY: 'C10@200',
     topX: '', topY: '',
     distribution: 'A6@250',
@@ -398,15 +400,21 @@ export const SLAB_PRESETS = {
   },
   standard: {
     id: 'LB2', thickness: 150,
+    spanX: 4200, spanY: 3600,
+    supportType: 'continuous' as const, supportBeamWidth: 250,
     bottomX: 'C12@150', bottomY: 'C10@200',
     topX: 'C10@200', topY: 'C10@200',
+    supportNegX: 'C12@150', supportNegY: 'C10@200',
     distribution: 'A6@250',
     concreteGrade: 'C30' as const, cover: 15,
   },
   thick: {
     id: 'LB3', thickness: 200,
+    spanX: 6000, spanY: 4800,
+    supportType: 'continuous' as const, supportBeamWidth: 300,
     bottomX: 'C14@150', bottomY: 'C12@150',
     topX: 'C12@200', topY: 'C10@200',
+    supportNegX: 'C14@150', supportNegY: 'C12@200',
     distribution: 'A8@200',
     concreteGrade: 'C35' as const, cover: 20,
   },

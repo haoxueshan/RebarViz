@@ -210,6 +210,80 @@ export const SLAB_DIST_MIN_DIAMETER = 6;
 /** 板分布筋最大间距 (mm) — GB50010 §9.1.6 */
 export const SLAB_DIST_MAX_SPACING = 250;
 
+/** 板分布筋搭接长度 (mm) — 22G101 */
+export const SLAB_DIST_LAP_LENGTH = 150;
+
+// ─── 22G101 板底筋锚入支座构造 ───
+
+/**
+ * 板底筋伸入支座锚固方式 — 22G101 页4-33
+ * @param supportType 支座类型
+ * @param d 钢筋直径
+ * @param la 基本锚固长度
+ * @returns { straight: 直段长度, bend: 弯折长度(0=无弯折), description: 说明 }
+ */
+export function slabBottomAnchorDetail(
+  supportType: 'simple' | 'continuous' | 'cantilever',
+  d: number,
+  la: number,
+): { straight: number; bend: number; description: string } {
+  switch (supportType) {
+    case 'simple':
+      // 简支端: 伸入支座 ≥ 5d，弯折上去 ≥ 15d
+      return {
+        straight: Math.max(5 * d, Math.ceil(la / 2)),
+        bend: 15 * d,
+        description: `简支端: 伸入支座≥${Math.max(5 * d, Math.ceil(la / 2))}mm, 弯折≥${15 * d}mm (22G101)`,
+      };
+    case 'continuous':
+      // 连续端: 伸入支座 ≥ la/2 或 ≥ 5d (取大值)
+      return {
+        straight: Math.max(5 * d, Math.ceil(la / 2)),
+        bend: 0,
+        description: `连续端: 伸入支座≥${Math.max(5 * d, Math.ceil(la / 2))}mm (22G101)`,
+      };
+    case 'cantilever':
+      // 悬挑端: 底筋为构造筋，全部伸入
+      return {
+        straight: la,
+        bend: 0,
+        description: `悬挑端: 底筋伸入支座≥la=${la}mm (22G101)`,
+      };
+  }
+}
+
+// ─── 22G101 支座负筋构造 ───
+
+/**
+ * 支座负筋伸入跨中长度 — 22G101 页4-34
+ * 第一排: ln/4, 第二排(如有): ln/3
+ */
+export function slabNegBarExtend(ln: number, row: 1 | 2 = 1): number {
+  return row === 1 ? Math.ceil(ln / 4) : Math.ceil(ln / 3);
+}
+
+/** 支座负筋端支座弯折长度 — 22G101: ≥ 12d */
+export function slabNegBarBend(d: number): number {
+  return 12 * d;
+}
+
+// ─── 板跨厚比限值 ───
+
+/**
+ * 板跨厚比限值 — GB50010 §9.1.2
+ * 单向板: lmin/h ≤ 40 (简支), ≤ 45 (连续)
+ * 双向板: lmin/h ≤ 45 (简支), ≤ 50 (连续)
+ * 悬挑板: l/h ≤ 12
+ */
+export function slabSpanThicknessLimit(
+  supportType: 'simple' | 'continuous' | 'cantilever',
+  isTwoWay: boolean,
+): number {
+  if (supportType === 'cantilever') return 12;
+  if (isTwoWay) return supportType === 'simple' ? 45 : 50;
+  return supportType === 'simple' ? 40 : 45;
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // 9. 剪力墙构造要求
 // ═══════════════════════════════════════════════════════════════════

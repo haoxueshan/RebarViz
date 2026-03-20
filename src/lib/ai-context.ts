@@ -77,7 +77,7 @@ ${barDesc}
 
 export function buildSlabContext(p: SlabParams): string {
   const cover = p.cover || 15;
-  const h0 = p.thickness - cover - 5; // 估算有效高度
+  const h0 = p.thickness - cover - 5;
   const botX = parseSlabRebar(p.bottomX);
   const botY = parseSlabRebar(p.bottomY);
   const AsPerMBotX = (rebarArea(botX.diameter) * 1000 / botX.spacing).toFixed(0);
@@ -87,12 +87,18 @@ export function buildSlabContext(p: SlabParams): string {
   const ft = FT[p.concreteGrade] || 1.43;
   const fy = FY[botX.grade] || 360;
   const rhoMin = Math.max(0.2, 0.45 * ft / fy * 100).toFixed(3);
+  const supportLabel = p.supportType === 'simple' ? '简支' : p.supportType === 'continuous' ? '连续' : '悬挑';
+  const negXDesc = p.supportNegX ? `X向支座负筋: ${p.supportNegX}，伸入跨中 ln/4=${Math.ceil(p.spanX / 4)}mm` : 'X向支座负筋: 无';
+  const negYDesc = p.supportNegY ? `Y向支座负筋: ${p.supportNegY}，伸入跨中 ln/4=${Math.ceil(p.spanY / 4)}mm` : 'Y向支座负筋: 无';
   return `构件类型: 楼板 ${p.id}
 板厚: ${p.thickness}mm，有效高度 h₀≈${h0}mm
+板跨: X向${p.spanX}mm × Y向${p.spanY}mm，支座类型: ${supportLabel}，支座梁宽: ${p.supportBeamWidth}mm
 X向底筋: ${p.bottomX} (As=${AsPerMBotX}mm²/m，ρ=${rhoBotX}%)
 Y向底筋: ${p.bottomY} (As=${AsPerMBotY}mm²/m，ρ=${rhoBotY}%)
 最小配筋率: ρmin=${rhoMin}%
 X向面筋: ${p.topX || '无'}，Y向面筋: ${p.topY || '无'}
+${negXDesc}
+${negYDesc}
 分布筋: ${p.distribution}
 混凝土等级: ${p.concreteGrade}(ft=${ft}MPa)，保护层: ${cover}mm`;
 }

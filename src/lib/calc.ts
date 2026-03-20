@@ -609,7 +609,9 @@ export function calcColumn(p: ColumnParams): CalcResult {
   return { items, total: `${total.toFixed(2)} kg` };
 }
 
-export function calcSlab(p: SlabParams, slabW = 3000, slabD = 3000): CalcResult {
+export function calcSlab(p: SlabParams): CalcResult {
+  const slabW = p.spanX;
+  const slabD = p.spanY;
   const bx = parseSlabRebar(p.bottomX);
   const by = parseSlabRebar(p.bottomY);
   const tx = p.topX ? parseSlabRebar(p.topX) : null;

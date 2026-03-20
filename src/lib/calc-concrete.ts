@@ -103,7 +103,9 @@ export function calcColumnConcrete(p: ColumnParams): ConcreteCalcResult {
 // ─── 板混凝土 ───
 // 清单规范: 板体积 = 板面积 × 板厚 (扣柱/梁面积, 本项目暂不扣)
 // 不扣钢筋
-export function calcSlabConcrete(p: SlabParams, slabW = 3000, slabD = 3000): ConcreteCalcResult {
+export function calcSlabConcrete(p: SlabParams): ConcreteCalcResult {
+  const slabW = p.spanX;
+  const slabD = p.spanY;
   const thickness = p.thickness;
   const area = slabW * slabD; // mm²
 

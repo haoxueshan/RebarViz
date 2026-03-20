@@ -154,18 +154,25 @@ const COLUMN_EXAMPLES = `
 
 const SLAB_EXAMPLES = `
 示例1:
-用户: 120厚的板，底筋X向C10@150，Y向C10@200
+用户: 150厚连续板，板跨4200×3600，底筋X向C12@150，Y向C10@200，支座负筋C12@150
 \`\`\`rebar-json
-{"componentType":"slab","thickness":120,"bottomXBar":{"grade":"HRB400","diameter":10,"spacing":150},"bottomYBar":{"grade":"HRB400","diameter":10,"spacing":200}}
+{"componentType":"slab","thickness":150,"spanX":4200,"spanY":3600,"supportType":"continuous","bottomXBar":{"grade":"HRB400","diameter":12,"spacing":150},"bottomYBar":{"grade":"HRB400","diameter":10,"spacing":200},"supportNegXBar":{"grade":"HRB400","diameter":12,"spacing":150}}
 \`\`\`
-板厚120mm，X向底筋HRB400 Φ10@150，Y向底筋HRB400 Φ10@200。
+板厚150mm，连续板，板跨4200×3600mm。X向底筋C12@150，Y向底筋C10@200，X向支座负筋C12@150（伸入跨中ln/4=1050mm）。
 
 示例2:
-用户: 加X向面筋C10@200
+用户: 改成简支板，板跨3000×3000
 \`\`\`rebar-json
-{"componentType":"slab","topXBar":{"grade":"HRB400","diameter":10,"spacing":200}}
+{"componentType":"slab","supportType":"simple","spanX":3000,"spanY":3000}
 \`\`\`
-已添加X向面筋HRB400 Φ10@200。`;
+已改为简支板，板跨3000×3000mm。
+
+示例3:
+用户: 加X向面筋C10@200，Y向支座负筋C10@200
+\`\`\`rebar-json
+{"componentType":"slab","topXBar":{"grade":"HRB400","diameter":10,"spacing":200},"supportNegYBar":{"grade":"HRB400","diameter":10,"spacing":200}}
+\`\`\`
+已添加X向面筋C10@200和Y向支座负筋C10@200。`;
 
 const SHEAR_WALL_EXAMPLES = `
 示例1:
@@ -288,8 +295,9 @@ export const PARAM_SUGGESTIONS: Record<ComponentType, string[]> = {
     '边缘构件加到8根16',
   ],
   slab: [
-    '120厚板，底筋C10@150',
-    '加X向面筋C10@200',
+    '150厚连续板，板跨4200×3600',
+    '加X向支座负筋C12@150',
+    '改成简支板，板跨3000',
   ],
   joint: [
     '柱500×500，梁300×600，弯锚',
@@ -338,7 +346,8 @@ export const ANALYSIS_SUGGESTIONS: Record<ComponentType, string[]> = {
   slab: [
     '分析当前板配筋是否合理',
     '生成配筋计算书（含配筋率、裂缝宽度估算）',
-    '板厚和配筋经济性分析',
+    '板跨厚比是否满足要求',
+    '支座负筋伸入长度是否满足22G101',
   ],
   joint: [
     '分析当前节点核心区是否满足要求',
@@ -389,7 +398,9 @@ export const QA_SUGGESTIONS: Record<ComponentType, string[]> = {
   ],
   slab: [
     '板底筋锚入梁内多长？',
-    '分布筋间距要求？',
+    '支座负筋伸入跨中多长 (22G101)?',
+    '简支端底筋弯折构造要求？',
+    '分布筋搭接和间距要求？',
   ],
   joint: [
     '节点核心区箍筋要求？',

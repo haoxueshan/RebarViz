@@ -102,10 +102,16 @@ export interface ShearWallSchema {
 export interface SlabSchema {
   componentType: 'slab';
   thickness?: number;
+  spanX?: number;
+  spanY?: number;
+  supportType?: 'simple' | 'continuous' | 'cantilever';
+  supportBeamWidth?: number;
   bottomXBar?: DistributedRebarSpec;
   bottomYBar?: DistributedRebarSpec;
   topXBar?: DistributedRebarSpec;
   topYBar?: DistributedRebarSpec;
+  supportNegXBar?: DistributedRebarSpec;
+  supportNegYBar?: DistributedRebarSpec;
   distributionBar?: DistributedRebarSpec;
   concreteGrade?: ConcreteGrade;
   cover?: number;
@@ -187,10 +193,16 @@ export const SHEAR_WALL_JSON_SCHEMA = `{
 export const SLAB_JSON_SCHEMA = `{
   "componentType": "slab",
   "thickness": number (mm, 60-300),
+  "spanX": number (mm, X向板跨, 1000-12000, 可选),
+  "spanY": number (mm, Y向板跨, 1000-12000, 可选),
+  "supportType": "simple|continuous|cantilever" (可选, 默认continuous),
+  "supportBeamWidth": number (mm, 支座梁宽, 150-600, 可选),
   "bottomXBar": ${DISTRIBUTED_SPEC_SCHEMA},
   "bottomYBar": ${DISTRIBUTED_SPEC_SCHEMA},
   "topXBar": ${DISTRIBUTED_SPEC_SCHEMA} (可选),
   "topYBar": ${DISTRIBUTED_SPEC_SCHEMA} (可选),
+  "supportNegXBar": ${DISTRIBUTED_SPEC_SCHEMA} (可选, X向支座负筋, 22G101),
+  "supportNegYBar": ${DISTRIBUTED_SPEC_SCHEMA} (可选, Y向支座负筋, 22G101),
   "distributionBar": ${DISTRIBUTED_SPEC_SCHEMA} (可选),
   "concreteGrade": "C20-C60" (可选),
   "cover": number (mm, 可选)

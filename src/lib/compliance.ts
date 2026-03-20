@@ -18,7 +18,7 @@ import {
   WALL_RHO_MIN, WALL_DIST_MAX_SPACING, WALL_DIST_MIN_DIAMETER, WALL_BOUNDARY_MIN_BAR_COUNT,
   STAIR_COMFORT, STAIR_STEP_HEIGHT, STAIR_STEP_WIDTH, STAIR_MIN_FLIGHT_WIDTH,
   stairSlabThicknessRange, STAIR_MIN_BAR_DIAMETER, STAIR_BAR_SPACING,
-  SLAB_DIST_MIN_DIAMETER, SLAB_DIST_MAX_SPACING,
+  SLAB_DIST_MIN_DIAMETER, SLAB_DIST_MAX_SPACING, slabSpanThicknessLimit,
   determineColFoundAnchor,
   COL_FOUND_STIRRUP_MIN_COUNT, COL_FOUND_STIRRUP_ZONE_SPACING_MAX,
   COL_FOUND_CORNER_ONLY_H_AXIAL,
@@ -329,8 +329,55 @@ export function checkSlabCompliance(p: SlabParams): ComplianceResult[] {
     });
   }
 
+  // 4. 板跨厚比校验 — GB50010 §9.1.2
+  const lMin = Math.min(p.spanX, p.spanY);
+  const isTwoWay = p.spanX / p.spanY <= 2 && p.spanY / p.spanX <= 2;
+  const spanThLimit = slabSpanThicknessLimit(p.supportType, isTwoWay);
+  const spanThRatio = lMin / p.thickness;
+  if (spanThRatio > spanThLimit) {
+    results.push({
+      field: 'thickness', rule: 'GB50010 §9.1.2',
+      status: 'warn',
+      message: `板跨厚比 ${spanThRatio.toFixed(1)} > 限值 ${spanThLimit} (lmin=${lMin}mm / h=${p.thickness}mm)`,
+      suggestion: `建议增大板厚或减小板跨`,
+    });
+  }
+
+  // 5. 分布筋校验 — GB50010 §9.1.6
+  if (p.distribution) {
+    const dist = parseSlabRebar(p.distribution);
+    if (dist.diameter < SLAB_DIST_MIN_DIAMETER) {
+      results.push({
+        field: 'distribution', rule: 'GB50010 §9.1.6',
+        status: 'fail',
+        message: `分布筋 Φ${dist.diameter} < 最小 ${SLAB_DIST_MIN_DIAMETER}mm`,
+        suggestion: `分布筋直径不应小于 ${SLAB_DIST_MIN_DIAMETER}mm`,
+      });
+    }
+    if (dist.spacing > SLAB_DIST_MAX_SPACING) {
+      results.push({
+        field: 'distribution', rule: 'GB50010 §9.1.6',
+        status: 'fail',
+        message: `分布筋间距 ${dist.spacing}mm > ${SLAB_DIST_MAX_SPACING}mm`,
+        suggestion: `分布筋间距不应大于 ${SLAB_DIST_MAX_SPACING}mm`,
+      });
+    }
+  }
+
+  // 6. 支座负筋校验 — 22G101
+  if (p.supportType === 'continuous') {
+    if (!p.supportNegX && !p.supportNegY) {
+      results.push({
+        field: 'supportNegX', rule: '22G101',
+        status: 'warn',
+        message: '连续板宜配置支座负筋',
+        suggestion: '建议在连续支座处设置负筋，伸入跨中 ln/4',
+      });
+    }
+  }
+
   if (results.length === 0) {
-    results.push({ field: '-', rule: 'GB50010', status: 'pass', message: '板配筋满足规范要求' });
+    results.push({ field: '-', rule: 'GB50010 / 22G101', status: 'pass', message: '板配筋满足规范要求' });
   }
 
   return results;

@@ -100,9 +100,13 @@ export function formatParams(
     }
     case 'slab': {
       const p = params as SlabParams;
-      let s = `板厚: ${p.thickness}mm, X向底筋: ${p.bottomX}(${fmtDistributed(p.bottomX)}), Y向底筋: ${p.bottomY}(${fmtDistributed(p.bottomY)})`;
+      const stLabel = p.supportType === 'simple' ? '简支' : p.supportType === 'continuous' ? '连续' : '悬挑';
+      let s = `板厚: ${p.thickness}mm, 板跨: ${p.spanX}×${p.spanY}mm, 支座: ${stLabel}, 梁宽: ${p.supportBeamWidth}mm`;
+      s += `, X向底筋: ${p.bottomX}(${fmtDistributed(p.bottomX)}), Y向底筋: ${p.bottomY}(${fmtDistributed(p.bottomY)})`;
       if (p.topX) s += `, X向面筋: ${p.topX}`;
       if (p.topY) s += `, Y向面筋: ${p.topY}`;
+      if (p.supportNegX) s += `, X向支座负筋: ${p.supportNegX}`;
+      if (p.supportNegY) s += `, Y向支座负筋: ${p.supportNegY}`;
       if (p.distribution) s += `, 分布筋: ${p.distribution}`;
       s += `, 混凝土: ${p.concreteGrade}, 保护层: ${p.cover}mm`;
       return s;
@@ -176,10 +180,15 @@ export function formatSchemaPreview(schema: RebarGenSchema, componentType: Compo
     case 'slab': {
       const s = schema as import('./nl-rebar-schema').SlabSchema;
       if (s.thickness !== undefined) lines.push(`板厚: ${s.thickness}mm`);
+      if (s.spanX !== undefined || s.spanY !== undefined) lines.push(`板跨: ${s.spanX ?? '—'}×${s.spanY ?? '—'}mm`);
+      if (s.supportType) lines.push(`支座: ${{ simple: '简支', continuous: '连续', cantilever: '悬挑' }[s.supportType]}`);
+      if (s.supportBeamWidth !== undefined) lines.push(`梁宽: ${s.supportBeamWidth}mm`);
       if (s.bottomXBar) lines.push(`X向底筋: ${fmtDistSpec(s.bottomXBar)}`);
       if (s.bottomYBar) lines.push(`Y向底筋: ${fmtDistSpec(s.bottomYBar)}`);
       if (s.topXBar) lines.push(`X向面筋: ${fmtDistSpec(s.topXBar)}`);
       if (s.topYBar) lines.push(`Y向面筋: ${fmtDistSpec(s.topYBar)}`);
+      if (s.supportNegXBar) lines.push(`X向支座负筋: ${fmtDistSpec(s.supportNegXBar)}`);
+      if (s.supportNegYBar) lines.push(`Y向支座负筋: ${fmtDistSpec(s.supportNegYBar)}`);
       if (s.distributionBar) lines.push(`分布筋: ${fmtDistSpec(s.distributionBar)}`);
       if (s.concreteGrade) lines.push(`混凝土: ${s.concreteGrade}`);
       if (s.cover !== undefined) lines.push(`保护层: ${s.cover}mm`);

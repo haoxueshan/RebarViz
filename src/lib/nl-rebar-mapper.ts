@@ -131,10 +131,16 @@ function shearWallSchemaToParams(s: ShearWallSchema): Partial<ShearWallParams> {
 function slabSchemaToParams(s: SlabSchema): Partial<SlabParams> {
   const p: Partial<SlabParams> = {};
   if (s.thickness !== undefined) p.thickness = s.thickness;
+  if (s.spanX !== undefined) p.spanX = s.spanX;
+  if (s.spanY !== undefined) p.spanY = s.spanY;
+  if (s.supportType) p.supportType = s.supportType;
+  if (s.supportBeamWidth !== undefined) p.supportBeamWidth = s.supportBeamWidth;
   if (s.bottomXBar) p.bottomX = distributedSpecToNotation(s.bottomXBar);
   if (s.bottomYBar) p.bottomY = distributedSpecToNotation(s.bottomYBar);
   if (s.topXBar) p.topX = distributedSpecToNotation(s.topXBar);
   if (s.topYBar) p.topY = distributedSpecToNotation(s.topYBar);
+  if (s.supportNegXBar) p.supportNegX = distributedSpecToNotation(s.supportNegXBar);
+  if (s.supportNegYBar) p.supportNegY = distributedSpecToNotation(s.supportNegYBar);
   if (s.distributionBar) p.distribution = distributedSpecToNotation(s.distributionBar);
   if (s.concreteGrade) p.concreteGrade = s.concreteGrade;
   if (s.cover !== undefined) p.cover = s.cover;
@@ -236,12 +242,17 @@ function slabParamsToSchema(p: SlabParams): SlabSchema {
   const s: SlabSchema = {
     componentType: 'slab',
     thickness: p.thickness,
+    spanX: p.spanX, spanY: p.spanY,
+    supportType: p.supportType,
+    supportBeamWidth: p.supportBeamWidth,
     bottomXBar: notationToDistributedSpec(p.bottomX),
     bottomYBar: notationToDistributedSpec(p.bottomY),
     concreteGrade: p.concreteGrade, cover: p.cover,
   };
   if (p.topX) s.topXBar = notationToDistributedSpec(p.topX);
   if (p.topY) s.topYBar = notationToDistributedSpec(p.topY);
+  if (p.supportNegX) s.supportNegXBar = notationToDistributedSpec(p.supportNegX);
+  if (p.supportNegY) s.supportNegYBar = notationToDistributedSpec(p.supportNegY);
   if (p.distribution) s.distributionBar = notationToDistributedSpec(p.distribution);
   return s;
 }

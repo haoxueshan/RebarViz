@@ -10,9 +10,6 @@ import type { SlabParams, RebarMeshInfo } from '@/lib/types';
 import { parseSlabRebar, gradeLabel } from '@/lib/rebar';
 import { S } from '@/lib/constants';
 
-const SLAB_W = 3.0;
-const SLAB_D = 3.0;
-
 function CameraController({ targetPosition }: { targetPosition: [number, number, number] | null }) {
   const { camera } = useThree();
   useEffect(() => {
@@ -46,12 +43,20 @@ function SlabScene({ params, selected, onSelect, concreteOpacity }: {
   params: SlabParams; selected: RebarMeshInfo | null;
   onSelect: (info: RebarMeshInfo | null) => void; concreteOpacity: number;
 }) {
+  const SLAB_W = params.spanX * S;
+  const SLAB_D = params.spanY * S;
   const th = params.thickness * S;
   const COVER = (params.cover || 15) * S;
   const bx = parseSlabRebar(params.bottomX);
   const by = parseSlabRebar(params.bottomY);
   const tx = params.topX ? parseSlabRebar(params.topX) : null;
   const ty = params.topY ? parseSlabRebar(params.topY) : null;
+  const negX = params.supportNegX ? parseSlabRebar(params.supportNegX) : null;
+  const negY = params.supportNegY ? parseSlabRebar(params.supportNegY) : null;
+
+  // 支座负筋伸入跨中长度: ln/4
+  const negExtendX = SLAB_W / 4;
+  const negExtendY = SLAB_D / 4;
 
   const bottomXBars = (() => {
     const spacing = bx.spacing * S;
@@ -83,6 +88,23 @@ function SlabScene({ params, selected, onSelect, concreteOpacity }: {
     return bars;
   })();
 
+  // 支座负筋位置 (板两端支座区域)
+  const negXBars = (() => {
+    if (!negX) return [];
+    const spacing = negX.spacing * S;
+    const bars: number[] = [];
+    for (let z = -SLAB_D / 2 + COVER; z <= SLAB_D / 2 - COVER; z += spacing) bars.push(z);
+    return bars;
+  })();
+
+  const negYBars = (() => {
+    if (!negY) return [];
+    const spacing = negY.spacing * S;
+    const bars: number[] = [];
+    for (let x = -SLAB_W / 2 + COVER; x <= SLAB_W / 2 - COVER; x += spacing) bars.push(x);
+    return bars;
+  })();
+
   const yBottomX = COVER;
   const yBottomY = COVER + bx.diameter * S;
   const yTopX = th - COVER;
@@ -92,6 +114,8 @@ function SlabScene({ params, selected, onSelect, concreteOpacity }: {
   const byInfo: RebarMeshInfo = { type: 'bottomY', label: 'Y向底筋', detail: `${params.bottomY} · ${gradeLabel(by.grade)} Φ${by.diameter}@${by.spacing}` };
   const txInfo: RebarMeshInfo = { type: 'topX', label: 'X向面筋', detail: `${params.topX} · ${tx ? `${gradeLabel(tx.grade)} Φ${tx.diameter}@${tx.spacing}` : ''}` };
   const tyInfo: RebarMeshInfo = { type: 'topY', label: 'Y向面筋', detail: `${params.topY} · ${ty ? `${gradeLabel(ty.grade)} Φ${ty.diameter}@${ty.spacing}` : ''}` };
+  const negXInfo: RebarMeshInfo = { type: 'supportNegX', label: 'X向支座负筋', detail: `${params.supportNegX} · ${negX ? `${gradeLabel(negX.grade)} Φ${negX.diameter}@${negX.spacing}` : ''} · 伸入跨中 ln/4` };
+  const negYInfo: RebarMeshInfo = { type: 'supportNegY', label: 'Y向支座负筋', detail: `${params.supportNegY} · ${negY ? `${gradeLabel(negY.grade)} Φ${negY.diameter}@${negY.spacing}` : ''} · 伸入跨中 ln/4` };
 
   return (
     <>
@@ -124,6 +148,25 @@ function SlabScene({ params, selected, onSelect, concreteOpacity }: {
         <SlabBar key={`ty${i}`} position={[x, yTopY, 0]} rotation={[Math.PI / 2, 0, 0]} length={SLAB_D} diameter={ty!.diameter}
           color="#7D3C98" hiColor="#A569BD" info={tyInfo} selected={selected?.type === 'topY'} onSelect={onSelect} />
       ))}
+
+      {/* 支座负筋 — X向 (左端+右端各伸入 ln/4) */}
+      {negXBars.map((z, i) => (
+        <group key={`negx${i}`}>
+          <SlabBar position={[-SLAB_W / 2 + negExtendX / 2, yTopX, z]} length={negExtendX} diameter={negX!.diameter}
+            color="#2980B9" hiColor="#3498DB" info={negXInfo} selected={selected?.type === 'supportNegX'} onSelect={onSelect} />
+          <SlabBar position={[SLAB_W / 2 - negExtendX / 2, yTopX, z]} length={negExtendX} diameter={negX!.diameter}
+            color="#2980B9" hiColor="#3498DB" info={negXInfo} selected={selected?.type === 'supportNegX'} onSelect={onSelect} />
+        </group>
+      ))}
+      {/* 支座负筋 — Y向 (左端+右端各伸入 ln/4) */}
+      {negYBars.map((x, i) => (
+        <group key={`negy${i}`}>
+          <SlabBar position={[x, yTopY, -SLAB_D / 2 + negExtendY / 2]} rotation={[Math.PI / 2, 0, 0]} length={negExtendY} diameter={negY!.diameter}
+            color="#16A085" hiColor="#1ABC9C" info={negYInfo} selected={selected?.type === 'supportNegY'} onSelect={onSelect} />
+          <SlabBar position={[x, yTopY, SLAB_D / 2 - negExtendY / 2]} rotation={[Math.PI / 2, 0, 0]} length={negExtendY} diameter={negY!.diameter}
+            color="#16A085" hiColor="#1ABC9C" info={negYInfo} selected={selected?.type === 'supportNegY'} onSelect={onSelect} />
+        </group>
+      ))}
     </>
   );
 }
@@ -151,6 +194,9 @@ export default function SlabViewer({ params }: { params: SlabParams }) {
   const [cameraTarget, setCameraTarget] = useState<[number, number, number] | null>(null);
   const { isFullscreen: fsActive, toggle: fsToggle, containerRef: fsContainerRef, containerClass: fsClass } = useFullscreen();
   const th = params.thickness * S;
+  const sw = params.spanX * S;
+  const sd = params.spanY * S;
+  const camDist = Math.max(sw, sd, 3) * 1.2;
 
   return (
     <div className="space-y-2">
@@ -167,10 +213,10 @@ export default function SlabViewer({ params }: { params: SlabParams }) {
 
         <div className="absolute top-3 left-3 z-10 flex items-center gap-1.5">
           {[
-            { name: '正面', pos: [0, 0.2, 4] as [number, number, number] },
-            { name: '侧面', pos: [4, 0.2, 0] as [number, number, number] },
-            { name: '俯视', pos: [0, 5, 0.1] as [number, number, number] },
-            { name: '透视', pos: [3, 2, 3] as [number, number, number] },
+            { name: '正面', pos: [0, 0.2, camDist] as [number, number, number] },
+            { name: '侧面', pos: [camDist, 0.2, 0] as [number, number, number] },
+            { name: '俯视', pos: [0, camDist * 1.2, 0.1] as [number, number, number] },
+            { name: '透视', pos: [camDist * 0.7, camDist * 0.5, camDist * 0.7] as [number, number, number] },
           ].map(a => (
             <button key={a.name} onClick={() => setCameraTarget(a.pos)}
               className="px-2 py-1 rounded-md text-[11px] font-medium cursor-pointer bg-white/80 backdrop-blur-sm border border-gray-200/60 text-muted hover:bg-white hover:text-primary transition-colors">
@@ -189,12 +235,12 @@ export default function SlabViewer({ params }: { params: SlabParams }) {
           </button>
         </div>
 
-        <Canvas camera={{ position: [3, 2, 3], fov: 45 }} scene={{ background: new THREE.Color('#f8fafc') }}>
+        <Canvas camera={{ position: [camDist * 0.7, camDist * 0.5, camDist * 0.7], fov: 45 }} scene={{ background: new THREE.Color('#f8fafc') }}>
           <CameraController targetPosition={cameraTarget} />
           <ambientLight intensity={0.6} />
           <directionalLight position={[5, 8, 5]} intensity={0.8} castShadow />
           <SlabScene params={params} selected={selected} onSelect={setSelected} concreteOpacity={concreteOpacity} />
-          <Grid args={[10, 10]} position={[0, -0.01, 0]} cellColor="#E2E8F0" sectionColor="#E2E8F0" fadeDistance={15} />
+          <Grid args={[Math.ceil(camDist * 2), Math.ceil(camDist * 2)]} position={[0, -0.01, 0]} cellColor="#E2E8F0" sectionColor="#E2E8F0" fadeDistance={camDist * 3} />
           <axesHelper args={[1]} />
           <OrbitControls target={[0, th / 2, 0]} enableDamping dampingFactor={0.1} />
         </Canvas>

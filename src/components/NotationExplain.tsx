@@ -4,7 +4,8 @@ import { useState } from 'react';
 import type { BeamParams, ColumnParams, SlabParams, ShearWallParams, StairParams, FoundationParams, PileCapParams, RaftFoundationParams } from '@/lib/types';
 import { parseRebar, parseStirrup, parseSlabRebar, parseSideBar, gradeLabel, resolveColumnBars } from '@/lib/rebar';
 import { calcAnchorAll, calcSupportRebarLength, calcSlabBottomAnchor, calcColumnLapZone, calcLaE, calcLlE, calcBendLength, calcBeamEndAnchor, calcBottomBarLapAtMiddleJoint } from '@/lib/anchor';
-import { determineColFoundAnchor } from '@/lib/construction-rules';
+import { determineColFoundAnchor, slabBottomAnchorDetail, slabNegBarExtend, slabNegBarBend, SLAB_DIST_LAP_LENGTH } from '@/lib/construction-rules';
+import { calcLa } from '@/lib/anchor';
 
 function ExplainSection({ title, defaultOpen = false, children }: {
   title: string; defaultOpen?: boolean; children: React.ReactNode;
@@ -319,14 +320,21 @@ export function SlabExplain({ params }: { params: SlabParams }) {
   const tx = params.topX ? parseSlabRebar(params.topX) : null;
   const ty = params.topY ? parseSlabRebar(params.topY) : null;
   const dist = parseSlabRebar(params.distribution);
-  const bxAnchor = calcSlabBottomAnchor(bx.grade, bx.diameter, params.concreteGrade);
-  const byAnchor = calcSlabBottomAnchor(by.grade, by.diameter, params.concreteGrade);
+  const negX = params.supportNegX ? parseSlabRebar(params.supportNegX) : null;
+  const negY = params.supportNegY ? parseSlabRebar(params.supportNegY) : null;
+  const bxLa = calcLa(bx.grade, bx.diameter, params.concreteGrade);
+  const byLa = calcLa(by.grade, by.diameter, params.concreteGrade);
+  const bxAnchorDetail = slabBottomAnchorDetail(params.supportType, bx.diameter, bxLa);
+  const byAnchorDetail = slabBottomAnchorDetail(params.supportType, by.diameter, byLa);
+  const supportLabel = params.supportType === 'simple' ? '简支' : params.supportType === 'continuous' ? '连续' : '悬挑';
+  const negExtendX = slabNegBarExtend(params.spanX);
+  const negExtendY = slabNegBarExtend(params.spanY);
 
   return (
     <div className="space-y-2 text-sm">
       <div className="p-3 bg-blue-50 rounded-lg">
         <p className="font-semibold text-primary">{params.id}</p>
-        <p className="text-xs text-muted mt-1">楼板，板厚 {params.thickness}mm</p>
+        <p className="text-xs text-muted mt-1">楼板，板厚 {params.thickness}mm · {supportLabel} · {params.spanX}×{params.spanY}mm · 梁宽 {params.supportBeamWidth}mm</p>
       </div>
 
       <ExplainSection title="底筋" defaultOpen>
@@ -364,25 +372,53 @@ export function SlabExplain({ params }: { params: SlabParams }) {
         </div>
       </ExplainSection>
 
-      <ExplainSection title="锚固计算">
+      {(negX || negY) && (
+        <ExplainSection title="支座负筋 (22G101)">
+          {negX && (
+            <div className="p-3 bg-sky-50 rounded-lg">
+              <p className="font-medium text-sky-800">X向支座负筋: {params.supportNegX}</p>
+              <p className="text-xs text-sky-600 mt-1">{gradeLabel(negX.grade)} Φ{negX.diameter}@{negX.spacing}，伸入跨中 ln/4={negExtendX}mm</p>
+              <p className="text-xs text-sky-600">端支座弯折 ≥{slabNegBarBend(negX.diameter)}mm (12d)</p>
+            </div>
+          )}
+          {negY && (
+            <div className="p-3 bg-teal-50 rounded-lg">
+              <p className="font-medium text-teal-800">Y向支座负筋: {params.supportNegY}</p>
+              <p className="text-xs text-teal-600 mt-1">{gradeLabel(negY.grade)} Φ{negY.diameter}@{negY.spacing}，伸入跨中 ln/4={negExtendY}mm</p>
+              <p className="text-xs text-teal-600">端支座弯折 ≥{slabNegBarBend(negY.diameter)}mm (12d)</p>
+            </div>
+          )}
+        </ExplainSection>
+      )}
+
+      <ExplainSection title="锚固与构造 (22G101)">
         <div className="p-3 bg-cyan-50 rounded-lg">
-          <p className="font-medium text-cyan-800">锚固计算 ({params.concreteGrade})</p>
+          <p className="font-medium text-cyan-800">底筋锚固 ({params.concreteGrade}, {supportLabel})</p>
           <div className="mt-1.5 space-y-1 text-xs text-cyan-700">
-            <p>X底筋伸入支座: {bxAnchor}mm (≥5d 且 ≥la/2)</p>
-            <p>Y底筋伸入支座: {byAnchor}mm</p>
+            <p>X底筋: {bxAnchorDetail.description}</p>
+            <p>Y底筋: {byAnchorDetail.description}</p>
+            {bxAnchorDetail.bend > 0 && <p>弯折高度: 板厚-2c = {params.thickness - 2 * params.cover}mm</p>}
             <p>保护层厚度: {params.cover}mm</p>
+          </div>
+        </div>
+        <div className="p-3 bg-cyan-50 rounded-lg">
+          <p className="font-medium text-cyan-800">分布筋构造</p>
+          <div className="mt-1.5 space-y-1 text-xs text-cyan-700">
+            <p>搭接长度 ≥{SLAB_DIST_LAP_LENGTH}mm</p>
+            <p>距支座起始 ≤ s/2</p>
           </div>
         </div>
       </ExplainSection>
 
       <ExplainSection title="识图要点">
         <div className="p-3 bg-amber-50 rounded-lg">
-          <p className="font-medium text-amber-800">识图要点</p>
+          <p className="font-medium text-amber-800">22G101 板构造要点</p>
           <ul className="mt-1.5 space-y-1 text-xs text-amber-700 list-disc list-inside">
             <li>底筋在下，面筋在上，短方向筋在外侧</li>
-            <li>板底筋伸入支座长度不小于 5d</li>
-            <li>面筋一般在支座处设置，承受负弯矩</li>
-            <li>分布筋垂直于受力筋，间距不大于 250mm</li>
+            <li>{supportLabel}端底筋伸入支座 ≥{bxAnchorDetail.straight}mm{bxAnchorDetail.bend > 0 ? `，弯折≥${bxAnchorDetail.bend}mm` : ''}</li>
+            <li>连续支座负筋伸入跨中 ln/4 (第一排)、ln/3 (第二排)</li>
+            <li>分布筋搭接 ≥150mm，间距 ≤250mm</li>
+            {params.supportType === 'cantilever' && <li>悬挑板面筋伸入支座 ≥2倍悬挑长度</li>}
           </ul>
         </div>
       </ExplainSection>

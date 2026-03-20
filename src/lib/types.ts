@@ -72,13 +72,21 @@ export interface ColumnParams {
   height: number;         // 柱净高 mm
 }
 
+export type SlabSupportType = 'simple' | 'continuous' | 'cantilever';
+
 export interface SlabParams {
   id: string;
   thickness: number;
+  spanX: number;              // X向板跨 (mm), 默认 3000
+  spanY: number;              // Y向板跨 (mm), 默认 3000
+  supportType: SlabSupportType; // 支座类型
+  supportBeamWidth: number;   // 支座梁宽 (mm), 默认 250
   bottomX: string;
   bottomY: string;
   topX: string;
   topY: string;
+  supportNegX?: string;       // X向支座负筋 (22G101, 如 "C12@150")
+  supportNegY?: string;       // Y向支座负筋
   distribution: string;
   // 新增
   concreteGrade: ConcreteGrade;
@@ -263,7 +271,7 @@ export type ComponentType = 'beam' | 'column' | 'slab' | 'joint' | 'shearwall' |
 export interface RebarMeshInfo {
   type: 'top' | 'bottom' | 'stirrup' | 'leftSupport' | 'rightSupport' | 'leftSupport2' | 'rightSupport2' | 'main'
     | 'corner' | 'bMiddle' | 'hMiddle'
-    | 'bottomX' | 'bottomY' | 'topX' | 'topY' | 'distribution'
+    | 'bottomX' | 'bottomY' | 'topX' | 'topY' | 'distribution' | 'supportNegX' | 'supportNegY'
     | 'colMain' | 'colStirrup' | 'beamTop' | 'beamBottom' | 'beamStirrup' | 'jointStirrup' | 'anchor'
     | 'vertBar' | 'horizBar' | 'boundaryMain' | 'boundaryStirrup'
     | 'sideBar' | 'erection' | 'tieBar'

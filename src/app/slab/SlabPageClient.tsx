@@ -3,7 +3,7 @@
 import { useState, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
-import type { SlabParams } from '@/lib/types';
+import type { SlabParams, SlabSupportType } from '@/lib/types';
 import { SLAB_PRESETS } from '@/lib/rebar';
 import { calcSlab } from '@/lib/calc';
 import { validateSlabRebar, validateDimension } from '@/lib/validate';
@@ -99,6 +99,11 @@ export function SlabPageClient() {
             <div className="space-y-3">
               <Field label="板编号" value={params.id} onChange={v => update({ id: v })} />
               <NumField label="板厚 (mm)" value={params.thickness} onChange={v => update({ thickness: v })} error={errors.thickness?.message} min={60} max={400} />
+              <NumField label="X向板跨 (mm)" value={params.spanX} onChange={v => update({ spanX: v })} min={1000} max={12000} />
+              <NumField label="Y向板跨 (mm)" value={params.spanY} onChange={v => update({ spanY: v })} min={1000} max={12000} />
+              <SelectField label="支座类型" value={params.supportType} onChange={v => update({ supportType: v as SlabSupportType })}
+                options={[{ value: 'simple', label: '简支' }, { value: 'continuous', label: '连续' }, { value: 'cantilever', label: '悬挑' }]} />
+              <NumField label="支座梁宽 (mm)" value={params.supportBeamWidth} onChange={v => update({ supportBeamWidth: v })} min={150} max={600} />
             </div>
 
             <Section title="材料与构造">
@@ -116,6 +121,12 @@ export function SlabPageClient() {
               <p className="text-[11px] text-muted -mt-1">留空表示无面筋</p>
               <Field label="X向面筋" value={params.topX} onChange={v => update({ topX: v })} placeholder="如: C10@200" error={errors.topX?.message} />
               <Field label="Y向面筋" value={params.topY} onChange={v => update({ topY: v })} placeholder="如: C10@200" error={errors.topY?.message} />
+            </Section>
+
+            <Section title="支座负筋 (22G101)">
+              <p className="text-[11px] text-muted -mt-1">连续板支座处，伸入跨中 ln/4</p>
+              <Field label="X向支座负筋" value={params.supportNegX ?? ''} onChange={v => update({ supportNegX: v || undefined })} placeholder="如: C12@150" />
+              <Field label="Y向支座负筋" value={params.supportNegY ?? ''} onChange={v => update({ supportNegY: v || undefined })} placeholder="如: C10@200" />
             </Section>
 
             <Section title="分布筋">
