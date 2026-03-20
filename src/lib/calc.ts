@@ -729,6 +729,45 @@ export function calcSlab(p: SlabParams): CalcResult {
     total += negYW;
   }
 
+  // ── 分布筋 ──
+  // 分布筋垂直于受力筋方向，沿底筋方向铺设
+  // 按两个方向底筋各配一层分布筋，长度取对应板跨，含搭接150mm
+  if (p.distribution) {
+    const dist = parseSlabRebar(p.distribution);
+    const lapLen = 150; // 22G101 分布筋搭接 ≥150mm
+
+    // 分布筋沿X底筋方向 (垂直于Y方向)
+    const distXCount = Math.ceil(slabW / dist.spacing);
+    const distXLen = (slabD + lapLen) / 1000;
+    const distXW = distXCount * distXLen * w(dist.diameter);
+
+    // 分布筋沿Y底筋方向 (垂直于X方向)
+    const distYCount = Math.ceil(slabD / dist.spacing);
+    const distYLen = (slabW + lapLen) / 1000;
+    const distYW = distYCount * distYLen * w(dist.diameter);
+
+    const distTotal = distXW + distYW;
+    const distTotalCount = distXCount + distYCount;
+    const distFormula: FormulaStep[] = [
+      { label: '沿X方向分布筋', formula: 'n₁ = ⌈W/s⌉', substitution: `= ⌈${slabW}/${dist.spacing}⌉`, result: `= ${distXCount}根` },
+      { label: '沿X方向单根长', formula: 'L₁ = D + lap', substitution: `= ${slabD} + ${lapLen}`, result: `= ${slabD + lapLen}mm = ${distXLen.toFixed(3)}m` },
+      { label: '沿Y方向分布筋', formula: 'n₂ = ⌈D/s⌉', substitution: `= ⌈${slabD}/${dist.spacing}⌉`, result: `= ${distYCount}根` },
+      { label: '沿Y方向单根长', formula: 'L₂ = W + lap', substitution: `= ${slabW} + ${lapLen}`, result: `= ${slabW + lapLen}mm = ${distYLen.toFixed(3)}m` },
+      { label: '搭接长度', formula: 'lap ≥ 150mm (22G101)', substitution: `= ${lapLen}`, result: `= ${lapLen}mm` },
+      weightSteps('分布筋合计', distTotalCount, (distXW + distYW) / (distTotalCount * w(dist.diameter)) > 0 ? (distXW + distYW) / (distTotalCount * w(dist.diameter)) : 0, dist.diameter),
+    ];
+    // Override last step with correct combined weight
+    distFormula[distFormula.length - 1] = {
+      label: '分布筋重量',
+      formula: 'W = (n₁×L₁ + n₂×L₂) × w',
+      substitution: `= (${distXCount}×${distXLen.toFixed(3)} + ${distYCount}×${distYLen.toFixed(3)}) × ${w(dist.diameter).toFixed(4)}`,
+      result: `= ${distTotal.toFixed(2)} kg`,
+    };
+    items.push({ name: '分布筋', spec: p.distribution, length: `X向${distXCount}根×${distXLen.toFixed(3)}m + Y向${distYCount}根×${distYLen.toFixed(3)}m (含搭接${lapLen}mm)`, weight: `${distTotal.toFixed(2)} kg`, color: '#27AE60',
+      grade: dist.grade, diameter: dist.diameter, count: distTotalCount, lengthM: (distXW + distYW) / (distTotalCount * w(dist.diameter)), weightKg: distTotal, formulaSteps: distFormula });
+    total += distTotal;
+  }
+
   return { items, total: `${total.toFixed(2)} kg` };
 }
 
