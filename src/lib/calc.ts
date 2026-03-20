@@ -684,6 +684,51 @@ export function calcSlab(p: SlabParams): CalcResult {
     total += tyW;
   }
 
+  // ── 支座负筋 (22G101) ──
+  // 每根负筋: 伸入跨中 ln/4 + 支座梁宽/2 + 弯折12d (端支座)
+  // 两侧各一根 → ×2
+  const negX = p.supportNegX ? parseSlabRebar(p.supportNegX) : null;
+  if (negX) {
+    const negXExtend = Math.ceil(slabW / 4);
+    const negXBend = 12 * negX.diameter;
+    const negXSingleLen = negXExtend + Math.ceil(p.supportBeamWidth / 2) + negXBend;
+    const negXCount = Math.ceil(slabD / negX.spacing) * 2; // 两侧支座
+    const negXLen = negXSingleLen / 1000;
+    const negXW = negXCount * negXLen * w(negX.diameter);
+    const negXFormula: FormulaStep[] = [
+      { label: '伸入跨中', formula: 'ln/4', substitution: `= ${slabW}/4`, result: `= ${negXExtend} mm` },
+      { label: '支座段', formula: '梁宽/2', substitution: `= ${p.supportBeamWidth}/2`, result: `= ${Math.ceil(p.supportBeamWidth / 2)} mm` },
+      { label: '端部弯折', formula: '12d', substitution: `= 12×${negX.diameter}`, result: `= ${negXBend} mm` },
+      { label: '单根长度', formula: 'L = ln/4 + 梁宽/2 + 12d', substitution: `= ${negXExtend} + ${Math.ceil(p.supportBeamWidth / 2)} + ${negXBend}`, result: `= ${negXSingleLen} mm = ${negXLen.toFixed(3)} m` },
+      { label: '根数', formula: 'n = ⌈D/s⌉ × 2(两侧)', substitution: `= ⌈${slabD}/${negX.spacing}⌉ × 2`, result: `= ${negXCount}` },
+      weightSteps('X向支座负筋', negXCount, negXLen, negX.diameter),
+    ];
+    items.push({ name: 'X向支座负筋', spec: p.supportNegX!, length: `${negXLen.toFixed(3)}m × ${negXCount} (两侧)`, weight: `${negXW.toFixed(2)} kg`, color: '#2980B9',
+      grade: negX.grade, diameter: negX.diameter, count: negXCount, lengthM: negXLen, weightKg: negXW, formulaSteps: negXFormula });
+    total += negXW;
+  }
+
+  const negY = p.supportNegY ? parseSlabRebar(p.supportNegY) : null;
+  if (negY) {
+    const negYExtend = Math.ceil(slabD / 4);
+    const negYBend = 12 * negY.diameter;
+    const negYSingleLen = negYExtend + Math.ceil(p.supportBeamWidth / 2) + negYBend;
+    const negYCount = Math.ceil(slabW / negY.spacing) * 2;
+    const negYLen = negYSingleLen / 1000;
+    const negYW = negYCount * negYLen * w(negY.diameter);
+    const negYFormula: FormulaStep[] = [
+      { label: '伸入跨中', formula: 'ln/4', substitution: `= ${slabD}/4`, result: `= ${negYExtend} mm` },
+      { label: '支座段', formula: '梁宽/2', substitution: `= ${p.supportBeamWidth}/2`, result: `= ${Math.ceil(p.supportBeamWidth / 2)} mm` },
+      { label: '端部弯折', formula: '12d', substitution: `= 12×${negY.diameter}`, result: `= ${negYBend} mm` },
+      { label: '单根长度', formula: 'L = ln/4 + 梁宽/2 + 12d', substitution: `= ${negYExtend} + ${Math.ceil(p.supportBeamWidth / 2)} + ${negYBend}`, result: `= ${negYSingleLen} mm = ${negYLen.toFixed(3)} m` },
+      { label: '根数', formula: 'n = ⌈W/s⌉ × 2(两侧)', substitution: `= ⌈${slabW}/${negY.spacing}⌉ × 2`, result: `= ${negYCount}` },
+      weightSteps('Y向支座负筋', negYCount, negYLen, negY.diameter),
+    ];
+    items.push({ name: 'Y向支座负筋', spec: p.supportNegY!, length: `${negYLen.toFixed(3)}m × ${negYCount} (两侧)`, weight: `${negYW.toFixed(2)} kg`, color: '#16A085',
+      grade: negY.grade, diameter: negY.diameter, count: negYCount, lengthM: negYLen, weightKg: negYW, formulaSteps: negYFormula });
+    total += negYW;
+  }
+
   return { items, total: `${total.toFixed(2)} kg` };
 }
 
