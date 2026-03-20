@@ -39,6 +39,46 @@ function SlabBar({ position, rotation, length, diameter, color, hiColor, info, s
   );
 }
 
+/** Support beam wireframe at slab edge */
+function SupportBeam({ position, size }: { position: [number, number, number]; size: [number, number, number] }) {
+  return (
+    <group position={position}>
+      <mesh>
+        <boxGeometry args={size} />
+        <meshPhysicalMaterial color="#94A3B8" transparent opacity={0.06} side={THREE.DoubleSide} depthWrite={false} />
+      </mesh>
+      <lineSegments>
+        <edgesGeometry args={[new THREE.BoxGeometry(...size)]} />
+        <lineBasicMaterial color="#64748B" linewidth={1} />
+      </lineSegments>
+    </group>
+  );
+}
+
+/** Vertical bend segment for bottom bar at simple support (L-shape) */
+function BarBend({ position, height, diameter, color }: {
+  position: [number, number, number]; height: number; diameter: number; color: string;
+}) {
+  return (
+    <mesh position={position}>
+      <cylinderGeometry args={[diameter * S / 2, diameter * S / 2, height, 6]} />
+      <meshStandardMaterial color={color} roughness={0.4} metalness={0.6} />
+    </mesh>
+  );
+}
+
+/** Downward hook for negative bar at end support */
+function NegBarHook({ position, hookLen, diameter, color }: {
+  position: [number, number, number]; hookLen: number; diameter: number; color: string;
+}) {
+  return (
+    <mesh position={position}>
+      <cylinderGeometry args={[diameter * S / 2, diameter * S / 2, hookLen, 6]} />
+      <meshStandardMaterial color={color} roughness={0.4} metalness={0.6} />
+    </mesh>
+  );
+}
+
 function SlabScene({ params, selected, onSelect, concreteOpacity }: {
   params: SlabParams; selected: RebarMeshInfo | null;
   onSelect: (info: RebarMeshInfo | null) => void; concreteOpacity: number;
@@ -47,6 +87,8 @@ function SlabScene({ params, selected, onSelect, concreteOpacity }: {
   const SLAB_D = params.spanY * S;
   const th = params.thickness * S;
   const COVER = (params.cover || 15) * S;
+  const beamW = params.supportBeamWidth * S;
+  const beamH = Math.max(th * 2, 0.4); // beam depth approx 2× slab thickness
   const bx = parseSlabRebar(params.bottomX);
   const by = parseSlabRebar(params.bottomY);
   const tx = params.topX ? parseSlabRebar(params.topX) : null;
@@ -149,24 +191,62 @@ function SlabScene({ params, selected, onSelect, concreteOpacity }: {
           color="#7D3C98" hiColor="#A569BD" info={tyInfo} selected={selected?.type === 'topY'} onSelect={onSelect} />
       ))}
 
-      {/* 支座负筋 — X向 (左端+右端各伸入 ln/4) */}
-      {negXBars.map((z, i) => (
-        <group key={`negx${i}`}>
-          <SlabBar position={[-SLAB_W / 2 + negExtendX / 2, yTopX, z]} length={negExtendX} diameter={negX!.diameter}
-            color="#2980B9" hiColor="#3498DB" info={negXInfo} selected={selected?.type === 'supportNegX'} onSelect={onSelect} />
-          <SlabBar position={[SLAB_W / 2 - negExtendX / 2, yTopX, z]} length={negExtendX} diameter={negX!.diameter}
-            color="#2980B9" hiColor="#3498DB" info={negXInfo} selected={selected?.type === 'supportNegX'} onSelect={onSelect} />
-        </group>
-      ))}
-      {/* 支座负筋 — Y向 (左端+右端各伸入 ln/4) */}
-      {negYBars.map((x, i) => (
-        <group key={`negy${i}`}>
-          <SlabBar position={[x, yTopY, -SLAB_D / 2 + negExtendY / 2]} rotation={[Math.PI / 2, 0, 0]} length={negExtendY} diameter={negY!.diameter}
-            color="#16A085" hiColor="#1ABC9C" info={negYInfo} selected={selected?.type === 'supportNegY'} onSelect={onSelect} />
-          <SlabBar position={[x, yTopY, SLAB_D / 2 - negExtendY / 2]} rotation={[Math.PI / 2, 0, 0]} length={negExtendY} diameter={negY!.diameter}
-            color="#16A085" hiColor="#1ABC9C" info={negYInfo} selected={selected?.type === 'supportNegY'} onSelect={onSelect} />
-        </group>
-      ))}
+      {/* 支座梁轮廓 (4条边) */}
+      <SupportBeam position={[-SLAB_W / 2 - beamW / 2, -beamH / 2 + th / 2, 0]} size={[beamW, beamH, SLAB_D + 2 * beamW]} />
+      <SupportBeam position={[SLAB_W / 2 + beamW / 2, -beamH / 2 + th / 2, 0]} size={[beamW, beamH, SLAB_D + 2 * beamW]} />
+      <SupportBeam position={[0, -beamH / 2 + th / 2, -SLAB_D / 2 - beamW / 2]} size={[SLAB_W, beamH, beamW]} />
+      <SupportBeam position={[0, -beamH / 2 + th / 2, SLAB_D / 2 + beamW / 2]} size={[SLAB_W, beamH, beamW]} />
+
+      {/* 底筋弯折 (简支端L形) */}
+      {params.supportType === 'simple' && bottomXBars.map((z, i) => {
+        const bendH = th - 2 * COVER;
+        return (
+          <group key={`bxbend${i}`}>
+            <BarBend position={[-SLAB_W / 2, yBottomX + bendH / 2, z]} height={bendH} diameter={bx.diameter} color="#C0392B" />
+            <BarBend position={[SLAB_W / 2, yBottomX + bendH / 2, z]} height={bendH} diameter={bx.diameter} color="#C0392B" />
+          </group>
+        );
+      })}
+      {params.supportType === 'simple' && bottomYBars.map((x, i) => {
+        const bendH = th - 2 * COVER;
+        return (
+          <group key={`bybend${i}`}>
+            <BarBend position={[x, yBottomY + bendH / 2, -SLAB_D / 2]} height={bendH} diameter={by.diameter} color="#E67E22" />
+            <BarBend position={[x, yBottomY + bendH / 2, SLAB_D / 2]} height={bendH} diameter={by.diameter} color="#E67E22" />
+          </group>
+        );
+      })}
+
+      {/* 支座负筋 — X向 (左端+右端各伸入 ln/4) + 端部弯钩 */}
+      {negXBars.map((z, i) => {
+        const hookLen = 12 * negX!.diameter * S;
+        return (
+          <group key={`negx${i}`}>
+            <SlabBar position={[-SLAB_W / 2 + negExtendX / 2, yTopX, z]} length={negExtendX} diameter={negX!.diameter}
+              color="#2980B9" hiColor="#3498DB" info={negXInfo} selected={selected?.type === 'supportNegX'} onSelect={onSelect} />
+            <SlabBar position={[SLAB_W / 2 - negExtendX / 2, yTopX, z]} length={negExtendX} diameter={negX!.diameter}
+              color="#2980B9" hiColor="#3498DB" info={negXInfo} selected={selected?.type === 'supportNegX'} onSelect={onSelect} />
+            {/* 端部向下弯钩 12d */}
+            <NegBarHook position={[-SLAB_W / 2, yTopX - hookLen / 2, z]} hookLen={hookLen} diameter={negX!.diameter} color="#2980B9" />
+            <NegBarHook position={[SLAB_W / 2, yTopX - hookLen / 2, z]} hookLen={hookLen} diameter={negX!.diameter} color="#2980B9" />
+          </group>
+        );
+      })}
+      {/* 支座负筋 — Y向 (左端+右端各伸入 ln/4) + 端部弯钩 */}
+      {negYBars.map((x, i) => {
+        const hookLen = 12 * negY!.diameter * S;
+        return (
+          <group key={`negy${i}`}>
+            <SlabBar position={[x, yTopY, -SLAB_D / 2 + negExtendY / 2]} rotation={[Math.PI / 2, 0, 0]} length={negExtendY} diameter={negY!.diameter}
+              color="#16A085" hiColor="#1ABC9C" info={negYInfo} selected={selected?.type === 'supportNegY'} onSelect={onSelect} />
+            <SlabBar position={[x, yTopY, SLAB_D / 2 - negExtendY / 2]} rotation={[Math.PI / 2, 0, 0]} length={negExtendY} diameter={negY!.diameter}
+              color="#16A085" hiColor="#1ABC9C" info={negYInfo} selected={selected?.type === 'supportNegY'} onSelect={onSelect} />
+            {/* 端部向下弯钩 12d */}
+            <NegBarHook position={[x, yTopY - hookLen / 2, -SLAB_D / 2]} hookLen={hookLen} diameter={negY!.diameter} color="#16A085" />
+            <NegBarHook position={[x, yTopY - hookLen / 2, SLAB_D / 2]} hookLen={hookLen} diameter={negY!.diameter} color="#16A085" />
+          </group>
+        );
+      })}
     </>
   );
 }
@@ -178,6 +258,8 @@ function InfoTooltip({ info }: { info: RebarMeshInfo }) {
     topX: 'bg-purple-50 border-purple-200 text-purple-800',
     topY: 'bg-purple-50 border-purple-200 text-purple-800',
     distribution: 'bg-green-50 border-green-200 text-green-800',
+    supportNegX: 'bg-sky-50 border-sky-200 text-sky-800',
+    supportNegY: 'bg-teal-50 border-teal-200 text-teal-800',
   };
   const cls = colorMap[info.type] || 'bg-gray-50 border-gray-200 text-gray-800';
   return (
