@@ -1,5 +1,6 @@
 import { parseRebar, parseRebarBottom, parseStirrup, parseSlabRebar, parseSideBar, parseTieBar, autoTieBar } from './rebar';
-import { calcSupportRebarLength, calcLlE, calcSlabBottomAnchor, calcBeamEndAnchor, FT, FY } from './anchor';
+import { calcSupportRebarLength, calcLlE, calcSlabBottomAnchor, calcBeamEndAnchor, calcLa, FT, FY } from './anchor';
+import { slabBottomAnchorDetail } from './construction-rules';
 import { calcEffectiveDepth } from './layout';
 import type { BeamParams, ColumnParams, SlabParams, ShearWallParams, StairParams, FoundationParams, PileCapParams, RaftFoundationParams } from './types';
 import { rebarWeightPerM, beamDenseZoneLength, rebarArea } from './construction-rules';
@@ -619,67 +620,83 @@ export function calcSlab(p: SlabParams): CalcResult {
   const items: CalcItem[] = [];
   let total = 0;
 
-  const bxAnchor = calcSlabBottomAnchor(bx.grade, bx.diameter, p.concreteGrade);
+  // ── 底筋 (按支座类型区分锚固) ──
+  const bxLa = calcLa(bx.grade, bx.diameter, p.concreteGrade);
+  const bxDetail = slabBottomAnchorDetail(p.supportType, bx.diameter, bxLa);
+  const bxAnchorTotal = bxDetail.straight + bxDetail.bend; // 直段+弯折
   const bxCount = Math.ceil(slabD / bx.spacing);
-  const bxLen = (slabW + 2 * bxAnchor) / 1000;
+  const bxLen = (slabW + 2 * bxAnchorTotal) / 1000;
   const bxW = bxCount * bxLen * w(bx.diameter);
+  const supportLabel = p.supportType === 'simple' ? '简支' : p.supportType === 'continuous' ? '连续' : '悬挑';
   const bxFormula: FormulaStep[] = [
-    { label: '板底筋锚固', formula: 'anc = max(5d, la/2)', substitution: `= max(5×${bx.diameter}, la/2)`, result: `= ${bxAnchor} mm` },
+    { label: `锚固 (${supportLabel})`, formula: bxDetail.bend > 0 ? '直段+弯折' : '直段伸入', substitution: bxDetail.bend > 0 ? `= ${bxDetail.straight} + ${bxDetail.bend}` : `= ${bxDetail.straight}`, result: `= ${bxAnchorTotal} mm` },
+    { label: '锚固说明', formula: '22G101', substitution: '', result: bxDetail.description },
     { label: '根数', formula: 'n = ⌈D / s⌉', substitution: `= ⌈${slabD} / ${bx.spacing}⌉`, result: `= ${bxCount}` },
-    { label: '单根长度', formula: 'L = W + 2×anc', substitution: `= ${slabW} + 2×${bxAnchor}`, result: `= ${slabW + 2 * bxAnchor} mm = ${bxLen.toFixed(2)} m` },
+    { label: '单根长度', formula: 'L = W + 2×anc', substitution: `= ${slabW} + 2×${bxAnchorTotal}`, result: `= ${slabW + 2 * bxAnchorTotal} mm = ${bxLen.toFixed(2)} m` },
     weightSteps('X向底筋', bxCount, bxLen, bx.diameter),
   ];
   items.push({
     name: 'X向底筋', spec: p.bottomX,
-    length: `${bxLen.toFixed(2)}m × ${bxCount} (含锚${bxAnchor}mm×2)`,
+    length: `${bxLen.toFixed(2)}m × ${bxCount} (${supportLabel}锚${bxAnchorTotal}mm×2)`,
     weight: `${bxW.toFixed(2)} kg`, color: '#C0392B',
     grade: bx.grade, diameter: bx.diameter, count: bxCount, lengthM: bxLen, weightKg: bxW,
     formulaSteps: bxFormula,
   });
   total += bxW;
 
-  const byAnchor = calcSlabBottomAnchor(by.grade, by.diameter, p.concreteGrade);
+  const byLa = calcLa(by.grade, by.diameter, p.concreteGrade);
+  const byDetail = slabBottomAnchorDetail(p.supportType, by.diameter, byLa);
+  const byAnchorTotal = byDetail.straight + byDetail.bend;
   const byCount = Math.ceil(slabW / by.spacing);
-  const byLen = (slabD + 2 * byAnchor) / 1000;
+  const byLen = (slabD + 2 * byAnchorTotal) / 1000;
   const byW = byCount * byLen * w(by.diameter);
   const byFormula: FormulaStep[] = [
-    { label: '板底筋锚固', formula: 'anc = max(5d, la/2)', substitution: `= max(5×${by.diameter}, la/2)`, result: `= ${byAnchor} mm` },
+    { label: `锚固 (${supportLabel})`, formula: byDetail.bend > 0 ? '直段+弯折' : '直段伸入', substitution: byDetail.bend > 0 ? `= ${byDetail.straight} + ${byDetail.bend}` : `= ${byDetail.straight}`, result: `= ${byAnchorTotal} mm` },
+    { label: '锚固说明', formula: '22G101', substitution: '', result: byDetail.description },
     { label: '根数', formula: 'n = ⌈W / s⌉', substitution: `= ⌈${slabW} / ${by.spacing}⌉`, result: `= ${byCount}` },
-    { label: '单根长度', formula: 'L = D + 2×anc', substitution: `= ${slabD} + 2×${byAnchor}`, result: `= ${slabD + 2 * byAnchor} mm = ${byLen.toFixed(2)} m` },
+    { label: '单根长度', formula: 'L = D + 2×anc', substitution: `= ${slabD} + 2×${byAnchorTotal}`, result: `= ${slabD + 2 * byAnchorTotal} mm = ${byLen.toFixed(2)} m` },
     weightSteps('Y向底筋', byCount, byLen, by.diameter),
   ];
   items.push({
     name: 'Y向底筋', spec: p.bottomY,
-    length: `${byLen.toFixed(2)}m × ${byCount} (含锚${byAnchor}mm×2)`,
+    length: `${byLen.toFixed(2)}m × ${byCount} (${supportLabel}锚${byAnchorTotal}mm×2)`,
     weight: `${byW.toFixed(2)} kg`, color: '#E67E22',
     grade: by.grade, diameter: by.diameter, count: byCount, lengthM: byLen, weightKg: byW,
     formulaSteps: byFormula,
   });
   total += byW;
 
+  // ── 面筋 (含锚入支座) ──
+  // 面筋伸入支座: 连续板 ≥ la, 简支板 ≥ la/2, 悬挑板全长
   if (tx) {
+    const txLa = calcLa(tx.grade, tx.diameter, p.concreteGrade);
+    const txAnchor = p.supportType === 'cantilever' ? 0 : p.supportType === 'continuous' ? txLa : Math.ceil(txLa / 2);
     const txCount = Math.ceil(slabD / tx.spacing);
-    const txLen = slabW / 1000;
+    const txLen = (slabW + 2 * txAnchor) / 1000;
     const txW = txCount * txLen * w(tx.diameter);
     const txFormula: FormulaStep[] = [
+      { label: `面筋锚固 (${supportLabel})`, formula: p.supportType === 'continuous' ? 'anc = la' : 'anc = la/2', substitution: p.supportType === 'cantilever' ? '悬挑端无锚固' : `= ${txAnchor}`, result: `= ${txAnchor} mm` },
       { label: '根数', formula: 'n = ⌈D / s⌉', substitution: `= ⌈${slabD} / ${tx.spacing}⌉`, result: `= ${txCount}` },
-      { label: '单根长度', formula: 'L = W', substitution: `= ${slabW}`, result: `= ${txLen.toFixed(1)} m` },
+      { label: '单根长度', formula: 'L = W + 2×anc', substitution: `= ${slabW} + 2×${txAnchor}`, result: `= ${slabW + 2 * txAnchor} mm = ${txLen.toFixed(2)} m` },
       weightSteps('X向面筋', txCount, txLen, tx.diameter),
     ];
-    items.push({ name: 'X向面筋', spec: p.topX, length: `${txLen.toFixed(1)}m × ${txCount}`, weight: `${txW.toFixed(2)} kg`, color: '#8E44AD',
+    items.push({ name: 'X向面筋', spec: p.topX, length: `${txLen.toFixed(2)}m × ${txCount}${txAnchor > 0 ? ` (含锚${txAnchor}mm×2)` : ''}`, weight: `${txW.toFixed(2)} kg`, color: '#8E44AD',
       grade: tx.grade, diameter: tx.diameter, count: txCount, lengthM: txLen, weightKg: txW, formulaSteps: txFormula });
     total += txW;
   }
   if (ty) {
+    const tyLa = calcLa(ty.grade, ty.diameter, p.concreteGrade);
+    const tyAnchor = p.supportType === 'cantilever' ? 0 : p.supportType === 'continuous' ? tyLa : Math.ceil(tyLa / 2);
     const tyCount = Math.ceil(slabW / ty.spacing);
-    const tyLen = slabD / 1000;
+    const tyLen = (slabD + 2 * tyAnchor) / 1000;
     const tyW = tyCount * tyLen * w(ty.diameter);
     const tyFormula: FormulaStep[] = [
+      { label: `面筋锚固 (${supportLabel})`, formula: p.supportType === 'continuous' ? 'anc = la' : 'anc = la/2', substitution: p.supportType === 'cantilever' ? '悬挑端无锚固' : `= ${tyAnchor}`, result: `= ${tyAnchor} mm` },
       { label: '根数', formula: 'n = ⌈W / s⌉', substitution: `= ⌈${slabW} / ${ty.spacing}⌉`, result: `= ${tyCount}` },
-      { label: '单根长度', formula: 'L = D', substitution: `= ${slabD}`, result: `= ${tyLen.toFixed(1)} m` },
+      { label: '单根长度', formula: 'L = D + 2×anc', substitution: `= ${slabD} + 2×${tyAnchor}`, result: `= ${slabD + 2 * tyAnchor} mm = ${tyLen.toFixed(2)} m` },
       weightSteps('Y向面筋', tyCount, tyLen, ty.diameter),
     ];
-    items.push({ name: 'Y向面筋', spec: p.topY, length: `${tyLen.toFixed(1)}m × ${tyCount}`, weight: `${tyW.toFixed(2)} kg`, color: '#7D3C98',
+    items.push({ name: 'Y向面筋', spec: p.topY, length: `${tyLen.toFixed(2)}m × ${tyCount}${tyAnchor > 0 ? ` (含锚${tyAnchor}mm×2)` : ''}`, weight: `${tyW.toFixed(2)} kg`, color: '#7D3C98',
       grade: ty.grade, diameter: ty.diameter, count: tyCount, lengthM: tyLen, weightKg: tyW, formulaSteps: tyFormula });
     total += tyW;
   }
