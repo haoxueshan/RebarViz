@@ -1,9 +1,8 @@
 import { parseRebar, parseRebarBottom, parseStirrup, parseSlabRebar, parseSideBar, parseTieBar, autoTieBar } from './rebar';
 import { calcSupportRebarLength, calcLlE, calcSlabBottomAnchor, calcBeamEndAnchor, calcLa, FT, FY } from './anchor';
-import { slabBottomAnchorDetail } from './construction-rules';
 import { calcEffectiveDepth } from './layout';
 import type { BeamParams, ColumnParams, SlabParams, ShearWallParams, StairParams, FoundationParams, PileCapParams, RaftFoundationParams } from './types';
-import { rebarWeightPerM, beamDenseZoneLength, rebarArea } from './construction-rules';
+import { rebarWeightPerM, beamDenseZoneLength, rebarArea, slabBottomAnchorDetail, slabNegBarExtend, slabNegBarBend } from './construction-rules';
 
 /** 钢筋理论重量 kg/m — 代理到 construction-rules */
 function w(diameter: number): number {
@@ -702,46 +701,69 @@ export function calcSlab(p: SlabParams): CalcResult {
   }
 
   // ── 支座负筋 (22G101) ──
-  // 每根负筋: 伸入跨中 ln/4 + 支座梁宽/2 + 弯折12d (端支座)
-  // 两侧各一根 → ×2
+  // 简支板→端支座: 伸入ln/4 + 梁宽/2 + 弯折12d
+  // 连续板→中间支座: 伸入ln/3(第一排) + 梁宽(直通) + 伸入另侧ln/3, 无弯折
+  const negSupportPos = p.supportType === 'continuous' ? 'middle' as const : 'end' as const;
+  const negPosLabel = negSupportPos === 'end' ? '端支座' : '中间支座';
+
   const negX = p.supportNegX ? parseSlabRebar(p.supportNegX) : null;
   if (negX) {
-    const negXExtend = Math.ceil(slabW / 4);
-    const negXBend = 12 * negX.diameter;
-    const negXSingleLen = negXExtend + Math.ceil(p.supportBeamWidth / 2) + negXBend;
-    const negXCount = Math.ceil(slabD / negX.spacing) * 2; // 两侧支座
+    const negXExtend = slabNegBarExtend(slabW, negSupportPos);
+    const negXBend = negSupportPos === 'end' ? slabNegBarBend(negX.diameter) : 0;
+    const negXBeamPart = negSupportPos === 'end' ? Math.ceil(p.supportBeamWidth / 2) : p.supportBeamWidth;
+    // 端支座: 单侧 = extend + 梁宽/2 + 12d弯折, 两侧各一根
+    // 中间支座: 整根 = extend(左) + 梁宽(直通) + extend(右)
+    const negXSingleLen = negSupportPos === 'end'
+      ? negXExtend + negXBeamPart + negXBend
+      : negXExtend + negXBeamPart + negXExtend;
+    const negXCount = negSupportPos === 'end'
+      ? Math.ceil(slabD / negX.spacing) * 2  // 两侧各一根
+      : Math.ceil(slabD / negX.spacing);      // 中间支座一根直通
     const negXLen = negXSingleLen / 1000;
     const negXW = negXCount * negXLen * w(negX.diameter);
+    const extendFormula = negSupportPos === 'end' ? 'ln/4' : 'ln/3';
     const negXFormula: FormulaStep[] = [
-      { label: '伸入跨中', formula: 'ln/4', substitution: `= ${slabW}/4`, result: `= ${negXExtend} mm` },
-      { label: '支座段', formula: '梁宽/2', substitution: `= ${p.supportBeamWidth}/2`, result: `= ${Math.ceil(p.supportBeamWidth / 2)} mm` },
-      { label: '端部弯折', formula: '12d', substitution: `= 12×${negX.diameter}`, result: `= ${negXBend} mm` },
-      { label: '单根长度', formula: 'L = ln/4 + 梁宽/2 + 12d', substitution: `= ${negXExtend} + ${Math.ceil(p.supportBeamWidth / 2)} + ${negXBend}`, result: `= ${negXSingleLen} mm = ${negXLen.toFixed(3)} m` },
-      { label: '根数', formula: 'n = ⌈D/s⌉ × 2(两侧)', substitution: `= ⌈${slabD}/${negX.spacing}⌉ × 2`, result: `= ${negXCount}` },
+      { label: `伸入跨中 (${negPosLabel})`, formula: extendFormula, substitution: `= ${slabW}/${negSupportPos === 'end' ? 4 : 3}`, result: `= ${negXExtend} mm` },
+      { label: '支座段', formula: negSupportPos === 'end' ? '梁宽/2' : '梁宽(直通)', substitution: `= ${negXBeamPart}`, result: `= ${negXBeamPart} mm` },
+      ...(negXBend > 0 ? [{ label: '端部弯折', formula: '12d', substitution: `= 12×${negX.diameter}`, result: `= ${negXBend} mm` }] : []),
+      { label: '单根长度', formula: negSupportPos === 'end' ? `L = ${extendFormula} + 梁宽/2 + 12d` : `L = ${extendFormula}×2 + 梁宽`, substitution: negSupportPos === 'end' ? `= ${negXExtend} + ${negXBeamPart} + ${negXBend}` : `= ${negXExtend}×2 + ${negXBeamPart}`, result: `= ${negXSingleLen} mm = ${negXLen.toFixed(3)} m` },
+      { label: '根数', formula: negSupportPos === 'end' ? 'n = ⌈D/s⌉ × 2(两侧)' : 'n = ⌈D/s⌉(直通)', substitution: negSupportPos === 'end' ? `= ⌈${slabD}/${negX.spacing}⌉ × 2` : `= ⌈${slabD}/${negX.spacing}⌉`, result: `= ${negXCount}` },
       weightSteps('X向支座负筋', negXCount, negXLen, negX.diameter),
     ];
-    items.push({ name: 'X向支座负筋', spec: p.supportNegX!, length: `${negXLen.toFixed(3)}m × ${negXCount} (两侧)`, weight: `${negXW.toFixed(2)} kg`, color: '#2980B9',
+    const negXLenDesc = negSupportPos === 'end'
+      ? `${negXLen.toFixed(3)}m × ${negXCount} (两侧, 含弯折${negXBend}mm)`
+      : `${negXLen.toFixed(3)}m × ${negXCount} (直通过支座)`;
+    items.push({ name: 'X向支座负筋', spec: p.supportNegX!, length: negXLenDesc, weight: `${negXW.toFixed(2)} kg`, color: '#2980B9',
       grade: negX.grade, diameter: negX.diameter, count: negXCount, lengthM: negXLen, weightKg: negXW, formulaSteps: negXFormula });
     total += negXW;
   }
 
   const negY = p.supportNegY ? parseSlabRebar(p.supportNegY) : null;
   if (negY) {
-    const negYExtend = Math.ceil(slabD / 4);
-    const negYBend = 12 * negY.diameter;
-    const negYSingleLen = negYExtend + Math.ceil(p.supportBeamWidth / 2) + negYBend;
-    const negYCount = Math.ceil(slabW / negY.spacing) * 2;
+    const negYExtend = slabNegBarExtend(slabD, negSupportPos);
+    const negYBend = negSupportPos === 'end' ? slabNegBarBend(negY.diameter) : 0;
+    const negYBeamPart = negSupportPos === 'end' ? Math.ceil(p.supportBeamWidth / 2) : p.supportBeamWidth;
+    const negYSingleLen = negSupportPos === 'end'
+      ? negYExtend + negYBeamPart + negYBend
+      : negYExtend + negYBeamPart + negYExtend;
+    const negYCount = negSupportPos === 'end'
+      ? Math.ceil(slabW / negY.spacing) * 2
+      : Math.ceil(slabW / negY.spacing);
     const negYLen = negYSingleLen / 1000;
     const negYW = negYCount * negYLen * w(negY.diameter);
+    const extendFormulaY = negSupportPos === 'end' ? 'ln/4' : 'ln/3';
     const negYFormula: FormulaStep[] = [
-      { label: '伸入跨中', formula: 'ln/4', substitution: `= ${slabD}/4`, result: `= ${negYExtend} mm` },
-      { label: '支座段', formula: '梁宽/2', substitution: `= ${p.supportBeamWidth}/2`, result: `= ${Math.ceil(p.supportBeamWidth / 2)} mm` },
-      { label: '端部弯折', formula: '12d', substitution: `= 12×${negY.diameter}`, result: `= ${negYBend} mm` },
-      { label: '单根长度', formula: 'L = ln/4 + 梁宽/2 + 12d', substitution: `= ${negYExtend} + ${Math.ceil(p.supportBeamWidth / 2)} + ${negYBend}`, result: `= ${negYSingleLen} mm = ${negYLen.toFixed(3)} m` },
-      { label: '根数', formula: 'n = ⌈W/s⌉ × 2(两侧)', substitution: `= ⌈${slabW}/${negY.spacing}⌉ × 2`, result: `= ${negYCount}` },
+      { label: `伸入跨中 (${negPosLabel})`, formula: extendFormulaY, substitution: `= ${slabD}/${negSupportPos === 'end' ? 4 : 3}`, result: `= ${negYExtend} mm` },
+      { label: '支座段', formula: negSupportPos === 'end' ? '梁宽/2' : '梁宽(直通)', substitution: `= ${negYBeamPart}`, result: `= ${negYBeamPart} mm` },
+      ...(negYBend > 0 ? [{ label: '端部弯折', formula: '12d', substitution: `= 12×${negY.diameter}`, result: `= ${negYBend} mm` }] : []),
+      { label: '单根长度', formula: negSupportPos === 'end' ? `L = ${extendFormulaY} + 梁宽/2 + 12d` : `L = ${extendFormulaY}×2 + 梁宽`, substitution: negSupportPos === 'end' ? `= ${negYExtend} + ${negYBeamPart} + ${negYBend}` : `= ${negYExtend}×2 + ${negYBeamPart}`, result: `= ${negYSingleLen} mm = ${negYLen.toFixed(3)} m` },
+      { label: '根数', formula: negSupportPos === 'end' ? 'n = ⌈W/s⌉ × 2(两侧)' : 'n = ⌈W/s⌉(直通)', substitution: negSupportPos === 'end' ? `= ⌈${slabW}/${negY.spacing}⌉ × 2` : `= ⌈${slabW}/${negY.spacing}⌉`, result: `= ${negYCount}` },
       weightSteps('Y向支座负筋', negYCount, negYLen, negY.diameter),
     ];
-    items.push({ name: 'Y向支座负筋', spec: p.supportNegY!, length: `${negYLen.toFixed(3)}m × ${negYCount} (两侧)`, weight: `${negYW.toFixed(2)} kg`, color: '#16A085',
+    const negYLenDesc = negSupportPos === 'end'
+      ? `${negYLen.toFixed(3)}m × ${negYCount} (两侧, 含弯折${negYBend}mm)`
+      : `${negYLen.toFixed(3)}m × ${negYCount} (直通过支座)`;
+    items.push({ name: 'Y向支座负筋', spec: p.supportNegY!, length: negYLenDesc, weight: `${negYW.toFixed(2)} kg`, color: '#16A085',
       grade: negY.grade, diameter: negY.diameter, count: negYCount, lengthM: negYLen, weightKg: negYW, formulaSteps: negYFormula });
     total += negYW;
   }

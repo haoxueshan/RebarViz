@@ -151,7 +151,7 @@ export function calcBeamEndAnchor(
  * ln: 梁净跨
  */
 export function calcSupportRebarLength(beamNetSpan: number, row: 1 | 2 = 1): number {
-  const ratio = row === 1 ? SUPPORT_BAR_EXTEND_RATIO.row1 : SUPPORT_BAR_EXTEND_RATIO.row2;
+  const ratio = row === 1 ? SUPPORT_BAR_EXTEND_RATIO.middleRow1 : SUPPORT_BAR_EXTEND_RATIO.middleRow2;
   return Math.ceil(beamNetSpan * ratio);
 }
 

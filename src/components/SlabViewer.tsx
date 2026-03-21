@@ -96,9 +96,10 @@ function SlabScene({ params, selected, onSelect, concreteOpacity }: {
   const negX = params.supportNegX ? parseSlabRebar(params.supportNegX) : null;
   const negY = params.supportNegY ? parseSlabRebar(params.supportNegY) : null;
 
-  // 支座负筋伸入跨中长度: ln/4
-  const negExtendX = SLAB_W / 4;
-  const negExtendY = SLAB_D / 4;
+  // 支座负筋伸入跨中长度: 端支座ln/4, 中间支座ln/3
+  const negSupportPos = params.supportType === 'continuous' ? 'middle' as const : 'end' as const;
+  const negExtendX = negSupportPos === 'end' ? SLAB_W / 4 : SLAB_W / 3;
+  const negExtendY = negSupportPos === 'end' ? SLAB_D / 4 : SLAB_D / 3;
 
   const bottomXBars = (() => {
     const spacing = bx.spacing * S;
@@ -217,8 +218,17 @@ function SlabScene({ params, selected, onSelect, concreteOpacity }: {
         );
       })}
 
-      {/* 支座负筋 — X向 (左端+右端各伸入 ln/4) + 端部弯钩 */}
+      {/* 支座负筋 — X向: 端支座=两侧各ln/4+弯钩, 中间支座=直通ln/3×2+梁宽 */}
       {negXBars.map((z, i) => {
+        if (negSupportPos === 'middle') {
+          // 中间支座: 一根直通过支座，两侧各伸入 ln/3
+          const totalNegLen = negExtendX * 2 + beamW;
+          return (
+            <SlabBar key={`negx${i}`} position={[0, yTopX, z]} length={totalNegLen} diameter={negX!.diameter}
+              color="#2980B9" hiColor="#3498DB" info={negXInfo} selected={selected?.type === 'supportNegX'} onSelect={onSelect} />
+          );
+        }
+        // 端支座: 两侧各一根，带 12d 向下弯钩
         const hookLen = 12 * negX!.diameter * S;
         return (
           <group key={`negx${i}`}>
@@ -226,14 +236,20 @@ function SlabScene({ params, selected, onSelect, concreteOpacity }: {
               color="#2980B9" hiColor="#3498DB" info={negXInfo} selected={selected?.type === 'supportNegX'} onSelect={onSelect} />
             <SlabBar position={[SLAB_W / 2 - negExtendX / 2, yTopX, z]} length={negExtendX} diameter={negX!.diameter}
               color="#2980B9" hiColor="#3498DB" info={negXInfo} selected={selected?.type === 'supportNegX'} onSelect={onSelect} />
-            {/* 端部向下弯钩 12d */}
             <NegBarHook position={[-SLAB_W / 2, yTopX - hookLen / 2, z]} hookLen={hookLen} diameter={negX!.diameter} color="#2980B9" />
             <NegBarHook position={[SLAB_W / 2, yTopX - hookLen / 2, z]} hookLen={hookLen} diameter={negX!.diameter} color="#2980B9" />
           </group>
         );
       })}
-      {/* 支座负筋 — Y向 (左端+右端各伸入 ln/4) + 端部弯钩 */}
+      {/* 支座负筋 — Y向: 端支座=两侧各ln/4+弯钩, 中间支座=直通ln/3×2+梁宽 */}
       {negYBars.map((x, i) => {
+        if (negSupportPos === 'middle') {
+          const totalNegLen = negExtendY * 2 + beamW;
+          return (
+            <SlabBar key={`negy${i}`} position={[x, yTopY, 0]} rotation={[Math.PI / 2, 0, 0]} length={totalNegLen} diameter={negY!.diameter}
+              color="#16A085" hiColor="#1ABC9C" info={negYInfo} selected={selected?.type === 'supportNegY'} onSelect={onSelect} />
+          );
+        }
         const hookLen = 12 * negY!.diameter * S;
         return (
           <group key={`negy${i}`}>
@@ -241,7 +257,6 @@ function SlabScene({ params, selected, onSelect, concreteOpacity }: {
               color="#16A085" hiColor="#1ABC9C" info={negYInfo} selected={selected?.type === 'supportNegY'} onSelect={onSelect} />
             <SlabBar position={[x, yTopY, SLAB_D / 2 - negExtendY / 2]} rotation={[Math.PI / 2, 0, 0]} length={negExtendY} diameter={negY!.diameter}
               color="#16A085" hiColor="#1ABC9C" info={negYInfo} selected={selected?.type === 'supportNegY'} onSelect={onSelect} />
-            {/* 端部向下弯钩 12d */}
             <NegBarHook position={[x, yTopY - hookLen / 2, -SLAB_D / 2]} hookLen={hookLen} diameter={negY!.diameter} color="#16A085" />
             <NegBarHook position={[x, yTopY - hookLen / 2, SLAB_D / 2]} hookLen={hookLen} diameter={negY!.diameter} color="#16A085" />
           </group>

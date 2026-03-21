@@ -256,15 +256,81 @@ export function slabBottomAnchorDetail(
 
 /**
  * 支座负筋伸入跨中长度 — 22G101 页4-34
- * 第一排: ln/4, 第二排(如有): ln/3
+ *
+ * 端支座 (end): 从柱(墙)边伸入板内 ≥ ln/4
+ * 中间支座 (middle):
+ *   第一排: 从支座中线向两侧各伸入 ≥ ln/3 (ln取较大跨净跨)
+ *   第二排: 从支座中线向两侧各伸入 ≥ ln/4
+ *
+ * @param ln 净跨长度
+ * @param supportPos 支座位置: 'end'=端支座, 'middle'=中间支座
+ * @param row 排号 (仅中间支座区分)
  */
-export function slabNegBarExtend(ln: number, row: 1 | 2 = 1): number {
-  return row === 1 ? Math.ceil(ln / 4) : Math.ceil(ln / 3);
+export function slabNegBarExtend(
+  ln: number,
+  supportPos: 'end' | 'middle' = 'end',
+  row: 1 | 2 = 1,
+): number {
+  if (supportPos === 'end') return Math.ceil(ln / 4);
+  // 中间支座: 第一排 ln/3, 第二排 ln/4
+  return row === 1 ? Math.ceil(ln / 3) : Math.ceil(ln / 4);
 }
 
 /** 支座负筋端支座弯折长度 — 22G101: ≥ 12d */
 export function slabNegBarBend(d: number): number {
   return 12 * d;
+}
+
+/**
+ * 支座负筋在支座处的锚固方式 — 22G101
+ *
+ * 端支座: 弯折向下 ≥ 12d (不直通)
+ * 中间支座: 直通过支座 (不弯折)，两侧各伸入跨中
+ *
+ * @returns { bendDown: 弯折长度(0=直通), description }
+ */
+export function slabNegBarAnchorAtSupport(
+  supportPos: 'end' | 'middle',
+  d: number,
+): { bendDown: number; description: string } {
+  if (supportPos === 'end') {
+    const bend = 12 * d;
+    return {
+      bendDown: bend,
+      description: `端支座: 弯折向下≥12d=${bend}mm (22G101)`,
+    };
+  }
+  return {
+    bendDown: 0,
+    description: '中间支座: 直通过支座，两侧各伸入跨中 (22G101)',
+  };
+}
+
+// ─── 22G101 悬臂板钢筋构造 ───
+
+/**
+ * 悬臂板上部受力筋构造 — 22G101
+ *
+ * 1. 受力筋从悬臂根部伸至自由端，自由端弯折向下 ≥ 12d
+ * 2. 受力筋从根部锚入相邻板跨 ≥ ln/4 (ln=相邻板净跨)
+ * 3. 下部配分布筋 (构造钢筋)
+ */
+export function cantileverSlabTopBar(
+  cantileverLen: number,
+  adjacentSpan: number,
+  d: number,
+): { totalLen: number; cantileverPart: number; anchorPart: number; freeEndBend: number; description: string } {
+  const freeEndBend = 12 * d;
+  const anchorPart = Math.ceil(adjacentSpan / 4);
+  const cantileverPart = cantileverLen;
+  const totalLen = cantileverPart + anchorPart + freeEndBend;
+  return {
+    totalLen,
+    cantileverPart,
+    anchorPart,
+    freeEndBend,
+    description: `悬臂板受力筋: 悬挑段${cantileverPart}mm + 锚入相邻跨≥ln/4=${anchorPart}mm + 自由端弯折12d=${freeEndBend}mm (22G101)`,
+  };
 }
 
 // ─── 板跨厚比限值 ───
@@ -334,8 +400,16 @@ export const STAIR_BAR_SPACING = { min: 70, max: 200 };
 // 11. 支座负筋构造 — 22G101-1
 // ═══════════════════════════════════════════════════════════════════
 
-/** 支座负筋伸入跨内长度: 第一排 ln/3，第二排 ln/4 */
-export const SUPPORT_BAR_EXTEND_RATIO = { row1: 1 / 3, row2: 1 / 4 };
+/**
+ * 支座负筋伸入跨内长度比 — 22G101
+ * 端支座: ln/4
+ * 中间支座: 第一排 ln/3，第二排 ln/4
+ */
+export const SUPPORT_BAR_EXTEND_RATIO = {
+  end: 1 / 4,
+  middleRow1: 1 / 3,
+  middleRow2: 1 / 4,
+};
 
 // ═══════════════════════════════════════════════════════════════════
 // 12. 锚固 / 搭接通用规则 (计算逻辑仍在 anchor.ts)

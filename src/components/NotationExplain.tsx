@@ -4,7 +4,7 @@ import { useState } from 'react';
 import type { BeamParams, ColumnParams, SlabParams, ShearWallParams, StairParams, FoundationParams, PileCapParams, RaftFoundationParams } from '@/lib/types';
 import { parseRebar, parseStirrup, parseSlabRebar, parseSideBar, gradeLabel, resolveColumnBars } from '@/lib/rebar';
 import { calcAnchorAll, calcSupportRebarLength, calcSlabBottomAnchor, calcColumnLapZone, calcLaE, calcLlE, calcBendLength, calcBeamEndAnchor, calcBottomBarLapAtMiddleJoint } from '@/lib/anchor';
-import { determineColFoundAnchor, slabBottomAnchorDetail, slabNegBarExtend, slabNegBarBend, SLAB_DIST_LAP_LENGTH } from '@/lib/construction-rules';
+import { determineColFoundAnchor, slabBottomAnchorDetail, slabNegBarExtend, slabNegBarBend, slabNegBarAnchorAtSupport, cantileverSlabTopBar, SLAB_DIST_LAP_LENGTH } from '@/lib/construction-rules';
 import { calcLa } from '@/lib/anchor';
 
 function ExplainSection({ title, defaultOpen = false, children }: {
@@ -327,8 +327,12 @@ export function SlabExplain({ params }: { params: SlabParams }) {
   const bxAnchorDetail = slabBottomAnchorDetail(params.supportType, bx.diameter, bxLa);
   const byAnchorDetail = slabBottomAnchorDetail(params.supportType, by.diameter, byLa);
   const supportLabel = params.supportType === 'simple' ? '简支' : params.supportType === 'continuous' ? '连续' : '悬挑';
-  const negExtendX = slabNegBarExtend(params.spanX);
-  const negExtendY = slabNegBarExtend(params.spanY);
+  // 简支板→端支座(ln/4)，连续板→中间支座(第一排ln/3)
+  const negSupportPos = params.supportType === 'continuous' ? 'middle' as const : 'end' as const;
+  const negExtendX = slabNegBarExtend(params.spanX, negSupportPos);
+  const negExtendY = slabNegBarExtend(params.spanY, negSupportPos);
+  const negAnchorX = negX ? slabNegBarAnchorAtSupport(negSupportPos, negX.diameter) : null;
+  const negAnchorY = negY ? slabNegBarAnchorAtSupport(negSupportPos, negY.diameter) : null;
 
   return (
     <div className="space-y-2 text-sm">
@@ -377,15 +381,15 @@ export function SlabExplain({ params }: { params: SlabParams }) {
           {negX && (
             <div className="p-3 bg-sky-50 rounded-lg">
               <p className="font-medium text-sky-800">X向支座负筋: {params.supportNegX}</p>
-              <p className="text-xs text-sky-600 mt-1">{gradeLabel(negX.grade)} Φ{negX.diameter}@{negX.spacing}，伸入跨中 ln/4={negExtendX}mm</p>
-              <p className="text-xs text-sky-600">端支座弯折 ≥{slabNegBarBend(negX.diameter)}mm (12d)</p>
+              <p className="text-xs text-sky-600 mt-1">{gradeLabel(negX.grade)} Φ{negX.diameter}@{negX.spacing}，伸入跨中 {negSupportPos === 'middle' ? 'ln/3' : 'ln/4'}={negExtendX}mm</p>
+              {negAnchorX && <p className="text-xs text-sky-600">{negAnchorX.description}</p>}
             </div>
           )}
           {negY && (
             <div className="p-3 bg-teal-50 rounded-lg">
               <p className="font-medium text-teal-800">Y向支座负筋: {params.supportNegY}</p>
-              <p className="text-xs text-teal-600 mt-1">{gradeLabel(negY.grade)} Φ{negY.diameter}@{negY.spacing}，伸入跨中 ln/4={negExtendY}mm</p>
-              <p className="text-xs text-teal-600">端支座弯折 ≥{slabNegBarBend(negY.diameter)}mm (12d)</p>
+              <p className="text-xs text-teal-600 mt-1">{gradeLabel(negY.grade)} Φ{negY.diameter}@{negY.spacing}，伸入跨中 {negSupportPos === 'middle' ? 'ln/3' : 'ln/4'}={negExtendY}mm</p>
+              {negAnchorY && <p className="text-xs text-teal-600">{negAnchorY.description}</p>}
             </div>
           )}
         </ExplainSection>
@@ -416,9 +420,10 @@ export function SlabExplain({ params }: { params: SlabParams }) {
           <ul className="mt-1.5 space-y-1 text-xs text-amber-700 list-disc list-inside">
             <li>底筋在下，面筋在上，短方向筋在外侧</li>
             <li>{supportLabel}端底筋伸入支座 ≥{bxAnchorDetail.straight}mm{bxAnchorDetail.bend > 0 ? `，弯折≥${bxAnchorDetail.bend}mm` : ''}</li>
-            <li>连续支座负筋伸入跨中 ln/4 (第一排)、ln/3 (第二排)</li>
+            <li>端支座负筋伸入跨中 ≥ln/4，弯折向下 ≥12d</li>
+            <li>中间支座负筋: 第一排 ≥ln/3，第二排 ≥ln/4，直通过支座</li>
             <li>分布筋搭接 ≥150mm，间距 ≤250mm</li>
-            {params.supportType === 'cantilever' && <li>悬挑板面筋伸入支座 ≥2倍悬挑长度</li>}
+            {params.supportType === 'cantilever' && <li>悬臂板受力筋伸至自由端弯折 ≥12d，锚入相邻跨 ≥ln/4</li>}
           </ul>
         </div>
       </ExplainSection>
