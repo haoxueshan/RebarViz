@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
-import type { FoundationParams, FoundationStepDim } from '@/lib/types';
+import type { FoundationParams, FoundationStepDim, ComponentType } from '@/lib/types';
 import { FOUNDATION_PRESETS } from '@/lib/rebar';
 import { calcFoundation } from '@/lib/calc';
 import { FoundationCrossSection } from '@/components/CrossSection';
@@ -49,6 +49,7 @@ const DEFAULT: FoundationParams = {
 };
 
 export function FoundationPageClient() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const [params, setParams] = useState<FoundationParams>(() => {
     const p = searchParams.get('p');
@@ -216,6 +217,15 @@ export function FoundationPageClient() {
               context={aiContext}
               notationSlot={<FoundationExplain params={params} />}
               initialMessage={aiMessage}
+              onSwitchTab={(tab) => setDataTab(tab as typeof dataTab)}
+              onNavigateComponent={(type: ComponentType, message?: string) => {
+                const encoded = message ? `?ai=${encodeURIComponent(message)}` : '';
+                router.push(`/${type}${encoded}`);
+              }}
+              onApplyPreset={(preset) => {
+                if (preset in FOUNDATION_PRESETS) applyPreset(preset as keyof typeof FOUNDATION_PRESETS);
+              }}
+              onGetCurrentState={() => aiContext}
             />
           </div>
         )}

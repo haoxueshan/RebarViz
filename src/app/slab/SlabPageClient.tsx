@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useMemo } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useState, useMemo, useEffect } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
-import type { SlabParams, SlabSupportType } from '@/lib/types';
+import type { SlabParams, SlabSupportType, ComponentType } from '@/lib/types';
 import { SLAB_PRESETS } from '@/lib/rebar';
 import { calcSlab } from '@/lib/calc';
 import { validateSlabRebar, validateDimension } from '@/lib/validate';
@@ -43,6 +43,7 @@ const DEFAULT = { ...SLAB_PRESETS.standard };
 
 export function SlabPageClient() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const [params, setParams] = useState<SlabParams>(() => {
     const p = searchParams.get('p');
     const shared = decodeSharedParam<Partial<SlabParams>>(p ?? undefined);
@@ -187,6 +188,15 @@ export function SlabPageClient() {
               context={aiContext}
               notationSlot={<SlabExplain params={params} />}
               initialMessage={aiMessage}
+              onSwitchTab={(tab) => setDataTab(tab as typeof dataTab)}
+              onNavigateComponent={(type: ComponentType, message?: string) => {
+                const encoded = message ? `?ai=${encodeURIComponent(message)}` : '';
+                router.push(`/${type}${encoded}`);
+              }}
+              onApplyPreset={(preset) => {
+                if (preset in SLAB_PRESETS) setParams({ ...SLAB_PRESETS[preset as keyof typeof SLAB_PRESETS] });
+              }}
+              onGetCurrentState={() => aiContext}
             />
           </div>
         )}

@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
-import type { StairParams, StairType } from '@/lib/types';
+import type { StairParams, StairType, ComponentType } from '@/lib/types';
 import { STAIR_PRESETS } from '@/lib/rebar';
 import { calcStair, calcStairRebarRatios } from '@/lib/calc';
 import { checkStairCompliance } from '@/lib/compliance';
@@ -56,6 +56,7 @@ const DEFAULT: StairParams = { ...STAIR_PRESETS.standard };
 
 export function StairPageClient() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const [params, setParams] = useState<StairParams>(DEFAULT);
   const [dataTab, setDataTab] = useState<typeof DATA_TABS[number]['key']>('section');
   const aiMessage = searchParams.get('ai') || undefined;
@@ -233,6 +234,25 @@ export function StairPageClient() {
               context={aiContext}
               notationSlot={<StairExplain params={params} />}
               initialMessage={aiMessage}
+              onSwitchTab={(tab) => setDataTab(tab as typeof dataTab)}
+              onNavigateComponent={(type: ComponentType, message?: string) => {
+                const encoded = message ? `?ai=${encodeURIComponent(message)}` : '';
+                router.push(`/${type}${encoded}`);
+              }}
+              onApplyPreset={(preset) => {
+                if (preset in STAIR_PRESETS) setParams({ ...STAIR_PRESETS[preset as keyof typeof STAIR_PRESETS] });
+              }}
+              onGetCurrentState={() => aiContext}
+              onRunComplianceCheck={() => {
+                const results = complianceResults;
+                const pass = results.filter(r => r.status === 'pass').length;
+                const fail = results.filter(r => r.status === 'fail').length;
+                const warn = results.filter(r => r.status === 'warn').length;
+                return {
+                  results,
+                  summary: `校验完成: ${pass}项通过, ${fail}项不通过, ${warn}项警告\n${results.filter(r => r.status !== 'pass').map(r => `- [${r.status === 'fail' ? '❌' : '⚠️'}] ${r.message} (${r.rule})`).join('\n')}`,
+                };
+              }}
             />
           </div>
         )}

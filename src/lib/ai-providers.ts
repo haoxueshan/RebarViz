@@ -39,6 +39,15 @@ export const AI_PROVIDERS: AIProvider[] = [
     models: ['moonshot-v1-8k', 'moonshot-v1-32k'],
     envKey: 'KIMI_API_KEY',
   },
+  {
+    id: 'openai',
+    name: 'OpenAI',
+    baseUrl: 'https://api.openai.com/v1',
+    defaultModel: 'gpt-4o-mini',
+    models: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1'],
+    visionModel: 'gpt-4o',
+    envKey: 'OPENAI_API_KEY',
+  },
 ];
 
 export const SYSTEM_PROMPT = `你是一位资深的结构工程师和22G101图集专家，专门帮助用户学习钢筋平法识图。

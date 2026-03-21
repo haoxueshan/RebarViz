@@ -25,6 +25,12 @@ const PROVIDER_META: Record<string, { color: string; bg: string; url: string; de
     url: 'https://platform.moonshot.cn/console/api-keys',
     desc: '月之暗面 Kimi，长上下文支持',
   },
+  openai: {
+    color: 'text-gray-800',
+    bg: 'bg-gray-50',
+    url: 'https://platform.openai.com/api-keys',
+    desc: 'OpenAI GPT-4o，最强 Vision 图纸识别',
+  },
 };
 
 export function SettingsPageClient() {

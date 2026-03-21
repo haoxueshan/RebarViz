@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useMemo } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useState, useMemo, useEffect } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
-import type { ShearWallParams } from '@/lib/types';
+import type { ShearWallParams, ComponentType } from '@/lib/types';
 import { SHEAR_WALL_PRESETS } from '@/lib/rebar';
 import { calcShearWall } from '@/lib/calc';
 import { validateDimension } from '@/lib/validate';
@@ -42,6 +42,7 @@ const DEFAULT = { ...SHEAR_WALL_PRESETS.standard };
 
 export function ShearWallPageClient() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const [params, setParams] = useState<ShearWallParams>(() => {
     const p = searchParams.get('p');
     const shared = decodeSharedParam<Partial<ShearWallParams>>(p ?? undefined);
@@ -177,6 +178,15 @@ export function ShearWallPageClient() {
               context={aiContext}
               notationSlot={<ShearWallExplain params={params} />}
               initialMessage={aiMessage}
+              onSwitchTab={(tab) => setDataTab(tab as typeof dataTab)}
+              onNavigateComponent={(type: ComponentType, message?: string) => {
+                const encoded = message ? `?ai=${encodeURIComponent(message)}` : '';
+                router.push(`/${type}${encoded}`);
+              }}
+              onApplyPreset={(preset) => {
+                if (preset in SHEAR_WALL_PRESETS) setParams({ ...SHEAR_WALL_PRESETS[preset as keyof typeof SHEAR_WALL_PRESETS] });
+              }}
+              onGetCurrentState={() => aiContext}
             />
           </div>
         )}

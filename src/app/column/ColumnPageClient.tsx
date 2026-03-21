@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
-import type { ColumnParams } from '@/lib/types';
+import type { ColumnParams, ComponentType } from '@/lib/types';
 import { COLUMN_PRESETS, parseRebar, STIRRUP_TYPES } from '@/lib/rebar';
 import { calcColumn } from '@/lib/calc';
 import { validateRebar, validateStirrup, validateDimension } from '@/lib/validate';
@@ -42,6 +42,7 @@ const DEFAULT = { ...COLUMN_PRESETS.standard };
 
 export function ColumnPageClient() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const [params, setParams] = useState<ColumnParams>(() => {
     const p = searchParams.get('p');
     const shared = decodeSharedParam<Partial<ColumnParams>>(p ?? undefined);
@@ -209,6 +210,15 @@ export function ColumnPageClient() {
               context={aiContext}
               notationSlot={<ColumnExplain params={params} />}
               initialMessage={aiMessage}
+              onSwitchTab={(tab) => setDataTab(tab as typeof dataTab)}
+              onNavigateComponent={(type: ComponentType, message?: string) => {
+                const encoded = message ? `?ai=${encodeURIComponent(message)}` : '';
+                router.push(`/${type}${encoded}`);
+              }}
+              onApplyPreset={(preset) => {
+                if (preset in COLUMN_PRESETS) setParams({ ...COLUMN_PRESETS[preset as keyof typeof COLUMN_PRESETS] });
+              }}
+              onGetCurrentState={() => aiContext}
             />
           </div>
         )}

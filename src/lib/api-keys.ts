@@ -10,6 +10,7 @@ export interface ApiKeyStore {
   deepseek?: string;
   qwen?: string;
   kimi?: string;
+  openai?: string;
 }
 
 export function getApiKeys(): ApiKeyStore {

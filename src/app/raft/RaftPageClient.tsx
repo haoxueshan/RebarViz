@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
-import type { RaftFoundationParams } from '@/lib/types';
+import type { RaftFoundationParams, ComponentType } from '@/lib/types';
 import { RAFT_PRESETS } from '@/lib/rebar';
 import { calcRaft } from '@/lib/calc';
 import { RaftCrossSection } from '@/components/CrossSection';
@@ -43,6 +43,7 @@ const DEFAULT: RaftFoundationParams = {
 };
 
 export function RaftPageClient() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const [params, setParams] = useState<RaftFoundationParams>(() => {
     const p = searchParams.get('p');
@@ -183,6 +184,15 @@ export function RaftPageClient() {
               context={aiContext}
               notationSlot={<RaftExplain params={params} />}
               initialMessage={aiMessage}
+              onSwitchTab={(tab) => setDataTab(tab as typeof dataTab)}
+              onNavigateComponent={(type: ComponentType, message?: string) => {
+                const encoded = message ? `?ai=${encodeURIComponent(message)}` : '';
+                router.push(`/${type}${encoded}`);
+              }}
+              onApplyPreset={(preset) => {
+                if (preset in RAFT_PRESETS) applyPreset(preset as keyof typeof RAFT_PRESETS);
+              }}
+              onGetCurrentState={() => aiContext}
             />
           </div>
         )}

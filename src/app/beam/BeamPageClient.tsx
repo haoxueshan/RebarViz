@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import type { BeamParams, HaunchType } from '@/lib/types';
 import { BEAM_PRESETS } from '@/lib/rebar';
@@ -23,6 +23,7 @@ import { RebarRatioCard } from '@/components/RebarRatioCard';
 import { buildBeamContext } from '@/lib/ai-context';
 import { decodeSharedParam } from '@/lib/share-params';
 import { Sparkles, HelpCircle } from 'lucide-react';
+import type { ComponentType } from '@/lib/types';
 import { Tutorial, resetTutorial } from '@/components/Tutorial';
 import { checkBeamCompliance } from '@/lib/compliance';
 import { CompliancePanel, ComplianceBadge } from '@/components/CompliancePanel';
@@ -59,6 +60,7 @@ const DEFAULT = { ...BEAM_PRESETS.standard };
 
 export function BeamPageClient() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const [params, setParams] = useState<BeamParams>(() => {
     const p = searchParams.get('p');
     const shared = decodeSharedParam<Partial<BeamParams>>(p ?? undefined);
@@ -101,6 +103,7 @@ export function BeamPageClient() {
   const aiMessage = searchParams.get('ai') || undefined;
   const [showAI, setShowAI] = useState(!!aiMessage);
   const [showTutorial, setShowTutorial] = useState(false);
+  const [highlightedElement, setHighlightedElement] = useState<string | null>(null);
 
   // 历史记录
   const {
@@ -374,6 +377,32 @@ export function BeamPageClient() {
               context={aiContext}
               notationSlot={<BeamExplain params={params} />}
               initialMessage={aiMessage}
+              onSwitchTab={(tab) => setDataTab(tab as typeof dataTab)}
+              onHighlightElement={(el) => { setHighlightedElement(el); setTimeout(() => setHighlightedElement(null), 3000); }}
+              onNavigateComponent={(type: ComponentType, message?: string) => {
+                const encoded = message ? `?ai=${encodeURIComponent(message)}` : '';
+                router.push(`/${type}${encoded}`);
+              }}
+              onApplyPreset={(preset) => {
+                if (preset in BEAM_PRESETS) handlePreset(preset as keyof typeof BEAM_PRESETS);
+              }}
+              onGetCurrentState={() => aiContext}
+              onRunComplianceCheck={() => {
+                const results = complianceResults;
+                const pass = results.filter(r => r.status === 'pass').length;
+                const fail = results.filter(r => r.status === 'fail').length;
+                const warn = results.filter(r => r.status === 'warn').length;
+                return {
+                  results,
+                  summary: `校验完成: ${pass}项通过, ${fail}项不通过, ${warn}项警告\n${results.filter(r => r.status !== 'pass').map(r => `- [${r.status === 'fail' ? '❌' : '⚠️'}] ${r.message} (${r.rule})`).join('\n')}`,
+                };
+              }}
+              onRunCalculation={(type) => {
+                const tabMap: Record<string, typeof dataTab> = { ratio: 'ratio', weight: 'weight', concrete: 'concrete', anchor: 'compliance' };
+                const tab = tabMap[type];
+                if (tab) setDataTab(tab);
+                return { summary: `已切换到${type === 'ratio' ? '配筋率' : type === 'weight' ? '用量估算' : type === 'concrete' ? '混凝土量' : '规范校验'}面板` };
+              }}
             />
           </div>
         )}

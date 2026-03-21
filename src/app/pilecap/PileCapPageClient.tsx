@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
-import type { PileCapParams } from '@/lib/types';
+import type { PileCapParams, ComponentType } from '@/lib/types';
 import { PILECAP_PRESETS } from '@/lib/rebar';
 import { calcPileCap } from '@/lib/calc';
 import { PileCapCrossSection } from '@/components/CrossSection';
@@ -41,6 +41,7 @@ const presetList = [
 const DEFAULT: PileCapParams = { ...PILECAP_PRESETS.fourPile };
 
 export function PileCapPageClient() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const [params, setParams] = useState<PileCapParams>(() => {
     const p = searchParams.get('p');
@@ -178,6 +179,15 @@ export function PileCapPageClient() {
               context={aiContext}
               notationSlot={<PileCapExplain params={params} />}
               initialMessage={aiMessage}
+              onSwitchTab={(tab) => setDataTab(tab as typeof dataTab)}
+              onNavigateComponent={(type: ComponentType, message?: string) => {
+                const encoded = message ? `?ai=${encodeURIComponent(message)}` : '';
+                router.push(`/${type}${encoded}`);
+              }}
+              onApplyPreset={(preset) => {
+                if (preset in PILECAP_PRESETS) applyPreset(preset as keyof typeof PILECAP_PRESETS);
+              }}
+              onGetCurrentState={() => aiContext}
             />
           </div>
         )}

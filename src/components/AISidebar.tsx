@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback, memo, type ReactNode } from 'react';
-import { Send, Trash2, ChevronDown, ChevronRight, Loader2, AlertCircle, Sparkles, Settings, Check, BookOpen, ShieldCheck, ShieldAlert, TriangleAlert } from 'lucide-react';
+import { Send, Trash2, ChevronDown, ChevronRight, Loader2, AlertCircle, Sparkles, Settings, Check, BookOpen, ShieldCheck, ShieldAlert, TriangleAlert, Wrench, Image, X, Zap, Eye } from 'lucide-react';
 import { AI_PROVIDERS } from '@/lib/ai-providers';
 import type { ChatMessage } from '@/lib/ai-providers';
 import { getApiKey, getApiKeys } from '@/lib/api-keys';
@@ -12,6 +12,9 @@ import { formatSchemaPreview } from '@/lib/nl-rebar-prompt';
 import { buildSidebarSystemPrompt, PARAM_SUGGESTIONS, QA_SUGGESTIONS, ANALYSIS_SUGGESTIONS } from '@/lib/ai-sidebar-prompt';
 import { tryParseNotation } from '@/lib/notation-parser';
 import { checkCompliance, type ComplianceResult } from '@/lib/compliance';
+import { runAgent, type AgentStep } from '@/lib/ai-agent-engine';
+import { type AgentCallbacks } from '@/lib/ai-agent-tools';
+import { aiFetch } from '@/lib/ai-fetch';
 import Link from 'next/link';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -25,6 +28,14 @@ interface AISidebarProps {
   context: string;
   notationSlot?: ReactNode;
   initialMessage?: string; // 从首页跳转携带的 AI 消息，自动发送
+  // ─── Agent callbacks (provided by page components) ───
+  onSwitchTab?: (tab: string) => void;
+  onHighlightElement?: (element: string) => void;
+  onNavigateComponent?: (type: ComponentType, message?: string) => void;
+  onApplyPreset?: (preset: string) => void;
+  onGetCurrentState?: () => string;
+  onRunComplianceCheck?: () => { results: ComplianceResult[]; summary: string };
+  onRunCalculation?: (type: string) => { summary: string };
 }
 
 /** rebar-json 块检测正则 */
@@ -110,7 +121,7 @@ const MarkdownContent = memo(function MarkdownContent({ content }: { content: st
   );
 });
 
-export function AISidebar({ componentType, currentParams, onApplyParams, context, notationSlot, initialMessage }: AISidebarProps) {
+export function AISidebar({ componentType, currentParams, onApplyParams, context, notationSlot, initialMessage, onSwitchTab, onHighlightElement, onNavigateComponent, onApplyPreset, onGetCurrentState, onRunComplianceCheck: onRunComplianceCheckProp, onRunCalculation }: AISidebarProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -121,6 +132,14 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
   const [hasAnyKey, setHasAnyKey] = useState(false);
   const [applyResults, setApplyResults] = useState<Record<number, ApplyResult>>({});
   const [showNotation, setShowNotation] = useState(false);
+  // ─── Agent mode state ───
+  const [agentSteps, setAgentSteps] = useState<Record<number, AgentStep[]>>({});
+  const [agentMode, setAgentMode] = useState(true); // Agent 模式默认开启
+  // ─── Image upload state ───
+  const [pendingImages, setPendingImages] = useState<string[]>([]); // base64 data URLs
+  const [showImagePreview, setShowImagePreview] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -203,28 +222,22 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
     allMessages: ChatMessage[],
     controller: AbortController,
     onUpdate: (content: string) => void,
+    modelOverride?: string,
   ): Promise<string> => {
     const apiKey = getApiKey(providerId);
     if (!apiKey) throw new Error(`未配置 ${provider.name} API Key，请在设置中添加`);
 
     const systemContent = buildSidebarSystemPrompt(componentType, context);
 
-    const res = await fetch(`${provider.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: systemContent },
-          ...allMessages,
-        ],
-        stream: true,
-        temperature: 0.3,
-        max_tokens: 4096,
-      }),
+    const { response: res } = await aiFetch({
+      provider,
+      model: modelOverride || model,
+      apiKey,
+      systemPrompt: systemContent,
+      messages: allMessages as Array<{ role: string; content?: unknown }>,
+      stream: true,
+      temperature: 0.3,
+      max_tokens: 4096,
       signal: controller.signal,
     });
 
@@ -274,6 +287,83 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
     return assistantContent;
   }, [providerId, model, context, componentType, provider]);
 
+  // ─── Build Agent callbacks from page-level props ───
+  const buildAgentCallbacks = useCallback((): AgentCallbacks => ({
+    onModifyParams: (params) => {
+      try {
+        // Try parsing as rebar-json schema first
+        const result = parseAIResponse(JSON.stringify({ componentType, ...params }), componentType);
+        if (result.success) {
+          const partial = mapSchemaToParams(result.schema, componentType);
+          onApplyParams(partial);
+          const merged = { ...currentParamsRef.current, ...partial };
+          const compliance = runComplianceCheck(merged);
+          const hasIssues = compliance.some(c => c.status !== 'pass');
+          return { success: true, message: `已更新 ${Object.keys(partial).join(', ')}${hasIssues ? '（规范校验发现问题）' : ''}` };
+        }
+        // Direct param apply as fallback
+        onApplyParams(params as Partial<AnyParams>);
+        return { success: true, message: `已更新参数: ${Object.keys(params).join(', ')}` };
+      } catch (err) {
+        return { success: false, message: `参数更新失败: ${err instanceof Error ? err.message : '未知错误'}` };
+      }
+    },
+    onRunComplianceCheck: () => {
+      if (onRunComplianceCheckProp) {
+        const { results, summary } = onRunComplianceCheckProp();
+        return { success: true, message: summary, data: results };
+      }
+      const results = runComplianceCheck(currentParamsRef.current);
+      const pass = results.filter(r => r.status === 'pass').length;
+      const fail = results.filter(r => r.status === 'fail').length;
+      const warn = results.filter(r => r.status === 'warn').length;
+      const summary = `校验完成: ${pass}项通过, ${fail}项不通过, ${warn}项警告\n${results.filter(r => r.status !== 'pass').map(r => `- [${r.status === 'fail' ? '❌' : '⚠️'}] ${r.message} (${r.rule})`).join('\n')}`;
+      return { success: true, message: summary, data: results };
+    },
+    onRunCalculation: (type) => {
+      if (onRunCalculation) {
+        const { summary } = onRunCalculation(type);
+        return { success: true, message: summary };
+      }
+      return { success: true, message: `已切换到${type === 'ratio' ? '配筋率' : type === 'weight' ? '用量估算' : type === 'anchor' ? '锚固计算' : '混凝土量'}面板` };
+    },
+    onSwitchView: (tab) => {
+      if (onSwitchTab) {
+        onSwitchTab(tab);
+        const tabNames: Record<string, string> = { section: '截面图', ratio: '配筋率', compliance: '规范校验', weight: '用量估算', concrete: '混凝土量', bbs: '弯折详图', compare: '方案对比' };
+        return { success: true, message: `已切换到「${tabNames[tab] || tab}」面板` };
+      }
+      return { success: false, message: '当前页面不支持切换面板' };
+    },
+    onHighlightElement: (element) => {
+      if (onHighlightElement) {
+        onHighlightElement(element);
+        return { success: true, message: `已高亮: ${element}` };
+      }
+      return { success: false, message: '当前页面不支持高亮' };
+    },
+    onNavigateComponent: (type, message) => {
+      if (onNavigateComponent) {
+        onNavigateComponent(type, message);
+        return { success: true, message: `正在跳转到 ${type} 页面...` };
+      }
+      return { success: false, message: '当前页面不支持跳转' };
+    },
+    onApplyPreset: (preset) => {
+      if (onApplyPreset) {
+        onApplyPreset(preset);
+        return { success: true, message: `已应用预设: ${preset}` };
+      }
+      return { success: false, message: '当前页面不支持预设' };
+    },
+    onGetCurrentState: () => {
+      if (onGetCurrentState) {
+        return { success: true, message: onGetCurrentState() };
+      }
+      return { success: true, message: context };
+    },
+  }), [componentType, onApplyParams, runComplianceCheck, onRunComplianceCheckProp, onRunCalculation, onSwitchTab, onHighlightElement, onNavigateComponent, onApplyPreset, onGetCurrentState, context]);
+
   const sendMessage = useCallback(async (text: string) => {
     if (!text.trim() || loading) return;
 
@@ -300,8 +390,24 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
       return;
     }
 
-    // ─── Step 1: Normal AI flow ───
-    const userMsg: ChatMessage = { role: 'user', content: trimmedText };
+    // ─── Build user message (with images if any) ───
+    const hasImages = pendingImages.length > 0;
+    let userContent: string | Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }>;
+    if (hasImages) {
+      userContent = [
+        { type: 'text' as const, text: trimmedText || '请识别这张图纸中的配筋信息，并生成对应的3D模型' },
+        ...pendingImages.map(img => ({
+          type: 'image_url' as const,
+          image_url: { url: img },
+        })),
+      ];
+      setPendingImages([]);
+      setShowImagePreview(false);
+    } else {
+      userContent = trimmedText;
+    }
+
+    const userMsg: ChatMessage = { role: 'user', content: userContent };
     const newMessages = [...messages, userMsg];
     setMessages(newMessages);
     setInput('');
@@ -317,49 +423,88 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
       setMessages([...newMessages, assistantMsg]);
       const assistantIndex = newMessages.length;
 
-      const assistantContent = await streamAIRequest(
-        newMessages,
-        controller,
-        (content) => {
-          setMessages(prev => {
-            const updated = [...prev];
-            updated[updated.length - 1] = { role: 'assistant', content };
-            return updated;
-          });
-        },
-      );
+      // ─── Agent mode: use tool-calling agent engine ───
+      if (agentMode) {
+        const apiKey = getApiKey(providerId);
+        if (!apiKey) throw new Error(`未配置 ${provider.name} API Key，请在设置中添加`);
 
-      // After streaming completes, try to detect and apply params
-      const parseError = tryApplyParams(assistantContent, assistantIndex);
+        // Auto-select vision model if images are present
+        let activeModel = model;
+        if (hasImages && provider.visionModel) {
+          activeModel = provider.visionModel;
+        }
 
-      // ─── Step 2: Auto-retry if parse failed and content had rebar-json ───
-      if (parseError && retryCountRef.current < 1) {
-        retryCountRef.current += 1;
+        const agentResult = await runAgent(
+          {
+            maxToolRounds: 5,
+            provider,
+            model: activeModel,
+            apiKey,
+            componentType,
+            context,
+            hasImages,
+          },
+          newMessages,
+          buildAgentCallbacks(),
+          {
+            onStreamUpdate: (content) => {
+              setMessages(prev => {
+                const updated = [...prev];
+                updated[updated.length - 1] = { role: 'assistant', content };
+                return updated;
+              });
+            },
+            onStepAdded: (step) => {
+              setAgentSteps(prev => ({
+                ...prev,
+                [assistantIndex]: [...(prev[assistantIndex] || []), step],
+              }));
+            },
+            onParamsApplied: (fields) => {
+              const merged = { ...currentParamsRef.current };
+              const compliance = runComplianceCheck(merged);
+              setApplyResults(prev => ({
+                ...prev,
+                [assistantIndex]: { success: true, fields, compliance },
+              }));
+            },
+          },
+          controller.signal,
+        );
 
-        // Append error correction request to conversation
-        const correctionMsg: ChatMessage = {
-          role: 'user',
-          content: `你的JSON输出有以下错误，请修正后重新输出 rebar-json 代码块：\n${parseError}`,
-        };
-        const retryMessages = [
-          ...newMessages,
-          { role: 'assistant' as const, content: assistantContent },
-          correctionMsg,
-        ];
+        // Final message update
+        setMessages(prev => {
+          const updated = [...prev];
+          updated[updated.length - 1] = { role: 'assistant', content: agentResult.assistantContent };
+          return updated;
+        });
 
-        // Show correction in UI
-        const retryAssistantMsg: ChatMessage = { role: 'assistant', content: '' };
-        setMessages([...retryMessages, retryAssistantMsg]);
-        const retryIndex = retryMessages.length;
-
-        // Update apply result to show "retrying"
-        setApplyResults(prev => ({
-          ...prev,
-          [assistantIndex]: { success: false, error: '正在自动修正...' },
-        }));
-
-        const retryContent = await streamAIRequest(
-          retryMessages,
+        // If agent didn't use tools, try legacy rebar-json parsing
+        if (!agentResult.usedTools) {
+          const parseError = tryApplyParams(agentResult.assistantContent, assistantIndex);
+          // Auto-retry on parse error
+          if (parseError && retryCountRef.current < 1) {
+            retryCountRef.current += 1;
+            const correctionMsg: ChatMessage = {
+              role: 'user',
+              content: `你的JSON输出有以下错误，请修正后重新输出 rebar-json 代码块：\n${parseError}`,
+            };
+            const retryMessages = [...newMessages, { role: 'assistant' as const, content: agentResult.assistantContent }, correctionMsg];
+            const retryAssistantMsg: ChatMessage = { role: 'assistant', content: '' };
+            setMessages([...retryMessages, retryAssistantMsg]);
+            const retryIndex = retryMessages.length;
+            setApplyResults(prev => ({ ...prev, [assistantIndex]: { success: false, error: '正在自动修正...' } }));
+            const retryContent = await streamAIRequest(retryMessages, controller, (content) => {
+              setMessages(prev => { const updated = [...prev]; updated[updated.length - 1] = { role: 'assistant', content }; return updated; });
+            });
+            tryApplyParams(retryContent, retryIndex);
+          }
+        }
+      } else {
+        // ─── Legacy mode: direct streaming without tools ───
+        const legacyModel = (hasImages && provider.visionModel) ? provider.visionModel : undefined;
+        const assistantContent = await streamAIRequest(
+          newMessages,
           controller,
           (content) => {
             setMessages(prev => {
@@ -368,10 +513,27 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
               return updated;
             });
           },
+          legacyModel,
         );
 
-        // Try apply again
-        tryApplyParams(retryContent, retryIndex);
+        const parseError = tryApplyParams(assistantContent, assistantIndex);
+
+        if (parseError && retryCountRef.current < 1) {
+          retryCountRef.current += 1;
+          const correctionMsg: ChatMessage = {
+            role: 'user',
+            content: `你的JSON输出有以下错误，请修正后重新输出 rebar-json 代码块：\n${parseError}`,
+          };
+          const retryMessages = [...newMessages, { role: 'assistant' as const, content: assistantContent }, correctionMsg];
+          const retryAssistantMsg: ChatMessage = { role: 'assistant', content: '' };
+          setMessages([...retryMessages, retryAssistantMsg]);
+          const retryIndex = retryMessages.length;
+          setApplyResults(prev => ({ ...prev, [assistantIndex]: { success: false, error: '正在自动修正...' } }));
+          const retryContent = await streamAIRequest(retryMessages, controller, (content) => {
+            setMessages(prev => { const updated = [...prev]; updated[updated.length - 1] = { role: 'assistant', content }; return updated; });
+          });
+          tryApplyParams(retryContent, retryIndex);
+        }
       }
 
     } catch (err: unknown) {
@@ -383,7 +545,7 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
       abortRef.current = null;
       retryCountRef.current = 0;
     }
-  }, [messages, loading, componentType, streamAIRequest, tryApplyParams, onApplyParams, runComplianceCheck]);
+  }, [messages, loading, componentType, streamAIRequest, tryApplyParams, onApplyParams, runComplianceCheck, agentMode, providerId, model, provider, context, buildAgentCallbacks, pendingImages]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -396,6 +558,7 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
     if (loading && abortRef.current) abortRef.current.abort();
     setMessages([]);
     setApplyResults({});
+    setAgentSteps({});
     setError(null);
     setLoading(false);
     retryCountRef.current = 0;
@@ -415,6 +578,13 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
           <span className="font-semibold text-sm">AI 助手</span>
         </div>
         <div className="flex items-center gap-1">
+          <button
+            onClick={() => setAgentMode(a => !a)}
+            className={`p-1.5 rounded-lg transition-colors cursor-pointer ${agentMode ? 'bg-white/25 hover:bg-white/30' : 'hover:bg-white/20 opacity-60'}`}
+            title={agentMode ? 'Agent 模式已开启（支持工具调用）' : 'Agent 模式已关闭（仅文本）'}
+          >
+            <Zap className="w-3.5 h-3.5" />
+          </button>
           <button onClick={clearChat} className="p-1.5 rounded-lg hover:bg-white/20 transition-colors cursor-pointer" title="清空对话">
             <Trash2 className="w-3.5 h-3.5" />
           </button>
@@ -583,6 +753,40 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
               )}
             </div>
 
+            {/* Agent steps (tool calls) */}
+            {agentSteps[i] && agentSteps[i].length > 0 && msg.role === 'assistant' && (
+              <div className="mt-1.5 space-y-1">
+                {agentSteps[i].map((step, si) => (
+                  <div key={si} className="flex items-start gap-1.5 px-2 py-1 bg-violet-50 rounded-lg text-[11px] text-violet-700 border border-violet-100">
+                    {step.type === 'tool_call' ? (
+                      <>
+                        <Wrench className="w-3 h-3 mt-0.5 shrink-0" />
+                        <span>
+                          <span className="font-medium">{step.toolName}</span>
+                          {step.toolArgs && Object.keys(step.toolArgs).length > 0 && (
+                            <span className="text-violet-500 ml-1">
+                              ({Object.entries(step.toolArgs).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v).slice(0, 40) : String(v).slice(0, 30)}`).join(', ')})
+                            </span>
+                          )}
+                        </span>
+                      </>
+                    ) : step.type === 'tool_result' ? (
+                      <>
+                        {step.result?.success ? (
+                          <Check className="w-3 h-3 mt-0.5 shrink-0 text-green-600" />
+                        ) : (
+                          <AlertCircle className="w-3 h-3 mt-0.5 shrink-0 text-red-500" />
+                        )}
+                        <span className={step.result?.success ? 'text-green-700' : 'text-red-600'}>
+                          {step.result?.message?.slice(0, 80)}
+                        </span>
+                      </>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* Apply result chip */}
             {applyResults[i] && (
               <div className={`mt-1.5 space-y-1.5 ${msg.role === 'user' ? 'text-right' : 'text-left'}`}>
@@ -677,25 +881,82 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
 
       {/* Input */}
       <div className="px-4 py-3 border-t border-gray-100 bg-white shrink-0 rounded-b-xl">
+        {/* Image preview */}
+        {pendingImages.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-2">
+            {pendingImages.map((img, idx) => (
+              <div key={idx} className="relative group">
+                <img src={img} alt="上传图片" className="w-16 h-16 rounded-lg object-cover border border-gray-200" />
+                <button
+                  onClick={() => setPendingImages(prev => prev.filter((_, i) => i !== idx))}
+                  className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                >
+                  <X className="w-2.5 h-2.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="flex items-end gap-2">
+          {/* Hidden file input */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              const files = e.target.files;
+              if (!files) return;
+              Array.from(files).forEach(file => {
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                  const dataUrl = ev.target?.result as string;
+                  if (dataUrl) setPendingImages(prev => [...prev, dataUrl]);
+                };
+                reader.readAsDataURL(file);
+              });
+              e.target.value = '';
+            }}
+          />
+          {/* Image upload button */}
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className={`p-2.5 rounded-xl transition-colors cursor-pointer shrink-0 ${
+              provider.visionModel
+                ? 'text-gray-400 hover:text-accent hover:bg-accent/5'
+                : 'text-gray-300 cursor-not-allowed'
+            }`}
+            title={provider.visionModel ? '上传图纸/图片（支持 Vision）' : `${provider.name} 不支持图片识别，请切换到支持 Vision 的模型`}
+            disabled={!provider.visionModel}
+          >
+            <Image className="w-4 h-4" />
+          </button>
           <textarea
             ref={inputRef}
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="描述配筋或提问..."
+            placeholder={pendingImages.length > 0 ? '描述图纸内容或直接发送...' : '描述配筋或提问...'}
             rows={1}
             className="flex-1 resize-none px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/10 transition-colors max-h-24 overflow-y-auto"
             style={{ minHeight: '40px' }}
           />
           <button
             onClick={() => sendMessage(input)}
-            disabled={!input.trim() || loading}
+            disabled={(!input.trim() && pendingImages.length === 0) || loading}
             className="p-2.5 bg-accent text-white rounded-xl hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer shrink-0"
             aria-label="发送"
           >
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
           </button>
+        </div>
+        {/* Mode indicator */}
+        <div className="flex items-center justify-between mt-1.5">
+          <div className="flex items-center gap-2 text-[10px] text-gray-400">
+            {agentMode && <span className="flex items-center gap-0.5"><Zap className="w-2.5 h-2.5" />Agent</span>}
+            {pendingImages.length > 0 && <span className="flex items-center gap-0.5"><Eye className="w-2.5 h-2.5" />Vision</span>}
+          </div>
         </div>
       </div>
     </div>

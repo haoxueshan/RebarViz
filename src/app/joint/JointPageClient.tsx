@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
-import type { JointParams } from '@/lib/types';
+import type { JointParams, ComponentType } from '@/lib/types';
 import { JOINT_PRESETS } from '@/lib/rebar';
 import { validateRebar, validateStirrup, validateDimension } from '@/lib/validate';
 import { JointExplain } from '@/components/NotationExplain';
@@ -32,6 +32,7 @@ const DEFAULT = { ...JOINT_PRESETS.middleBent };
 
 export function JointPageClient() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const [params, setParams] = useState<JointParams>(() => {
     const p = searchParams.get('p');
     const shared = decodeSharedParam<Partial<JointParams>>(p ?? undefined);
@@ -165,6 +166,14 @@ export function JointPageClient() {
               context={aiContext}
               notationSlot={<JointExplain params={params} />}
               initialMessage={aiMessage}
+              onNavigateComponent={(type: ComponentType, message?: string) => {
+                const encoded = message ? `?ai=${encodeURIComponent(message)}` : '';
+                router.push(`/${type}${encoded}`);
+              }}
+              onApplyPreset={(preset) => {
+                if (preset in JOINT_PRESETS) setParams({ ...JOINT_PRESETS[preset as keyof typeof JOINT_PRESETS] });
+              }}
+              onGetCurrentState={() => aiContext}
             />
           </div>
         )}
