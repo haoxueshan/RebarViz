@@ -20,6 +20,7 @@ export const AI_PROVIDERS: AIProvider[] = [
     baseUrl: 'https://api.deepseek.com/v1',
     defaultModel: 'deepseek-chat',
     models: ['deepseek-chat', 'deepseek-reasoner'],
+    visionModel: 'deepseek-chat',
     envKey: 'DEEPSEEK_API_KEY',
   },
   {
@@ -37,6 +38,7 @@ export const AI_PROVIDERS: AIProvider[] = [
     baseUrl: 'https://api.moonshot.cn/v1',
     defaultModel: 'moonshot-v1-8k',
     models: ['moonshot-v1-8k', 'moonshot-v1-32k'],
+    visionModel: 'moonshot-v1-32k',
     envKey: 'KIMI_API_KEY',
   },
   {
