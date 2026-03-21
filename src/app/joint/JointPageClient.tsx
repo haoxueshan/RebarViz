@@ -174,6 +174,7 @@ export function JointPageClient() {
                 if (preset in JOINT_PRESETS) setParams({ ...JOINT_PRESETS[preset as keyof typeof JOINT_PRESETS] });
               }}
               onGetCurrentState={() => aiContext}
+              onResetParams={() => setParams({ ...JOINT_PRESETS.middleBent })}
             />
           </div>
         )}

@@ -36,6 +36,9 @@ interface AISidebarProps {
   onGetCurrentState?: () => string;
   onRunComplianceCheck?: () => { results: ComplianceResult[]; summary: string };
   onRunCalculation?: (type: string) => { summary: string };
+  onSaveFavorite?: (name: string, note?: string) => void;
+  onResetParams?: () => void;
+  onCompareWithPreset?: (preset: string) => string; // returns diff summary
 }
 
 /** rebar-json 块检测正则 */
@@ -121,7 +124,7 @@ const MarkdownContent = memo(function MarkdownContent({ content }: { content: st
   );
 });
 
-export function AISidebar({ componentType, currentParams, onApplyParams, context, notationSlot, initialMessage, onSwitchTab, onHighlightElement, onNavigateComponent, onApplyPreset, onGetCurrentState, onRunComplianceCheck: onRunComplianceCheckProp, onRunCalculation }: AISidebarProps) {
+export function AISidebar({ componentType, currentParams, onApplyParams, context, notationSlot, initialMessage, onSwitchTab, onHighlightElement, onNavigateComponent, onApplyPreset, onGetCurrentState, onRunComplianceCheck: onRunComplianceCheckProp, onRunCalculation, onSaveFavorite, onResetParams, onCompareWithPreset }: AISidebarProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -362,7 +365,28 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
       }
       return { success: true, message: context };
     },
-  }), [componentType, onApplyParams, runComplianceCheck, onRunComplianceCheckProp, onRunCalculation, onSwitchTab, onHighlightElement, onNavigateComponent, onApplyPreset, onGetCurrentState, context]);
+    onSaveFavorite: (name, note) => {
+      if (onSaveFavorite) {
+        onSaveFavorite(name, note);
+        return { success: true, message: `已保存方案「${name}」${note ? `（备注: ${note}）` : ''}到收藏` };
+      }
+      return { success: false, message: '当前页面不支持保存收藏' };
+    },
+    onResetParams: () => {
+      if (onResetParams) {
+        onResetParams();
+        return { success: true, message: '已重置为默认参数' };
+      }
+      return { success: false, message: '当前页面不支持重置' };
+    },
+    onCompareWithPreset: (preset) => {
+      if (onCompareWithPreset) {
+        const diff = onCompareWithPreset(preset);
+        return { success: true, message: diff };
+      }
+      return { success: false, message: '当前页面不支持方案对比' };
+    },
+  }), [componentType, onApplyParams, runComplianceCheck, onRunComplianceCheckProp, onRunCalculation, onSwitchTab, onHighlightElement, onNavigateComponent, onApplyPreset, onGetCurrentState, context, onSaveFavorite, onResetParams, onCompareWithPreset]);
 
   const sendMessage = useCallback(async (text: string) => {
     if (!text.trim() || loading) return;

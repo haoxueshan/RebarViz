@@ -243,6 +243,7 @@ export function StairPageClient() {
                 if (preset in STAIR_PRESETS) setParams({ ...STAIR_PRESETS[preset as keyof typeof STAIR_PRESETS] });
               }}
               onGetCurrentState={() => aiContext}
+              onResetParams={() => setParams({ ...STAIR_PRESETS.standard })}
               onRunComplianceCheck={() => {
                 const results = complianceResults;
                 const pass = results.filter(r => r.status === 'pass').length;

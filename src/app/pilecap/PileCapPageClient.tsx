@@ -188,6 +188,7 @@ export function PileCapPageClient() {
                 if (preset in PILECAP_PRESETS) applyPreset(preset as keyof typeof PILECAP_PRESETS);
               }}
               onGetCurrentState={() => aiContext}
+              onResetParams={() => setParams({ ...PILECAP_PRESETS.fourPile })}
             />
           </div>
         )}

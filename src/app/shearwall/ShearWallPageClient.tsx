@@ -187,6 +187,7 @@ export function ShearWallPageClient() {
                 if (preset in SHEAR_WALL_PRESETS) setParams({ ...SHEAR_WALL_PRESETS[preset as keyof typeof SHEAR_WALL_PRESETS] });
               }}
               onGetCurrentState={() => aiContext}
+              onResetParams={() => setParams({ ...SHEAR_WALL_PRESETS.standard })}
             />
           </div>
         )}

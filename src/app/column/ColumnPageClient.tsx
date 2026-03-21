@@ -219,6 +219,7 @@ export function ColumnPageClient() {
                 if (preset in COLUMN_PRESETS) setParams({ ...COLUMN_PRESETS[preset as keyof typeof COLUMN_PRESETS] });
               }}
               onGetCurrentState={() => aiContext}
+              onResetParams={() => setParams({ ...COLUMN_PRESETS.standard })}
             />
           </div>
         )}

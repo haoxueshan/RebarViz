@@ -197,6 +197,7 @@ export function SlabPageClient() {
                 if (preset in SLAB_PRESETS) setParams({ ...SLAB_PRESETS[preset as keyof typeof SLAB_PRESETS] });
               }}
               onGetCurrentState={() => aiContext}
+              onResetParams={() => setParams({ ...SLAB_PRESETS.standard })}
             />
           </div>
         )}

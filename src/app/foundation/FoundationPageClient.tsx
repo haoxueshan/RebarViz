@@ -226,6 +226,7 @@ export function FoundationPageClient() {
                 if (preset in FOUNDATION_PRESETS) applyPreset(preset as keyof typeof FOUNDATION_PRESETS);
               }}
               onGetCurrentState={() => aiContext}
+              onResetParams={() => setParams({ ...FOUNDATION_PRESETS.standard, stepDims: toMutableStepDims(FOUNDATION_PRESETS.standard.stepDims) })}
             />
           </div>
         )}

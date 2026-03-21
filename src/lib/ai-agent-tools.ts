@@ -39,6 +39,19 @@ export interface GetCurrentStateArgs {
   // no args
 }
 
+export interface SaveFavoriteArgs {
+  name: string;
+  note?: string;
+}
+
+export interface ResetParamsArgs {
+  // no args — resets to default
+}
+
+export interface CompareWithPresetArgs {
+  preset: string;
+}
+
 export type AgentToolArgs =
   | { name: 'modify_params'; arguments: ModifyParamsArgs }
   | { name: 'run_compliance_check'; arguments: RunComplianceCheckArgs }
@@ -47,7 +60,10 @@ export type AgentToolArgs =
   | { name: 'highlight_element'; arguments: HighlightElementArgs }
   | { name: 'navigate_component'; arguments: NavigateComponentArgs }
   | { name: 'apply_preset'; arguments: ApplyPresetArgs }
-  | { name: 'get_current_state'; arguments: GetCurrentStateArgs };
+  | { name: 'get_current_state'; arguments: GetCurrentStateArgs }
+  | { name: 'save_favorite'; arguments: SaveFavoriteArgs }
+  | { name: 'reset_params'; arguments: ResetParamsArgs }
+  | { name: 'compare_with_preset'; arguments: CompareWithPresetArgs };
 
 // ─── Tool execution result ───
 
@@ -68,6 +84,9 @@ export interface AgentCallbacks {
   onNavigateComponent: (type: ComponentType, message?: string) => ToolResult;
   onApplyPreset: (preset: string) => ToolResult;
   onGetCurrentState: () => ToolResult;
+  onSaveFavorite: (name: string, note?: string) => ToolResult;
+  onResetParams: () => ToolResult;
+  onCompareWithPreset: (preset: string) => ToolResult;
 }
 
 // ─── Execute a tool call ───
@@ -93,6 +112,12 @@ export function executeToolCall(
       return callbacks.onApplyPreset(toolCall.arguments.preset);
     case 'get_current_state':
       return callbacks.onGetCurrentState();
+    case 'save_favorite':
+      return callbacks.onSaveFavorite(toolCall.arguments.name, toolCall.arguments.note);
+    case 'reset_params':
+      return callbacks.onResetParams();
+    case 'compare_with_preset':
+      return callbacks.onCompareWithPreset(toolCall.arguments.preset);
     default:
       return { success: false, message: `未知工具: ${(toolCall as { name: string }).name}` };
   }
@@ -229,6 +254,55 @@ export const AGENT_TOOLS = [
       parameters: {
         type: 'object',
         properties: {},
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'save_favorite',
+      description: '将当前构件参数保存为收藏方案，便于后续调用或对比。当用户对方案满意或说"保存一下"、"收藏这个方案"时调用。',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: {
+            type: 'string',
+            description: '方案名称，如"优化后的标准梁"、"甲方要求方案"',
+          },
+          note: {
+            type: 'string',
+            description: '可选备注，记录方案特点或修改原因',
+          },
+        },
+        required: ['name'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'reset_params',
+      description: '将当前构件参数重置为默认值。当用户说"重置"、"恢复默认"、"重新开始"时调用。',
+      parameters: {
+        type: 'object',
+        properties: {},
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'compare_with_preset',
+      description: '将当前参数与指定预设方案进行对比，返回差异摘要。当用户说"跟标准方案比一下"、"和简单梁有什么区别"时调用。',
+      parameters: {
+        type: 'object',
+        properties: {
+          preset: {
+            type: 'string',
+            description: '要对比的预设名称。梁: simple/standard/complex; 柱: simple/standard; 板: simple/standard/thick 等',
+          },
+        },
+        required: ['preset'],
       },
     },
   },

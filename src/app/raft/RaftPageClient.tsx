@@ -193,6 +193,7 @@ export function RaftPageClient() {
                 if (preset in RAFT_PRESETS) applyPreset(preset as keyof typeof RAFT_PRESETS);
               }}
               onGetCurrentState={() => aiContext}
+              onResetParams={() => setParams({ ...RAFT_PRESETS.standard })}
             />
           </div>
         )}

@@ -403,6 +403,24 @@ export function BeamPageClient() {
                 if (tab) setDataTab(tab);
                 return { summary: `已切换到${type === 'ratio' ? '配筋率' : type === 'weight' ? '用量估算' : type === 'concrete' ? '混凝土量' : '规范校验'}面板` };
               }}
+              onSaveFavorite={(name, note) => addToFavorites(params, name, note)}
+              onResetParams={() => setParams({ ...BEAM_PRESETS.standard })}
+              onCompareWithPreset={(preset) => {
+                if (!(preset in BEAM_PRESETS)) return `未知预设: ${preset}`;
+                const pp = BEAM_PRESETS[preset as keyof typeof BEAM_PRESETS] as unknown as Record<string, unknown>;
+                const diffs: string[] = [];
+                if (params.b !== pp.b) diffs.push(`截面宽度: ${params.b} → ${pp.b}`);
+                if (params.h !== pp.h) diffs.push(`截面高度: ${params.h} → ${pp.h}`);
+                if (params.top !== pp.top) diffs.push(`上部通长筋: ${params.top} → ${pp.top}`);
+                if (params.bottom !== pp.bottom) diffs.push(`下部通长筋: ${params.bottom} → ${pp.bottom}`);
+                if (params.stirrup !== pp.stirrup) diffs.push(`箍筋: ${params.stirrup} → ${pp.stirrup}`);
+                if (params.leftSupport !== (pp.leftSupport || '')) diffs.push(`左支座负筋: ${params.leftSupport || '无'} → ${pp.leftSupport || '无'}`);
+                if (params.rightSupport !== (pp.rightSupport || '')) diffs.push(`右支座负筋: ${params.rightSupport || '无'} → ${pp.rightSupport || '无'}`);
+                if (params.sideBar !== (pp.sideBar || '')) diffs.push(`腰筋: ${params.sideBar || '无'} → ${pp.sideBar || '无'}`);
+                return diffs.length > 0
+                  ? `当前方案 vs 预设「${preset}」的差异:\n${diffs.map(d => `- ${d}`).join('\n')}`
+                  : `当前方案与预设「${preset}」完全一致`;
+              }}
             />
           </div>
         )}

@@ -379,6 +379,9 @@ export const AGENT_SYSTEM_SUFFIX = `
 | \`navigate_component\` | 跳转到其他构件页面 | 用户说"去看看柱子"、"帮我建一个板" |
 | \`apply_preset\` | 应用预设方案 | 用户说"用标准梁"、"切换到复杂梁" |
 | \`get_current_state\` | 获取当前完整参数和计算结果 | 开始分析前需要了解当前状态 |
+| \`save_favorite\` | 将当前方案保存为收藏 | 用户说"保存一下"、"收藏这个方案" |
+| \`reset_params\` | 重置参数为默认值 | 用户说"重置"、"恢复默认"、"重新开始" |
+| \`compare_with_preset\` | 与预设方案对比差异 | 用户说"跟标准方案比一下"、"和简单梁比" |
 
 ### modify_params 参数格式
 
@@ -451,6 +454,18 @@ section（截面图）、ratio（配筋率）、compliance（规范校验）、w
 **场景4：用户说"高亮箍筋让我看看"**
 → 调用 \`highlight_element\`({ element: "stirrup" })
 → 简要说明
+
+**场景5：用户说"这个方案不错，保存一下"**
+→ 调用 \`save_favorite\`({ name: "优化方案", note: "调整后配筋率满足规范" })
+→ 确认保存成功
+
+**场景6：用户说"跟标准梁比一下有什么区别"**
+→ 调用 \`compare_with_preset\`({ preset: "standard" })
+→ 基于差异结果分析优劣
+
+**场景7：用户说"重新开始吧"**
+→ 调用 \`reset_params\`()
+→ 告知已重置为默认参数
 
 ### 回复格式
 
