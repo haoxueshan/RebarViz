@@ -2,9 +2,9 @@
 
 import { useState, useRef, useEffect, useCallback, memo, type ReactNode } from 'react';
 import { Send, Trash2, ChevronDown, ChevronRight, Loader2, AlertCircle, Sparkles, Settings, Check, BookOpen, ShieldCheck, ShieldAlert, TriangleAlert, Image, X, Zap, Eye } from 'lucide-react';
-import { AI_PROVIDERS } from '@/lib/ai-providers';
+import { AI_PROVIDERS, type AIProvider } from '@/lib/ai-providers';
 import type { ChatMessage } from '@/lib/ai-providers';
-import { getApiKey, getApiKeys } from '@/lib/api-keys';
+import { getApiKey } from '@/lib/api-keys';
 import type { ComponentType, BeamParams, ColumnParams, SlabParams, JointParams, ShearWallParams, StairParams, FoundationParams, PileCapParams, RaftFoundationParams } from '@/lib/types';
 import { parseAIResponse } from '@/lib/nl-rebar-parser';
 import { mapSchemaToParams } from '@/lib/nl-rebar-mapper';
@@ -227,14 +227,16 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
     controller: AbortController,
     onUpdate: (content: string) => void,
     modelOverride?: string,
+    providerOverride?: { provider: AIProvider; apiKey: string },
   ): Promise<string> => {
-    const apiKey = getApiKey(providerId);
-    if (!apiKey) throw new Error(`未配置 ${provider.name} API Key，请在设置中添加`);
+    const effectiveProvider = providerOverride?.provider ?? provider;
+    const apiKey = providerOverride?.apiKey ?? getApiKey(providerId);
+    if (!apiKey) throw new Error(`未配置 ${effectiveProvider.name} API Key，请在设置中添加`);
 
     const systemContent = buildSidebarSystemPrompt(componentType, context);
 
     const { response: res } = await aiFetch({
-      provider,
+      provider: effectiveProvider,
       model: modelOverride || model,
       apiKey,
       systemPrompt: systemContent,
@@ -450,19 +452,36 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
 
       // ─── Agent mode: use tool-calling agent engine ───
       if (agentMode) {
-        const apiKey = getApiKey(providerId);
-        if (!apiKey) throw new Error(`未配置 ${provider.name} API Key，请在设置中添加`);
-
-        // Auto-select vision model if images are present
+        // Auto-switch provider when images present but current provider lacks vision
+        let activeProvider = provider;
+        let activeProviderId = providerId;
         let activeModel = model;
-        if (hasImages && provider.visionModel) {
-          activeModel = provider.visionModel;
+        let visionSwitchNote = '';
+
+        if (hasImages) {
+          if (provider.visionModel) {
+            activeModel = provider.visionModel;
+          } else {
+            // Find a vision-capable provider with a valid API key
+            const visionProvider = AI_PROVIDERS.find(p => p.visionModel && getApiKey(p.id));
+            if (visionProvider) {
+              activeProvider = visionProvider;
+              activeProviderId = visionProvider.id;
+              activeModel = visionProvider.visionModel!;
+              visionSwitchNote = `> 📷 已自动切换到 **${visionProvider.name}** (${visionProvider.visionModel}) 进行图片识别\n\n`;
+            } else {
+              throw new Error('当前没有支持图片识别的模型可用。请在设置中配置 Qwen 或 OpenAI 的 API Key');
+            }
+          }
         }
+
+        const apiKey = getApiKey(activeProviderId);
+        if (!apiKey) throw new Error(`未配置 ${activeProvider.name} API Key，请在设置中添加`);
 
         const agentResult = await runAgent(
           {
             maxToolRounds: 5,
-            provider,
+            provider: activeProvider,
             model: activeModel,
             apiKey,
             componentType,
@@ -497,10 +516,11 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
           controller.signal,
         );
 
-        // Final message update
+        // Final message update (prepend vision switch note if applicable)
+        const finalContent = visionSwitchNote + agentResult.assistantContent;
         setMessages(prev => {
           const updated = [...prev];
-          updated[updated.length - 1] = { role: 'assistant', content: agentResult.assistantContent };
+          updated[updated.length - 1] = { role: 'assistant', content: finalContent };
           return updated;
         });
 
@@ -527,7 +547,23 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
         }
       } else {
         // ─── Legacy mode: direct streaming without tools ───
-        const legacyModel = (hasImages && provider.visionModel) ? provider.visionModel : undefined;
+        let legacyModel: string | undefined;
+        let legacyProviderOverride: { provider: AIProvider; apiKey: string } | undefined;
+
+        if (hasImages) {
+          if (provider.visionModel) {
+            legacyModel = provider.visionModel;
+          } else {
+            const vp = AI_PROVIDERS.find(p => p.visionModel && getApiKey(p.id));
+            if (vp) {
+              legacyModel = vp.visionModel!;
+              legacyProviderOverride = { provider: vp, apiKey: getApiKey(vp.id)! };
+            } else {
+              throw new Error('当前没有支持图片识别的模型可用。请在设置中配置 Qwen 或 OpenAI 的 API Key');
+            }
+          }
+        }
+
         const assistantContent = await streamAIRequest(
           newMessages,
           controller,
@@ -539,6 +575,7 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
             });
           },
           legacyModel,
+          legacyProviderOverride,
         );
 
         const parseError = tryApplyParams(assistantContent, assistantIndex);
@@ -920,14 +957,10 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
           />
           {/* Image upload button */}
           <button
+            type="button"
             onClick={() => fileInputRef.current?.click()}
-            className={`p-2.5 rounded-xl transition-colors cursor-pointer shrink-0 ${
-              provider.visionModel
-                ? 'text-gray-400 hover:text-accent hover:bg-accent/5'
-                : 'text-gray-300 cursor-not-allowed'
-            }`}
-            title={provider.visionModel ? '上传图纸/图片（支持 Vision）' : `${provider.name} 不支持图片识别，请切换到支持 Vision 的模型`}
-            disabled={!provider.visionModel}
+            className="p-2.5 rounded-xl transition-colors cursor-pointer shrink-0 text-gray-400 hover:text-accent hover:bg-accent/5"
+            title={provider.visionModel ? '上传图纸/图片（支持 Vision）' : `上传图片（发送时将自动切换到支持 Vision 的模型）`}
           >
             <Image className="w-4 h-4" />
           </button>
