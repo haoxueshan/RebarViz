@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback, memo, type ReactNode } from 'react';
-import { Send, Trash2, ChevronDown, ChevronRight, Loader2, AlertCircle, Sparkles, Settings, Check, BookOpen, ShieldCheck, ShieldAlert, TriangleAlert, Wrench, Image, X, Zap, Eye } from 'lucide-react';
+import { Send, Trash2, ChevronDown, ChevronRight, Loader2, AlertCircle, Sparkles, Settings, Check, BookOpen, ShieldCheck, ShieldAlert, TriangleAlert, Image, X, Zap, Eye } from 'lucide-react';
 import { AI_PROVIDERS } from '@/lib/ai-providers';
 import type { ChatMessage } from '@/lib/ai-providers';
 import { getApiKey, getApiKeys } from '@/lib/api-keys';
@@ -15,6 +15,7 @@ import { checkCompliance, type ComplianceResult } from '@/lib/compliance';
 import { runAgent, type AgentStep } from '@/lib/ai-agent-engine';
 import { type AgentCallbacks } from '@/lib/ai-agent-tools';
 import { aiFetch } from '@/lib/ai-fetch';
+import { AgentStepDisplay } from './AgentStepDisplay';
 import Link from 'next/link';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -779,36 +780,10 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
 
             {/* Agent steps (tool calls) */}
             {agentSteps[i] && agentSteps[i].length > 0 && msg.role === 'assistant' && (
-              <div className="mt-1.5 space-y-1">
-                {agentSteps[i].map((step, si) => (
-                  <div key={si} className="flex items-start gap-1.5 px-2 py-1 bg-violet-50 rounded-lg text-[11px] text-violet-700 border border-violet-100">
-                    {step.type === 'tool_call' ? (
-                      <>
-                        <Wrench className="w-3 h-3 mt-0.5 shrink-0" />
-                        <span>
-                          <span className="font-medium">{step.toolName}</span>
-                          {step.toolArgs && Object.keys(step.toolArgs).length > 0 && (
-                            <span className="text-violet-500 ml-1">
-                              ({Object.entries(step.toolArgs).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v).slice(0, 40) : String(v).slice(0, 30)}`).join(', ')})
-                            </span>
-                          )}
-                        </span>
-                      </>
-                    ) : step.type === 'tool_result' ? (
-                      <>
-                        {step.result?.success ? (
-                          <Check className="w-3 h-3 mt-0.5 shrink-0 text-green-600" />
-                        ) : (
-                          <AlertCircle className="w-3 h-3 mt-0.5 shrink-0 text-red-500" />
-                        )}
-                        <span className={step.result?.success ? 'text-green-700' : 'text-red-600'}>
-                          {step.result?.message?.slice(0, 80)}
-                        </span>
-                      </>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
+              <AgentStepDisplay
+                steps={agentSteps[i]}
+                isStreaming={loading && i === messages.length - 1}
+              />
             )}
 
             {/* Apply result chip */}
