@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback, memo, type ReactNode } from '
 import { Send, Trash2, ChevronDown, ChevronRight, Loader2, AlertCircle, Sparkles, Settings, Check, BookOpen, ShieldCheck, ShieldAlert, TriangleAlert, Image, X, Zap, Eye } from 'lucide-react';
 import { AI_PROVIDERS, type AIProvider } from '@/lib/ai-providers';
 import type { ChatMessage } from '@/lib/ai-providers';
-import { getApiKey } from '@/lib/api-keys';
+import { getApiKey, getApiKeys } from '@/lib/api-keys';
 import type { ComponentType, BeamParams, ColumnParams, SlabParams, JointParams, ShearWallParams, StairParams, FoundationParams, PileCapParams, RaftFoundationParams } from '@/lib/types';
 import { parseAIResponse } from '@/lib/nl-rebar-parser';
 import { mapSchemaToParams } from '@/lib/nl-rebar-mapper';

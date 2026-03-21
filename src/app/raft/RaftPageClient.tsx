@@ -71,7 +71,7 @@ export function RaftPageClient() {
     <main className="px-4 py-4">
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         {/* 左栏：参数输入 */}
-        <div className="lg:col-span-3 space-y-4 lg:sticky lg:top-[60px] lg:max-h-[calc(100vh-76px)] lg:overflow-y-auto lg:scrollbar-thin">
+        <div className="lg:col-span-3 space-y-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto lg:scrollbar-thin">
           <div className="bg-white rounded-xl p-4 border border-gray-100 shadow-sm">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-sm font-semibold text-primary">参数输入</h2>
