@@ -14,17 +14,19 @@ import { calcFoundationConcrete } from '@/lib/calc-concrete';
 import { ShareButton } from '@/components/ShareButton';
 import { Field, NumField, Legend, ResetButton, SelectField, Section } from '@/components/FormControls';
 import { ViewerSkeleton } from '@/components/ViewerSkeleton';
-import { CONCRETE_GRADES } from '@/lib/anchor';
-import type { ConcreteGrade } from '@/lib/anchor';
+import { CONCRETE_GRADES, SEISMIC_GRADES } from '@/lib/anchor';
+import type { ConcreteGrade, SeismicGrade } from '@/lib/anchor';
 import { AISidebar } from '@/components/AISidebar';
 import { buildFoundationContext } from '@/lib/ai-context';
 import { decodeSharedParam } from '@/lib/share-params';
+import { FoundationAnchorPanel } from '@/components/FoundationAnchorPanel';
 import { Sparkles } from 'lucide-react';
 
 const DATA_TABS = [
   { key: 'section', label: '截面图' },
   { key: 'weight', label: '用量估算' },
   { key: 'concrete', label: '混凝土量' },
+  { key: 'anchor', label: '锚固构造' },
 ] as const;
 
 const FoundationViewer = dynamic(() => import('@/components/FoundationViewer'), {
@@ -157,6 +159,8 @@ export function FoundationPageClient() {
             <Section title="材料">
               <SelectField label="混凝土等级" value={params.concreteGrade} onChange={v => update({ concreteGrade: v as ConcreteGrade })}
                 options={CONCRETE_GRADES.map(g => ({ value: g, label: g }))} />
+              <SelectField label="抗震等级" value={params.seismicGrade || '三级'} onChange={v => update({ seismicGrade: v as SeismicGrade })}
+                options={SEISMIC_GRADES.map(g => ({ value: g, label: g }))} />
               <NumField label="保护层 (mm)" value={params.cover} onChange={v => update({ cover: v })} min={35} max={70} />
             </Section>
           </div>
@@ -203,6 +207,7 @@ export function FoundationPageClient() {
               )}
               {dataTab === 'weight' && <WeightCalc result={calcResult} />}
               {dataTab === 'concrete' && <ConcreteCalc result={concreteResult} />}
+              {dataTab === 'anchor' && <FoundationAnchorPanel params={params} />}
             </div>
           </div>
         </div>
