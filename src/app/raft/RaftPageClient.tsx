@@ -19,12 +19,14 @@ import type { ConcreteGrade, SeismicGrade } from '@/lib/anchor';
 import { AISidebar } from '@/components/AISidebar';
 import { buildRaftContext } from '@/lib/ai-context';
 import { decodeSharedParam } from '@/lib/share-params';
+import { RaftAnchorPanel } from '@/components/RaftAnchorPanel';
 import { Sparkles } from 'lucide-react';
 
 const DATA_TABS = [
   { key: 'section', label: '截面图' },
   { key: 'weight', label: '用量估算' },
   { key: 'concrete', label: '混凝土量' },
+  { key: 'anchor', label: '锚固构造' },
 ] as const;
 
 const RaftViewer = dynamic(() => import('@/components/RaftViewer'), {
@@ -254,6 +256,7 @@ export function RaftPageClient() {
               )}
               {dataTab === 'weight' && <WeightCalc result={calcResult} />}
               {dataTab === 'concrete' && <ConcreteCalc result={concreteResult} />}
+              {dataTab === 'anchor' && <RaftAnchorPanel params={params} />}
             </div>
           </div>
         </div>

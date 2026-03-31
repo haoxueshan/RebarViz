@@ -525,6 +525,364 @@ export const COL_FOUND_CORNER_ONLY_H_AXIAL = 1200;   // 轴心/小偏心: h ≥ 
 export const COL_FOUND_CORNER_ONLY_H_ECCENTRIC = 1400; // 大偏心: h ≥ 1400mm
 export const COL_FOUND_CORNER_ONLY_MAX_SPACING = 1000; // 伸至网片上的柱纵筋间距 ≤ 1000mm
 
+// ═══════════════════════════════════════════════════════════════════
+// 15. l_ab / l_abE 查表系数 — 22G101-3 第2-2页
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * 受拉钢筋基本锚固长度系数表 lab = n×d — 22G101-3 第2-2页
+ * 键: 'HPB300' | 'HRB400' | 'HRB500'
+ * 值: 各混凝土等级对应系数 n
+ */
+export const LAB_TABLE: Record<string, Record<string, number>> = {
+  HPB300: { C25: 34, C30: 30, C35: 28, C40: 25, C45: 24, C50: 23, C55: 22, C60: 21 },
+  HRB400: { C25: 40, C30: 35, C35: 32, C40: 29, C45: 28, C50: 27, C55: 26, C60: 25 },
+  HRB500: { C25: 48, C30: 43, C35: 39, C40: 35, C45: 34, C50: 32, C55: 31, C60: 30 },
+};
+
+/**
+ * 抗震设计受拉钢筋基本锚固长度系数表 labE = n×d — 22G101-3 第2-2页
+ * 注: 四级抗震 labE = lab
+ */
+export const LAB_E_TABLE: Record<string, Record<string, Record<string, number>>> = {
+  HPB300: {
+    '一二级': { C25: 39, C30: 35, C35: 32, C40: 29, C45: 28, C50: 26, C55: 25, C60: 24 },
+    '三级':   { C25: 36, C30: 32, C35: 29, C40: 26, C45: 25, C50: 24, C55: 23, C60: 22 },
+  },
+  HRB400: {
+    '一二级': { C25: 46, C30: 40, C35: 37, C40: 33, C45: 32, C50: 31, C55: 30, C60: 29 },
+    '三级':   { C25: 42, C30: 37, C35: 34, C40: 31, C45: 29, C50: 28, C55: 27, C60: 26 },
+  },
+  HRB500: {
+    '一二级': { C25: 55, C30: 49, C35: 45, C40: 40, C45: 39, C50: 37, C55: 36, C60: 34 },
+    '三级':   { C25: 50, C30: 45, C35: 41, C40: 37, C45: 35, C50: 34, C55: 32, C60: 30 },
+  },
+};
+
+/** 钢筋等级代号映射到查表键 */
+export const REBAR_GRADE_TO_TABLE_KEY: Record<string, string> = {
+  A: 'HPB300',
+  B: 'HRB400',
+  C: 'HRB400',
+  D: 'HRB400',
+  E: 'HRB400',
+  F: 'HRB500',
+  G: 'HRB500',
+};
+
+/** 查表获取 lab 系数 (倍数 n，lab = n × d) — 22G101-3 第2-2页 */
+export function getLabFactor(rebarGrade: string, concreteGrade: string): number {
+  const key = REBAR_GRADE_TO_TABLE_KEY[rebarGrade] ?? 'HRB400';
+  const gradeKey = concreteGrade.startsWith('C') ? concreteGrade : `C${concreteGrade}`;
+  const normalized = parseInt(gradeKey.substring(1)) >= 60 ? 'C60' : gradeKey;
+  return LAB_TABLE[key]?.[normalized] ?? LAB_TABLE['HRB400']?.['C30'] ?? 35;
+}
+
+/** 查表获取 labE 系数 (倍数 n，labE = n × d) — 22G101-3 第2-2页 */
+export function getLabEFactor(rebarGrade: string, concreteGrade: string, seismicGrade: string): number {
+  if (seismicGrade === '四级' || seismicGrade === '非抗震') {
+    return getLabFactor(rebarGrade, concreteGrade);
+  }
+  const key = REBAR_GRADE_TO_TABLE_KEY[rebarGrade] ?? 'HRB400';
+  const seismicKey = (seismicGrade === '一级' || seismicGrade === '二级') ? '一二级' : '三级';
+  const gradeKey = concreteGrade.startsWith('C') ? concreteGrade : `C${concreteGrade}`;
+  const normalized = parseInt(gradeKey.substring(1)) >= 60 ? 'C60' : gradeKey;
+  return LAB_E_TABLE[key]?.[seismicKey]?.[normalized] ?? LAB_E_TABLE['HRB400']?.['一二级']?.['C30'] ?? 40;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 16. 大直径钢筋修正系数 — GB50010 §8.3.1 / 22G101-3 第2-3页
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * d > 25mm 时锚固长度修正系数 ζa — GB50010 §8.3.1
+ * 带肋钢筋 d > 25mm: ζa = 1.1
+ * 光圆钢筋 (HPB300): 无此修正
+ */
+export const ANCHOR_LARGE_DIA_FACTOR = 1.1;
+export const ANCHOR_LARGE_DIA_THRESHOLD = 25;
+
+/** 是否需要 d>25 修正 */
+export function needsLargeDiaCorrection(rebarGrade: string, d: number): boolean {
+  return rebarGrade !== 'A' && d > ANCHOR_LARGE_DIA_THRESHOLD;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 17. 基础梁 JL 端部与外伸部位钢筋构造 — 22G101-3 第2-25页
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * JL端部外伸直锚判定常量:
+ * - 外伸长度(从柱内边) ≥ lab → 直锚
+ * - 外伸长度 < lab → 弯锚: 水平段 ≥ 0.6lab，弯折 15d
+ * — 22G101-3 第2-25页 注
+ */
+export const JL_END_BENT_STRAIGHT_RATIO = 0.6;  // 弯锚时水平段 ≥ 0.6 × lab
+export const JL_END_BENT_BEND_D_FACTOR = 15;    // 弯折段 = 15d
+
+export interface JLEndAnchorResult {
+  canStraight: boolean;
+  straightPart: number;
+  bendPart: number;
+  totalLen: number;
+  description: string;
+}
+
+/**
+ * 基础梁JL端部/外伸锚固构造判定 — 22G101-3 第2-25页
+ * @param extLen  从柱内边算起的外伸长度 (mm)
+ * @param lab     基本锚固长度 (mm)
+ * @param d       钢筋直径 (mm)
+ */
+export function determineJLEndAnchor(extLen: number, lab: number, d: number): JLEndAnchorResult {
+  const canStraight = extLen >= lab;
+  if (canStraight) {
+    return {
+      canStraight: true,
+      straightPart: extLen,
+      bendPart: 0,
+      totalLen: extLen,
+      description: `JL外伸直锚: 外伸长度${extLen}mm ≥ lab${lab}mm (22G101-3 §2-25)`,
+    };
+  }
+  const straightPart = Math.ceil(JL_END_BENT_STRAIGHT_RATIO * lab);
+  const bendPart = JL_END_BENT_BEND_D_FACTOR * d;
+  return {
+    canStraight: false,
+    straightPart,
+    bendPart,
+    totalLen: straightPart + bendPart,
+    description: `JL外伸弯锚: 水平段≥0.6lab=${straightPart}mm，弯折15d=${bendPart}mm (22G101-3 §2-25)`,
+  };
+}
+
+// ─── JL/JCL 基础梁纵筋连接区域 — 22G101-3 第2-23页 ───
+
+/**
+ * 基础梁顶部纵筋连接区 (跨中 ln/3 ~ 2ln/3) — 22G101-3 第2-23页
+ * @param ln 梁净跨 (mm)
+ */
+export function jlTopBarConnectionZone(ln: number): { start: number; end: number } {
+  return { start: Math.ceil(ln / 3), end: Math.floor((2 * ln) / 3) };
+}
+
+/**
+ * 基础梁底部纵筋连接区 (支座两侧 ln/4 范围内) — 22G101-3 第2-23页
+ * @param ln 梁净跨 (mm)
+ */
+export function jlBottomBarConnectionZone(ln: number): { zoneFromEachEnd: number } {
+  return { zoneFromEachEnd: Math.ceil(ln / 4) };
+}
+
+/** 基础梁连接区内接头面积百分率上限 — 22G101-3 第2-23页 */
+export const JL_MAX_LAP_PERCENT = 50;
+
+// ═══════════════════════════════════════════════════════════════════
+// 18. 筏形基础平板端部钢筋构造 — 22G101-3 第2-33/2-37页
+// ═══════════════════════════════════════════════════════════════════
+
+/** 弯锚公共常量 (适用于 LPB 和 BPB/ZXB/KZB) */
+export const RAFT_SLAB_EDGE_BENT_STRAIGHT_RATIO = 0.6; // 水平段 ≥ 0.6 × lab
+export const RAFT_SLAB_EDGE_BENT_D_FACTOR = 15;        // 弯折段 = 15d
+
+export interface RaftSlabEdgeAnchorResult {
+  hasExt: boolean;
+  canStraight: boolean;
+  straightPart: number;
+  bendPart: number;
+  totalLen: number;
+  description: string;
+}
+
+/**
+ * 梁板式筏基平板 LPB 端部锚固构造 — 22G101-3 第2-33页
+ * @param extLen 从基础梁内边算起的外伸长度 (mm)；无外伸传 0
+ * @param lab    基本锚固长度 (mm)
+ * @param d      钢筋直径 (mm)
+ */
+export function determineLPBEdgeAnchor(extLen: number, lab: number, d: number): RaftSlabEdgeAnchorResult {
+  const bendPart = RAFT_SLAB_EDGE_BENT_D_FACTOR * d;
+  if (extLen === 0) {
+    return {
+      hasExt: false, canStraight: false,
+      straightPart: 0, bendPart,
+      totalLen: bendPart,
+      description: `LPB无外伸端部: 下部钢筋伸至梁边后弯折15d=${bendPart}mm (22G101-3 §2-33)`,
+    };
+  }
+  const canStraight = extLen >= lab;
+  const straightPart = canStraight ? extLen : Math.ceil(RAFT_SLAB_EDGE_BENT_STRAIGHT_RATIO * lab);
+  return {
+    hasExt: true, canStraight,
+    straightPart,
+    bendPart: canStraight ? 0 : bendPart,
+    totalLen: canStraight ? extLen : straightPart + bendPart,
+    description: canStraight
+      ? `LPB外伸直锚: ${extLen}mm ≥ lab${lab}mm`
+      : `LPB外伸弯锚: 水平段≥0.6lab=${straightPart}mm，弯折15d=${bendPart}mm (22G101-3 §2-33)`,
+  };
+}
+
+/**
+ * 平板式筏基平板 BPB/ZXB/KZB 端部锚固构造 — 22G101-3 第2-37页
+ * 规则与 LPB 相同，适用于平板式筏形基础
+ */
+export function determineBPBEdgeAnchor(extLen: number, lab: number, d: number): RaftSlabEdgeAnchorResult {
+  const bendPart = RAFT_SLAB_EDGE_BENT_D_FACTOR * d;
+  if (extLen === 0) {
+    return {
+      hasExt: false, canStraight: false,
+      straightPart: 0, bendPart,
+      totalLen: bendPart,
+      description: `BPB/ZXB/KZB无外伸端部: 弯折15d=${bendPart}mm (22G101-3 §2-37)`,
+    };
+  }
+  const canStraight = extLen >= lab;
+  const straightPart = canStraight ? extLen : Math.ceil(RAFT_SLAB_EDGE_BENT_STRAIGHT_RATIO * lab);
+  return {
+    hasExt: true, canStraight,
+    straightPart,
+    bendPart: canStraight ? 0 : bendPart,
+    totalLen: canStraight ? extLen : straightPart + bendPart,
+    description: canStraight
+      ? `BPB外伸直锚: ${extLen}mm ≥ lab${lab}mm`
+      : `BPB外伸弯锚: 水平段≥0.6lab=${straightPart}mm，弯折15d=${bendPart}mm (22G101-3 §2-37)`,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 19. 桩基承台钢筋锚固构造 — 22G101-3 第2-39/2-40页
+// ═══════════════════════════════════════════════════════════════════
+
+/** 桩顶嵌入承台深度 — 22G101-3 第2-39页 */
+export const PILE_EMBED_IN_CAP = {
+  small: 50,     // 桩径或边长 < 800mm: 嵌入 50mm
+  large: 100,    // 桩径或边长 ≥ 800mm: 嵌入 100mm
+  threshold: 800,
+};
+
+/** 获取桩顶嵌入承台深度 (mm) */
+export function getPileEmbedDepth(pileSize: number): number {
+  return pileSize >= PILE_EMBED_IN_CAP.threshold ? PILE_EMBED_IN_CAP.large : PILE_EMBED_IN_CAP.small;
+}
+
+/**
+ * 承台受力筋在桩处的最小/无弯折直段长度 — 22G101-3 第2-39页
+ * 方桩: minStraight = 25d；noBend = 35d
+ * 圆桩: minStraight = 25d + 0.1D；noBend = 35d + 0.1D  (D=圆桩直径)
+ */
+export const PILE_CAP_REBAR_MIN_STRAIGHT_D = 25;  // 最小直段倍数
+export const PILE_CAP_REBAR_NO_BEND_D = 35;        // 不需弯折的直段倍数
+
+export interface PileCapRebarEndResult {
+  minStraight: number;
+  noBendStraight: number;
+  needBend: boolean;
+  meetsMin: boolean;
+  bendLen: number;
+  description: string;
+}
+
+/**
+ * 承台受力筋端部构造判定 — 22G101-3 第2-39页
+ * @param d         受力钢筋直径 (mm)
+ * @param pileType  'square' | 'round'
+ * @param pileSize  桩边长(方桩)或桩径(圆桩) mm
+ * @param availLen  承台内实际可用的直段长度 (mm)
+ */
+export function determinePileCapRebarEnd(
+  d: number,
+  pileType: 'square' | 'round',
+  pileSize: number,
+  availLen: number,
+): PileCapRebarEndResult {
+  const minStraight = pileType === 'round'
+    ? Math.ceil(PILE_CAP_REBAR_MIN_STRAIGHT_D * d + 0.1 * pileSize)
+    : PILE_CAP_REBAR_MIN_STRAIGHT_D * d;
+  const noBendStraight = pileType === 'round'
+    ? Math.ceil(PILE_CAP_REBAR_NO_BEND_D * d + 0.1 * pileSize)
+    : PILE_CAP_REBAR_NO_BEND_D * d;
+  const needBend = availLen < noBendStraight;
+  const meetsMin = availLen >= minStraight;
+  const bendLen = needBend ? 12 * d : 0;
+  return {
+    minStraight,
+    noBendStraight,
+    needBend,
+    meetsMin,
+    bendLen,
+    description: needBend
+      ? `承台筋端部弯折12d=${bendLen}mm，直段${availLen}mm，最小${minStraight}mm (22G101-3 §2-39)`
+      : `承台筋端部不弯折，直段${availLen}mm ≥ ${noBendStraight}mm (22G101-3 §2-39)`,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 20. 基础联系梁 JLL 钢筋构造 — 22G101-3 第2-49页
+// ═══════════════════════════════════════════════════════════════════
+
+/** JLL 第一道箍筋距柱边距离 (mm) — 22G101-3 第2-49页 注1 */
+export const JLL_FIRST_STIRRUP_FROM_COLUMN = 50;
+
+/**
+ * JLL 纵筋直锚伸过柱中心线长度 — 22G101-3 第2-49页 注2
+ * 直锚: 锚固长度 ≥ la(laE)，且伸过柱中心线 ≥ 5d
+ */
+export const JLL_DIRECT_ANCHOR_PAST_CENTER_D = 5;
+
+/**
+ * JLL 锚固区横向钢筋要求 — 22G101-3 第2-49页 注3
+ * 直径 ≥ d/4（d=纵筋最大直径），间距 ≤ 5d（d=纵筋最小直径）且 ≤ 100mm
+ */
+export const JLL_ANCHOR_ZONE_STIRRUP_DIA_RATIO = 0.25;   // ≥ d/4
+export const JLL_ANCHOR_ZONE_STIRRUP_SPACING_D = 5;       // ≤ 5d
+export const JLL_ANCHOR_ZONE_STIRRUP_SPACING_MAX = 100;   // ≤ 100mm
+
+/**
+ * JLL 纵筋直锚验证 — 22G101-3 第2-49页
+ * 直锚条件: la(laE) 且伸过柱中线 ≥ 5d
+ * @param availDepth  可用锚固深度 (mm)，通常 = 柱截面宽 - 保护层
+ * @param la          锚固长度 (mm)
+ * @param d           梁纵筋直径 (mm)
+ * @param hc          柱截面宽度 (mm)
+ */
+export function checkJLLDirectAnchor(
+  availDepth: number, la: number, d: number, hc: number,
+): { ok: boolean; minRequired: number; pastCenter: number } {
+  const pastCenter = JLL_DIRECT_ANCHOR_PAST_CENTER_D * d;
+  const minRequired = Math.max(la, Math.ceil(hc / 2) + pastCenter);
+  return { ok: availDepth >= minRequired, minRequired, pastCenter };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 21. 灌注桩 GZH 钢筋构造 — 22G101-3 第2-46/2-47页
+// ═══════════════════════════════════════════════════════════════════
+
+/** 桩顶进入承台高度 h (mm) — 与 §19 PILE_EMBED_IN_CAP 同一规则，此处提供别名供桩侧引用 */
+export const GZH_PILE_HEAD_EMBED = PILE_EMBED_IN_CAP;
+
+/**
+ * 螺旋箍筋搭接构造 — 22G101-3 第2-47页
+ * 螺旋箍筋端部: 搭接 1.5 圈，端部弯钩 ≥ 75mm 或 10d（取大值）
+ */
+export const GZH_SPIRAL_STIRRUP_LAP_TURNS = 1.5;
+export const GZH_SPIRAL_STIRRUP_HOOK_MIN_MM = 75;
+export const GZH_SPIRAL_STIRRUP_HOOK_D_FACTOR = 10;
+
+/** 灌注桩焊接加劲箍最小直径 (mm) — 22G101-3 第2-47页 注3 */
+export const GZH_STIFFENER_HOOP_MIN_DIA = 12;
+
+/** 灌注桩焊接加劲箍最低强度等级 */
+export const GZH_STIFFENER_HOOP_MIN_GRADE = 'HRB400';
+
+/**
+ * 螺旋箍筋端部弯钩长度 (mm) — 22G101-3 第2-47页
+ * ≥ max(75mm, 10d)
+ */
+export function gzhSpiralStirrupHookLen(d: number): number {
+  return Math.max(GZH_SPIRAL_STIRRUP_HOOK_MIN_MM, GZH_SPIRAL_STIRRUP_HOOK_D_FACTOR * d);
+}
+
 /**
  * 判定柱插筋锚固类型
  * @param h       基础高度 (mm)

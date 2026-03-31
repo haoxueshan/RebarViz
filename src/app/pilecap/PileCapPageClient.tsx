@@ -19,12 +19,16 @@ import type { ConcreteGrade } from '@/lib/anchor';
 import { AISidebar } from '@/components/AISidebar';
 import { buildPileCapContext } from '@/lib/ai-context';
 import { decodeSharedParam } from '@/lib/share-params';
+import { PileCapAnchorPanel } from '@/components/PileCapAnchorPanel';
+import { SEISMIC_GRADES } from '@/lib/anchor';
+import type { SeismicGrade } from '@/lib/anchor';
 import { Sparkles } from 'lucide-react';
 
 const DATA_TABS = [
   { key: 'section', label: '截面图' },
   { key: 'weight', label: '用量估算' },
   { key: 'concrete', label: '混凝土量' },
+  { key: 'anchor', label: '锚固构造' },
 ] as const;
 
 const PileCapViewer = dynamic(() => import('@/components/PileCapViewer'), {
@@ -122,6 +126,8 @@ export function PileCapPageClient() {
             <Section title="材料">
               <SelectField label="混凝土等级" value={params.concreteGrade} onChange={v => update({ concreteGrade: v as ConcreteGrade })}
                 options={CONCRETE_GRADES.map(g => ({ value: g, label: g }))} />
+              <SelectField label="抗震等级" value={params.seismicGrade || '三级'} onChange={v => update({ seismicGrade: v as SeismicGrade })}
+                options={SEISMIC_GRADES.map(g => ({ value: g, label: g }))} />
               <NumField label="保护层 (mm)" value={params.cover} onChange={v => update({ cover: v })} min={40} max={80} />
             </Section>
           </div>
@@ -165,6 +171,7 @@ export function PileCapPageClient() {
               )}
               {dataTab === 'weight' && <WeightCalc result={calcResult} />}
               {dataTab === 'concrete' && <ConcreteCalc result={concreteResult} />}
+              {dataTab === 'anchor' && <PileCapAnchorPanel params={params} />}
             </div>
           </div>
         </div>

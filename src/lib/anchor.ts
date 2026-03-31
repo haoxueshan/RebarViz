@@ -34,7 +34,25 @@ import {
   SLAB_BOTTOM_ANCHOR, BOTTOM_BAR_MIN_ANCHOR_D_FACTOR,
   BOTTOM_BAR_LAP_H0_FACTOR, COLUMN_LAP_ZONE,
   SUPPORT_BAR_EXTEND_RATIO,
+  getLabFactor, getLabEFactor,
+  ANCHOR_LARGE_DIA_FACTOR, ANCHOR_LARGE_DIA_THRESHOLD,
+  needsLargeDiaCorrection,
+  determineJLEndAnchor, determineLPBEdgeAnchor, determineBPBEdgeAnchor,
+  jlTopBarConnectionZone, jlBottomBarConnectionZone,
+  getPileEmbedDepth, determinePileCapRebarEnd,
 } from './construction-rules';
+
+export {
+  determineJLEndAnchor, determineLPBEdgeAnchor, determineBPBEdgeAnchor,
+  jlTopBarConnectionZone, jlBottomBarConnectionZone,
+  getPileEmbedDepth, determinePileCapRebarEnd,
+  checkJLLDirectAnchor,
+  gzhSpiralStirrupHookLen,
+  JLL_FIRST_STIRRUP_FROM_COLUMN, JLL_DIRECT_ANCHOR_PAST_CENTER_D,
+  JLL_ANCHOR_ZONE_STIRRUP_DIA_RATIO, JLL_ANCHOR_ZONE_STIRRUP_SPACING_D, JLL_ANCHOR_ZONE_STIRRUP_SPACING_MAX,
+  GZH_SPIRAL_STIRRUP_LAP_TURNS, GZH_STIFFENER_HOOP_MIN_DIA, GZH_STIFFENER_HOOP_MIN_GRADE,
+} from './construction-rules';
+export type { JLEndAnchorResult, RaftSlabEdgeAnchorResult, PileCapRebarEndResult } from './construction-rules';
 
 /**
  * 基本锚固长度 lab (mm)
@@ -230,3 +248,62 @@ export function calcAnchorAll(
     bendLen: calcBendLength(diameter),
   };
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// 表格法 — 22G101-3 第2-2/2-3页（优先于公式法，更贴近图集）
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * 查表法基本锚固长度 lab (mm) — 22G101-3 第2-2页
+ * lab = n × d，n 从 LAB_TABLE 查取
+ */
+export function calcLabTable(
+  rebarGrade: string, diameter: number, concreteGrade: ConcreteGrade
+): number {
+  const n = getLabFactor(rebarGrade, concreteGrade);
+  return n * diameter;
+}
+
+/**
+ * 查表法抗震基本锚固长度 labE (mm) — 22G101-3 第2-2页
+ * labE = n × d，n 从 LAB_E_TABLE 查取
+ */
+export function calcLabETable(
+  rebarGrade: string, diameter: number,
+  concreteGrade: ConcreteGrade, seismicGrade: SeismicGrade
+): number {
+  const n = getLabEFactor(rebarGrade, concreteGrade, seismicGrade);
+  return n * diameter;
+}
+
+/**
+ * 查表法锚固长度 la (mm) — 22G101-3 第2-3页
+ * la = lab（d≤25）或 1.1×lab（d>25，带肋钢筋）
+ * la ≥ max(200, 10d)
+ */
+export function calcLaTable(
+  rebarGrade: string, diameter: number, concreteGrade: ConcreteGrade
+): number {
+  const lab = calcLabTable(rebarGrade, diameter, concreteGrade);
+  const factor = needsLargeDiaCorrection(rebarGrade, diameter) ? ANCHOR_LARGE_DIA_FACTOR : 1.0;
+  const la = Math.ceil(factor * lab);
+  return anchorMinLength(la, diameter);
+}
+
+/**
+ * 查表法抗震锚固长度 laE (mm) — 22G101-3 第2-3页
+ * laE = labE（d≤25）或 1.1×labE（d>25，带肋钢筋）
+ * laE ≥ max(200, 10d)
+ */
+export function calcLaETable(
+  rebarGrade: string, diameter: number,
+  concreteGrade: ConcreteGrade, seismicGrade: SeismicGrade
+): number {
+  const labE = calcLabETable(rebarGrade, diameter, concreteGrade, seismicGrade);
+  const factor = needsLargeDiaCorrection(rebarGrade, diameter) ? ANCHOR_LARGE_DIA_FACTOR : 1.0;
+  const laE = Math.ceil(factor * labE);
+  return anchorMinLength(laE, diameter);
+}
+
+/** 大直径修正常量（方便外部引用） */
+export { ANCHOR_LARGE_DIA_FACTOR, ANCHOR_LARGE_DIA_THRESHOLD, needsLargeDiaCorrection } from './construction-rules';

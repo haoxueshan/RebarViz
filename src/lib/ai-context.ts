@@ -3,9 +3,9 @@
  */
 import type { BeamParams, ColumnParams, SlabParams, JointParams, ShearWallParams, StairParams, FoundationParams, PileCapParams, RaftFoundationParams } from './types';
 import { parseRebar, parseStirrup, parseSlabRebar, gradeLabel, resolveColumnBars } from './rebar';
-import { calcLaE, FT, FY } from './anchor';
+import { calcLaE, calcLaTable, calcLabTable, FT, FY, getPileEmbedDepth, determinePileCapRebarEnd, determineJLEndAnchor, determineLPBEdgeAnchor, determineBPBEdgeAnchor, checkJLLDirectAnchor } from './anchor';
 import type { ConcreteGrade, SeismicGrade } from './anchor';
-import { rebarArea } from './construction-rules';
+import { rebarArea, ANCHOR_LARGE_DIA_THRESHOLD } from './construction-rules';
 
 export function buildBeamContext(p: BeamParams): string {
   const topR = parseRebar(p.top);
@@ -216,6 +216,12 @@ export function buildPileCapContext(p: PileCapParams): string {
   const h0x = p.h - cover - barX.diameter / 2;
   const rhoX = (AsX / (1000 * h0x) * 100).toFixed(3);
   const AsBoundary = colR.count * rebarArea(colR.diameter);
+
+  const embedDepth = getPileEmbedDepth(p.pileDiameter);
+  const availLen = p.h - cover - barX.diameter;
+  const pileType: 'round' | 'square' = p.pileDiameter > 0 ? 'round' : 'square';
+  const rebarEnd = determinePileCapRebarEnd(barX.diameter, pileType, p.pileDiameter, availLen);
+
   return `构件类型: 承台 ${p.id}
 承台尺寸: ${p.bx}×${p.by}×${p.h}mm
 桩基: Φ${p.pileDiameter}mm × ${p.pileCount}根，${p.pileLayout === 'grid' ? '矩形排布' : '环形排布'}
@@ -224,7 +230,9 @@ X向底筋: ${p.bottomBarX} (${gradeLabel(barX.grade)} Φ${barX.diameter}@${barX
 Y向底筋: ${p.bottomBarY} (${gradeLabel(barY.grade)} Φ${barY.diameter}@${barY.spacing}，As=${AsY.toFixed(0)}mm²/m)
 柱截面: ${p.colBx}×${p.colBy}mm
 柱插筋: ${p.colMain} (${colR.count}根 ${gradeLabel(colR.grade)} Φ${colR.diameter}，总As=${AsBoundary.toFixed(0)}mm²)
-混凝土等级: ${p.concreteGrade}，保护层: ${cover}mm`;
+混凝土等级: ${p.concreteGrade}，保护层: ${cover}mm
+桩顶嵌入承台: ${embedDepth}mm (桩径${p.pileDiameter}mm ${p.pileDiameter < 800 ? '<' : '≥'} 800mm — 22G101-3 §2-38)
+承台底筋端部: ${rebarEnd.description}`;
 }
 
 export function buildRaftContext(p: RaftFoundationParams): string {
@@ -258,12 +266,31 @@ JL底部纵筋: ${p.beamBottom ?? '未设置'}，顶部纵筋: ${p.beamTop ?? '�
     ? `\nZXB柱下板带宽: ${p.colStripWidth}mm，X向附加筋: ${p.colStripBarX ?? '未设置'}，Y向附加筋: ${p.colStripBarY ?? '未设置'}`
     : '';
 
+  const la = calcLaTable(botX.grade, botX.diameter, p.concreteGrade as ConcreteGrade);
+  const largeDiaNote = botX.diameter > ANCHOR_LARGE_DIA_THRESHOLD
+    ? ` (d=${botX.diameter}>${ANCHOR_LARGE_DIA_THRESHOLD}mm，已×1.1修正)` : '';
+
+  let anchorNote = '';
+  if (p.raftType === 'flat') {
+    const bpbEdge = determineBPBEdgeAnchor(p.colSpacingX / 2, la, botX.diameter);
+    anchorNote = `\n平板底筋边缘锚固 (BPB): ${bpbEdge.description}`;
+  } else if (p.raftType === 'beamSlab' && p.beamH) {
+    const jlEdge = determineJLEndAnchor(p.colSpacingX / 2, la, botX.diameter);
+    anchorNote = `\nJL梁端锚固 (约以半跨估算): ${jlEdge.description}`;
+    const lpbEdge = determineLPBEdgeAnchor(p.colSpacingX / 2, la, botX.diameter);
+    anchorNote += `\nLPB板边缘锚固: ${lpbEdge.description}`;
+  } else if (p.raftType === 'flatPlate') {
+    const bpbEdge = determineBPBEdgeAnchor(p.colSpacingX / 2, la, botX.diameter);
+    anchorNote = `\nZXB/KZB板边缘锚固: ${bpbEdge.description}`;
+  }
+
   return `构件类型: ${raftTypeLabel} — ${p.id}
 筏板尺寸: ${p.lx}×${p.ly}×${p.h}mm (${(p.lx / 1000).toFixed(1)}×${(p.ly / 1000).toFixed(1)}m)
-X向底筋: ${p.bottomBarX} (${gradeLabel(botX.grade)} Φ${botX.diameter}@${botX.spacing}，As=${AsBotX.toFixed(0)}mm²/m，ρ=${rhoBotX}%)
+X向底筋: ${p.bottomBarX} (${gradeLabel(botX.grade)} Φ${botX.diameter}@${botX.spacing}，As=${AsBotX.toFixed(0)}mm²/m，ρ=${rhoBotX}%)${largeDiaNote}
 Y向底筋: ${p.bottomBarY} (${gradeLabel(botY.grade)} Φ${botY.diameter}@${botY.spacing}，As=${AsBotY.toFixed(0)}mm²/m，ρ=${rhoBotY}%)${topInfo}${beamInfo}${stripInfo}
 柱网: ${p.colCountX}×${p.colCountY} (共${colTotal}根柱)，柱距 ${p.colSpacingX}×${p.colSpacingY}mm
 柱截面: ${p.colBx}×${p.colBy}mm
 柱插筋: ${p.colMain} (每柱${colR.count}根 ${gradeLabel(colR.grade)} Φ${colR.diameter}，As=${AsCol.toFixed(0)}mm²)
+底筋锚固长度 la (查表法): ${la}mm${largeDiaNote}${anchorNote}
 混凝土等级: ${p.concreteGrade}，抗震等级: ${p.seismicGrade}，保护层: ${cover}mm`;
 }
