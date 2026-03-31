@@ -1,8 +1,8 @@
 /**
  * 双向映射: RebarGenSchema ↔ Structured_Params
  */
-import type { BeamParams, ColumnParams, SlabParams, JointParams, ShearWallParams, ComponentType } from './types';
-import type { RebarGenSchema, RebarSpec, DistributedRebarSpec, StirrupSpec, BeamSchema, ColumnSchema, ShearWallSchema, SlabSchema, JointSchema } from './nl-rebar-schema';
+import type { BeamParams, ColumnParams, SlabParams, JointParams, ShearWallParams, PileCapParams, RaftFoundationParams, ComponentType } from './types';
+import type { RebarGenSchema, RebarSpec, DistributedRebarSpec, StirrupSpec, BeamSchema, ColumnSchema, ShearWallSchema, SlabSchema, JointSchema, PileCapSchema, RaftSchema } from './nl-rebar-schema';
 import { GRADE_TO_LETTER, LETTER_TO_GRADE } from './nl-rebar-schema';
 import { parseRebar, parseStirrup, parseSlabRebar } from './rebar';
 
@@ -166,16 +166,68 @@ function jointSchemaToParams(s: JointSchema): Partial<JointParams> {
   return p;
 }
 
+function pileCapSchemaToParams(s: PileCapSchema): Partial<PileCapParams> {
+  const p: Partial<PileCapParams> = {};
+  if (s.bx !== undefined) p.bx = s.bx;
+  if (s.by !== undefined) p.by = s.by;
+  if (s.h !== undefined) p.h = s.h;
+  if (s.bottomBarX !== undefined) p.bottomBarX = s.bottomBarX;
+  if (s.bottomBarY !== undefined) p.bottomBarY = s.bottomBarY;
+  if (s.colBx !== undefined) p.colBx = s.colBx;
+  if (s.colBy !== undefined) p.colBy = s.colBy;
+  if (s.colMain !== undefined) p.colMain = s.colMain;
+  if (s.pileDiameter !== undefined) p.pileDiameter = s.pileDiameter;
+  if (s.pileCount !== undefined) p.pileCount = s.pileCount;
+  if (s.pileSpacingX !== undefined) p.pileSpacingX = s.pileSpacingX;
+  if (s.pileSpacingY !== undefined) p.pileSpacingY = s.pileSpacingY;
+  if (s.pileLength !== undefined) p.pileLength = s.pileLength;
+  if (s.pileLayout !== undefined) p.pileLayout = s.pileLayout;
+  if (s.concreteGrade !== undefined) p.concreteGrade = s.concreteGrade;
+  if (s.seismicGrade !== undefined) p.seismicGrade = s.seismicGrade;
+  if (s.cover !== undefined) p.cover = s.cover;
+  return p;
+}
+
+function raftSchemaToParams(s: RaftSchema): Partial<RaftFoundationParams> {
+  const p: Partial<RaftFoundationParams> = {};
+  if (s.lx !== undefined) p.lx = s.lx;
+  if (s.ly !== undefined) p.ly = s.ly;
+  if (s.h !== undefined) p.h = s.h;
+  if (s.bottomBarX !== undefined) p.bottomBarX = s.bottomBarX;
+  if (s.bottomBarY !== undefined) p.bottomBarY = s.bottomBarY;
+  if (s.topBarX !== undefined) p.topBarX = s.topBarX;
+  if (s.topBarY !== undefined) p.topBarY = s.topBarY;
+  if (s.colBx !== undefined) p.colBx = s.colBx;
+  if (s.colBy !== undefined) p.colBy = s.colBy;
+  if (s.colMain !== undefined) p.colMain = s.colMain;
+  if (s.colCountX !== undefined) p.colCountX = s.colCountX;
+  if (s.colCountY !== undefined) p.colCountY = s.colCountY;
+  if (s.colSpacingX !== undefined) p.colSpacingX = s.colSpacingX;
+  if (s.colSpacingY !== undefined) p.colSpacingY = s.colSpacingY;
+  if (s.raftType !== undefined) p.raftType = s.raftType;
+  if (s.beamB !== undefined) p.beamB = s.beamB;
+  if (s.beamH !== undefined) p.beamH = s.beamH;
+  if (s.beamBottom !== undefined) p.beamBottom = s.beamBottom;
+  if (s.beamTop !== undefined) p.beamTop = s.beamTop;
+  if (s.colStripWidth !== undefined) p.colStripWidth = s.colStripWidth;
+  if (s.concreteGrade !== undefined) p.concreteGrade = s.concreteGrade;
+  if (s.seismicGrade !== undefined) p.seismicGrade = s.seismicGrade;
+  if (s.cover !== undefined) p.cover = s.cover;
+  return p;
+}
+
 export function mapSchemaToParams(
   schema: RebarGenSchema,
   componentType: ComponentType
-): Partial<BeamParams | ColumnParams | SlabParams | JointParams | ShearWallParams> {
+): Partial<BeamParams | ColumnParams | SlabParams | JointParams | ShearWallParams | PileCapParams | RaftFoundationParams> {
   switch (componentType) {
     case 'beam': return beamSchemaToParams(schema as BeamSchema);
     case 'column': return columnSchemaToParams(schema as ColumnSchema);
     case 'shearwall': return shearWallSchemaToParams(schema as ShearWallSchema);
     case 'slab': return slabSchemaToParams(schema as SlabSchema);
     case 'joint': return jointSchemaToParams(schema as JointSchema);
+    case 'pilecap': return pileCapSchemaToParams(schema as PileCapSchema);
+    case 'raft': return raftSchemaToParams(schema as RaftSchema);
     default: return {};
   }
 }

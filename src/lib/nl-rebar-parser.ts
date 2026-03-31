@@ -182,6 +182,32 @@ export function validateRebarGenSchema(
         errors.push('anchorType 应为 straight/bent');
       }
       break;
+
+    case 'pilecap':
+      if (d.bx !== undefined && !numInRange(d.bx, 600, 6000)) errors.push('bx 应为 600-6000mm');
+      if (d.by !== undefined && !numInRange(d.by, 600, 6000)) errors.push('by 应为 600-6000mm');
+      if (d.h !== undefined && !numInRange(d.h, 500, 3000)) errors.push('h 应为 500-3000mm');
+      if (d.pileDiameter !== undefined && !numInRange(d.pileDiameter, 200, 2000)) errors.push('pileDiameter 应为 200-2000mm');
+      if (d.pileCount !== undefined && !numInRange(d.pileCount, 1, 16)) errors.push('pileCount 应为 1-16');
+      if (d.colBx !== undefined && !numInRange(d.colBx, 200, 1200)) errors.push('colBx 应为 200-1200mm');
+      if (d.colBy !== undefined && !numInRange(d.colBy, 200, 1200)) errors.push('colBy 应为 200-1200mm');
+      if (d.pileLayout !== undefined && !['grid', 'circular'].includes(d.pileLayout as string)) {
+        errors.push('pileLayout 应为 grid/circular');
+      }
+      break;
+
+    case 'raft':
+      if (d.lx !== undefined && !numInRange(d.lx, 3000, 60000)) errors.push('lx 应为 3000-60000mm');
+      if (d.ly !== undefined && !numInRange(d.ly, 3000, 40000)) errors.push('ly 应为 3000-40000mm');
+      if (d.h !== undefined && !numInRange(d.h, 300, 2000)) errors.push('h 应为 300-2000mm');
+      if (d.colCountX !== undefined && !numInRange(d.colCountX, 1, 10)) errors.push('colCountX 应为 1-10');
+      if (d.colCountY !== undefined && !numInRange(d.colCountY, 1, 10)) errors.push('colCountY 应为 1-10');
+      if (d.colBx !== undefined && !numInRange(d.colBx, 200, 1000)) errors.push('colBx 应为 200-1000mm');
+      if (d.colBy !== undefined && !numInRange(d.colBy, 200, 1000)) errors.push('colBy 应为 200-1000mm');
+      if (d.raftType !== undefined && !['flat', 'beamSlab', 'flatPlate'].includes(d.raftType as string)) {
+        errors.push('raftType 应为 flat/beamSlab/flatPlate');
+      }
+      break;
   }
 
   if (errors.length > 0) return { valid: false, errors };

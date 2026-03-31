@@ -135,7 +135,55 @@ export interface JointSchema {
   cover?: number;
 }
 
-export type RebarGenSchema = BeamSchema | ColumnSchema | ShearWallSchema | SlabSchema | JointSchema;
+export interface PileCapSchema {
+  componentType: 'pilecap';
+  bx?: number;
+  by?: number;
+  h?: number;
+  bottomBarX?: string;
+  bottomBarY?: string;
+  colBx?: number;
+  colBy?: number;
+  colMain?: string;
+  pileDiameter?: number;
+  pileCount?: number;
+  pileSpacingX?: number;
+  pileSpacingY?: number;
+  pileLength?: number;
+  pileLayout?: 'grid' | 'circular';
+  concreteGrade?: ConcreteGrade;
+  seismicGrade?: SeismicGrade;
+  cover?: number;
+}
+
+export interface RaftSchema {
+  componentType: 'raft';
+  lx?: number;
+  ly?: number;
+  h?: number;
+  bottomBarX?: string;
+  bottomBarY?: string;
+  topBarX?: string;
+  topBarY?: string;
+  colBx?: number;
+  colBy?: number;
+  colMain?: string;
+  colCountX?: number;
+  colCountY?: number;
+  colSpacingX?: number;
+  colSpacingY?: number;
+  raftType?: 'flat' | 'beamSlab' | 'flatPlate';
+  beamB?: number;
+  beamH?: number;
+  beamBottom?: string;
+  beamTop?: string;
+  colStripWidth?: number;
+  concreteGrade?: ConcreteGrade;
+  seismicGrade?: SeismicGrade;
+  cover?: number;
+}
+
+export type RebarGenSchema = BeamSchema | ColumnSchema | ShearWallSchema | SlabSchema | JointSchema | PileCapSchema | RaftSchema;
 
 // ─── JSON Schema 字符串（嵌入 prompt） ───
 
