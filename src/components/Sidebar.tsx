@@ -25,16 +25,34 @@ const COLLAPSE_THRESHOLD = 80;
 
 type SidebarMode = 'expanded' | 'collapsed' | 'hidden';
 
+const LS_WIDTH_KEY = 'sidebar-width';
+const LS_MODE_KEY = 'sidebar-mode';
+
 export function Sidebar() {
   const pathname = usePathname();
-  const [mode, setMode] = useState<SidebarMode>('expanded');
-  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
+  const [mode, setMode] = useState<SidebarMode>(() => {
+    if (typeof window === 'undefined') return 'expanded';
+    return (localStorage.getItem(LS_MODE_KEY) as SidebarMode) ?? 'expanded';
+  });
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    if (typeof window === 'undefined') return SIDEBAR_DEFAULT_WIDTH;
+    const saved = parseInt(localStorage.getItem(LS_WIDTH_KEY) ?? '', 10);
+    return isNaN(saved) ? SIDEBAR_DEFAULT_WIDTH : Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, saved));
+  });
   const [isDragging, setIsDragging] = useState(false);
   const dragStartX = useRef(0);
   const dragStartWidth = useRef(0);
 
   const hidden = mode === 'hidden';
   const collapsed = mode === 'collapsed';
+
+  useEffect(() => {
+    localStorage.setItem(LS_MODE_KEY, mode);
+  }, [mode]);
+
+  useEffect(() => {
+    localStorage.setItem(LS_WIDTH_KEY, String(sidebarWidth));
+  }, [sidebarWidth]);
 
   /** Cycle: expanded → collapsed → hidden → expanded */
   const handleToggle = () => {
