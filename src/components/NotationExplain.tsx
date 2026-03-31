@@ -4,7 +4,7 @@ import { useState } from 'react';
 import type { BeamParams, ColumnParams, SlabParams, ShearWallParams, StairParams, FoundationParams, PileCapParams, RaftFoundationParams } from '@/lib/types';
 import { parseRebar, parseStirrup, parseSlabRebar, parseSideBar, gradeLabel, resolveColumnBars } from '@/lib/rebar';
 import { calcAnchorAll, calcSupportRebarLength, calcSlabBottomAnchor, calcColumnLapZone, calcLaE, calcLlE, calcBendLength, calcBeamEndAnchor, calcBottomBarLapAtMiddleJoint } from '@/lib/anchor';
-import { determineColFoundAnchor, slabBottomAnchorDetail, slabNegBarExtend, slabNegBarBend, slabNegBarAnchorAtSupport, cantileverSlabTopBar, SLAB_DIST_LAP_LENGTH } from '@/lib/construction-rules';
+import { determineColFoundAnchor, slabBottomAnchorDetail, slabNegBarExtend, slabNegBarBend, slabNegBarAnchorAtSupport, cantileverSlabTopBar, SLAB_DIST_LAP_LENGTH, rebarArea } from '@/lib/construction-rules';
 import { calcLa } from '@/lib/anchor';
 
 function ExplainSection({ title, defaultOpen = false, children }: {
@@ -236,16 +236,35 @@ export function BeamExplain({ params }: { params: BeamParams }) {
 
 export function ColumnExplain({ params }: { params: ColumnParams }) {
   const coverMm = params.cover || 25;
+  const colH = params.height || 3000;
   const resolved = resolveColumnBars(params.main, params.cornerMain, params.bMiddleMain, params.hMiddleMain, params.b - 2 * coverMm, params.h - 2 * coverMm);
   const stir = parseStirrup(params.stirrup);
   const anchor = calcAnchorAll(resolved.corner.grade, resolved.corner.diameter, params.concreteGrade, params.seismicGrade);
-  const lapZone = calcColumnLapZone(params.height || 3000);
+  const lapZone = calcColumnLapZone(colH);
+
+  // 纵筋配筋率计算 (GB50010 §8.5.1)
+  const Ag = params.b * params.h;
+  const As = resolved.bars.reduce((s, bar) => s + rebarArea(bar.diameter), 0);
+  const rho = As / Ag;
+  const COLUMN_RHO_MIN: Record<string, number> = { '一级': 0.01, '二级': 0.008, '三级': 0.007, '四级': 0.006, '非抗震': 0.006 };
+  const rhoMin = COLUMN_RHO_MIN[params.seismicGrade] ?? 0.006;
+  const rhoOk = rho >= rhoMin && rho <= 0.05;
+
+  // 箍筋加密区 GB50011 §6.3.3
+  const hcVal = Math.max(params.b, params.h);
+  const denseZoneLen = Math.max(Math.ceil(colH / 6), hcVal, 500);
+
+  // 22G101 标注格式字符串
+  const notationStr = resolved.isDetailed
+    ? `${params.id}  ${params.b}×${params.h}  ${params.cornerMain}/${params.bMiddleMain ?? '-'}/${params.hMiddleMain ?? '-'}  ${params.stirrup}`
+    : `${params.id}  ${params.b}×${params.h}  ${params.main}  ${params.stirrup}`;
 
   return (
     <div className="space-y-2 text-sm">
       <div className="p-3 bg-blue-50 rounded-lg">
         <p className="font-semibold text-primary">{params.id}</p>
-        <p className="text-xs text-muted mt-1">框架柱 · 截面 {params.b}×{params.h}mm</p>
+        <p className="text-xs text-muted mt-1">框架柱 · 截面 {params.b}×{params.h}mm · 净高 {colH}mm</p>
+        <div className="mt-2 px-2 py-1.5 bg-white/70 rounded font-mono text-[11px] text-blue-700 break-all">{notationStr}</div>
       </div>
 
       <ExplainSection title="配筋" defaultOpen>
@@ -258,13 +277,13 @@ export function ColumnExplain({ params }: { params: ColumnParams }) {
             {resolved.bMiddle && (
               <div className="p-3 bg-orange-50 rounded-lg">
                 <p className="font-medium text-orange-800">b边中部筋: {params.bMiddleMain}</p>
-                <p className="text-xs text-orange-600 mt-1">每侧 {resolved.bMiddle.count} 根 {gradeLabel(resolved.bMiddle.grade)} Φ{resolved.bMiddle.diameter}，沿 b 方向分布</p>
+                <p className="text-xs text-orange-600 mt-1">每侧 {resolved.bMiddle.count} 根 → 共 {resolved.bMiddle.count * 2} 根 {gradeLabel(resolved.bMiddle.grade)} Φ{resolved.bMiddle.diameter}，沿 b 方向分布</p>
               </div>
             )}
             {resolved.hMiddle && (
               <div className="p-3 bg-purple-50 rounded-lg">
                 <p className="font-medium text-purple-800">h边中部筋: {params.hMiddleMain}</p>
-                <p className="text-xs text-purple-600 mt-1">每侧 {resolved.hMiddle.count} 根 {gradeLabel(resolved.hMiddle.grade)} Φ{resolved.hMiddle.diameter}，沿 h 方向分布</p>
+                <p className="text-xs text-purple-600 mt-1">每侧 {resolved.hMiddle.count} 根 → 共 {resolved.hMiddle.count * 2} 根 {gradeLabel(resolved.hMiddle.grade)} Φ{resolved.hMiddle.diameter}，沿 h 方向分布</p>
               </div>
             )}
             <div className="p-2 bg-gray-50 rounded-lg text-xs text-muted">
@@ -280,8 +299,47 @@ export function ColumnExplain({ params }: { params: ColumnParams }) {
         <div className="p-3 bg-green-50 rounded-lg">
           <p className="font-medium text-green-800">箍筋: {params.stirrup}</p>
           <p className="text-xs text-green-600 mt-1">
-            {gradeLabel(stir.grade)} Φ{stir.diameter}，加密区 {stir.spacingDense}mm，非加密区 {stir.spacingNormal}mm，{stir.legs} 肢箍
+            {gradeLabel(stir.grade)} Φ{stir.diameter}，加密区 @{stir.spacingDense}，非加密区 @{stir.spacingNormal}，{stir.legs} 肢箍
           </p>
+          {stir.typeCode && (
+            <p className="text-xs text-green-600 mt-0.5">箍筋类型: {stir.typeCode}型（22G101-1）</p>
+          )}
+        </div>
+      </ExplainSection>
+
+      <ExplainSection title="纵筋配筋率" defaultOpen>
+        <div className={`p-3 rounded-lg ${rhoOk ? 'bg-green-50' : 'bg-red-50'}`}>
+          <div className="flex items-center justify-between">
+            <p className={`font-medium ${rhoOk ? 'text-green-800' : 'text-red-800'}`}>
+              ρ = {(rho * 100).toFixed(2)}%
+              <span className={`ml-2 text-xs px-1.5 py-0.5 rounded ${rhoOk ? 'bg-green-200 text-green-700' : 'bg-red-200 text-red-700'}`}>
+                {rho < rhoMin ? '偏低' : rho > 0.05 ? '偏高' : '合格'}
+              </span>
+            </p>
+          </div>
+          <div className="mt-1.5 space-y-0.5 text-xs text-gray-600">
+            <p>总纵筋面积 As = {As.toFixed(0)} mm²</p>
+            <p>截面积 Ag = {params.b}×{params.h} = {Ag} mm²</p>
+            <p>ρ = As/Ag = {As.toFixed(0)}/{Ag} = <span className="font-semibold">{(rho * 100).toFixed(2)}%</span></p>
+            <p className={rho < rhoMin ? 'text-red-600 font-medium' : 'text-gray-500'}>
+              ρmin = {(rhoMin * 100).toFixed(1)}%（{params.seismicGrade}，GB50010 §8.5.1）
+              {rho < rhoMin && ` ← 不满足，差 ${((rhoMin - rho) * 100).toFixed(2)}%`}
+            </p>
+            <p className="text-gray-400">ρmax = 5.0%（工程上限）</p>
+          </div>
+        </div>
+      </ExplainSection>
+
+      <ExplainSection title="箍筋加密区">
+        <div className="p-3 bg-green-50 rounded-lg">
+          <p className="font-medium text-green-800">加密区长度 GB50011 §6.3.3</p>
+          <div className="mt-1.5 space-y-0.5 text-xs text-green-700">
+            <p>l_d = max(Hn/6, hc, 500)</p>
+            <p className="ml-2">Hn/6 = {colH}/6 = {Math.ceil(colH / 6)} mm</p>
+            <p className="ml-2">hc = max(b,h) = max({params.b},{params.h}) = {hcVal} mm</p>
+            <p className="ml-2 font-semibold">取值 l_d = {denseZoneLen} mm（上下两端各取）</p>
+            <p className="mt-1">加密区间距 @{stir.spacingDense}mm，非加密区 @{stir.spacingNormal}mm</p>
+          </div>
         </div>
       </ExplainSection>
 
@@ -291,7 +349,7 @@ export function ColumnExplain({ params }: { params: ColumnParams }) {
           <div className="mt-1.5 space-y-1 text-xs text-cyan-700">
             <p>Φ{resolved.corner.diameter}: lab={anchor.lab}mm, la={anchor.la}mm, laE={anchor.laE}mm</p>
             <p>搭接: ll={anchor.ll}mm, llE={anchor.llE}mm</p>
-            <p>搭接区域: 柱根 {lapZone.start}mm ~ {lapZone.end}mm</p>
+            <p>搭接区域: 柱根 {lapZone.start}mm ~ {lapZone.end}mm（距楼面 Hn/6 ~ Hn/3）</p>
             <p>保护层厚度: {params.cover}mm</p>
           </div>
         </div>
@@ -305,8 +363,9 @@ export function ColumnExplain({ params }: { params: ColumnParams }) {
             <li>对称配筋的矩形截面柱，可仅注写一侧中部筋</li>
             <li>箍筋用"/"区分加密区与非加密区间距</li>
             <li>全高等间距箍筋不使用"/"</li>
-            <li>箍筋加密区在柱端（塑性铰区域），长度取 Hn/6、500mm、hc 三者最大值</li>
-            <li>角筋必须有箍筋弯钩固定</li>
+            <li>加密区长度 = max(Hn/6, hc, 500mm) = {denseZoneLen}mm</li>
+            <li>ρmin({params.seismicGrade}) = {(rhoMin * 100).toFixed(1)}%，ρmax = 5%</li>
+            <li>角筋必须有箍筋弯钩固定，箍筋肢距 ≤ 200mm</li>
           </ul>
         </div>
       </ExplainSection>

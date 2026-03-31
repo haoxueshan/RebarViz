@@ -1,4 +1,4 @@
-import { parseRebar, parseRebarBottom, parseStirrup, parseSlabRebar, parseSideBar, parseTieBar, autoTieBar } from './rebar';
+import { parseRebar, parseRebarBottom, parseStirrup, parseSlabRebar, parseSideBar, parseTieBar, autoTieBar, resolveColumnBars } from './rebar';
 import { calcSupportRebarLength, calcLlE, calcSlabBottomAnchor, calcBeamEndAnchor, calcLa, FT, FY } from './anchor';
 import { calcEffectiveDepth } from './layout';
 import type { BeamParams, ColumnParams, SlabParams, ShearWallParams, StairParams, FoundationParams, PileCapParams, RaftFoundationParams } from './types';
@@ -635,44 +635,98 @@ export function calcBarShapes(p: BeamParams): BarShape[] {
 }
 
 export function calcColumn(p: ColumnParams): CalcResult {
-  const main = parseRebar(p.main);
   const stir = parseStirrup(p.stirrup);
   const colHeight = p.height || 3000;
   const cover = p.cover || 25;
   const items: CalcItem[] = [];
   let total = 0;
 
-  const llE = calcLlE(main.grade, main.diameter, p.concreteGrade, p.seismicGrade);
-  const mainL = (colHeight + llE) / 1000;
-  const mainW = main.count * mainL * w(main.diameter);
-  const mainFormula: FormulaStep[] = [
-    ...anchorSteps(main.grade, main.diameter, p.concreteGrade, p.seismicGrade),
-    { label: '抗震搭接长度 llE', formula: 'llE = ζl × laE', substitution: `= 1.4 × laE`, result: `= ${llE} mm` },
-    { label: '单根长度', formula: 'L = H + llE', substitution: `= ${colHeight} + ${llE}`, result: `= ${colHeight + llE} mm = ${mainL.toFixed(2)} m` },
-    weightSteps('纵筋', main.count, mainL, main.diameter),
-  ];
-  items.push({
-    name: '纵向钢筋', spec: p.main,
-    length: `${mainL.toFixed(2)}m × ${main.count} (含搭接${llE}mm)`,
-    weight: `${mainW.toFixed(2)} kg`, color: '#C0392B',
-    grade: main.grade, diameter: main.diameter, count: main.count, lengthM: mainL, weightKg: mainW,
-    formulaSteps: mainFormula,
-  });
-  total += mainW;
+  // 22G101-1 分项标注解析
+  const resolved = resolveColumnBars(p.main, p.cornerMain, p.bMiddleMain, p.hMiddleMain, p.b - 2 * cover, p.h - 2 * cover);
 
+  // 箍筋加密区长度 GB50011 §6.3.3: max(Hn/6, hc, 500)，上下两端各取
+  const hcVal = Math.max(p.b, p.h);
+  const denseZoneLen = Math.max(Math.ceil(colHeight / 6), hcVal, 500);
+
+  if (resolved.isDetailed) {
+    // ── 角筋 (4根) ──
+    const cLlE = calcLlE(resolved.corner.grade, resolved.corner.diameter, p.concreteGrade, p.seismicGrade);
+    const cL = (colHeight + cLlE) / 1000;
+    const cCount = resolved.corner.count;
+    const cW = cCount * cL * w(resolved.corner.diameter);
+    const cFormula: FormulaStep[] = [
+      ...anchorSteps(resolved.corner.grade, resolved.corner.diameter, p.concreteGrade, p.seismicGrade),
+      { label: '抗震搭接长度 llE', formula: 'llE = ζl × laE', substitution: `= 1.4 × laE`, result: `= ${cLlE} mm` },
+      { label: '单根长度', formula: 'L = H + llE', substitution: `= ${colHeight} + ${cLlE}`, result: `= ${colHeight + cLlE} mm = ${cL.toFixed(2)} m` },
+      weightSteps('角筋', cCount, cL, resolved.corner.diameter),
+    ];
+    items.push({ name: '角筋', spec: p.cornerMain!, length: `${cL.toFixed(2)}m × ${cCount} (含搭接${cLlE}mm)`, weight: `${cW.toFixed(2)} kg`, color: '#C0392B', grade: resolved.corner.grade, diameter: resolved.corner.diameter, count: cCount, lengthM: cL, weightKg: cW, formulaSteps: cFormula });
+    total += cW;
+
+    // ── b边中部筋 (每侧 n 根，共 2n 根) ──
+    if (resolved.bMiddle) {
+      const bLlE = calcLlE(resolved.bMiddle.grade, resolved.bMiddle.diameter, p.concreteGrade, p.seismicGrade);
+      const bL = (colHeight + bLlE) / 1000;
+      const bCount = resolved.bMiddle.count * 2;
+      const bW = bCount * bL * w(resolved.bMiddle.diameter);
+      const bFormula: FormulaStep[] = [
+        ...anchorSteps(resolved.bMiddle.grade, resolved.bMiddle.diameter, p.concreteGrade, p.seismicGrade),
+        { label: '抗震搭接长度 llE', formula: 'llE = ζl × laE', substitution: `= 1.4 × laE`, result: `= ${bLlE} mm` },
+        { label: '单根长度', formula: 'L = H + llE', substitution: `= ${colHeight} + ${bLlE}`, result: `= ${colHeight + bLlE} mm = ${bL.toFixed(2)} m` },
+        { label: '根数', formula: 'n = 每侧根数 × 2', substitution: `= ${resolved.bMiddle.count} × 2`, result: `= ${bCount} 根` },
+        weightSteps('b边中部筋', bCount, bL, resolved.bMiddle.diameter),
+      ];
+      items.push({ name: 'b边中部筋', spec: p.bMiddleMain!, length: `${bL.toFixed(2)}m × ${bCount} (每侧${resolved.bMiddle.count}根，含搭接${bLlE}mm)`, weight: `${bW.toFixed(2)} kg`, color: '#E67E22', grade: resolved.bMiddle.grade, diameter: resolved.bMiddle.diameter, count: bCount, lengthM: bL, weightKg: bW, formulaSteps: bFormula });
+      total += bW;
+    }
+
+    // ── h边中部筋 (每侧 n 根，共 2n 根) ──
+    if (resolved.hMiddle) {
+      const hLlE = calcLlE(resolved.hMiddle.grade, resolved.hMiddle.diameter, p.concreteGrade, p.seismicGrade);
+      const hL = (colHeight + hLlE) / 1000;
+      const hCount = resolved.hMiddle.count * 2;
+      const hW = hCount * hL * w(resolved.hMiddle.diameter);
+      const hFormula: FormulaStep[] = [
+        ...anchorSteps(resolved.hMiddle.grade, resolved.hMiddle.diameter, p.concreteGrade, p.seismicGrade),
+        { label: '抗震搭接长度 llE', formula: 'llE = ζl × laE', substitution: `= 1.4 × laE`, result: `= ${hLlE} mm` },
+        { label: '单根长度', formula: 'L = H + llE', substitution: `= ${colHeight} + ${hLlE}`, result: `= ${colHeight + hLlE} mm = ${hL.toFixed(2)} m` },
+        { label: '根数', formula: 'n = 每侧根数 × 2', substitution: `= ${resolved.hMiddle.count} × 2`, result: `= ${hCount} 根` },
+        weightSteps('h边中部筋', hCount, hL, resolved.hMiddle.diameter),
+      ];
+      items.push({ name: 'h边中部筋', spec: p.hMiddleMain!, length: `${hL.toFixed(2)}m × ${hCount} (每侧${resolved.hMiddle.count}根，含搭接${hLlE}mm)`, weight: `${hW.toFixed(2)} kg`, color: '#8E44AD', grade: resolved.hMiddle.grade, diameter: resolved.hMiddle.diameter, count: hCount, lengthM: hL, weightKg: hW, formulaSteps: hFormula });
+      total += hW;
+    }
+  } else {
+    // Legacy: 用 main 统一计算
+    const main = parseRebar(p.main);
+    const llE = calcLlE(main.grade, main.diameter, p.concreteGrade, p.seismicGrade);
+    const mainL = (colHeight + llE) / 1000;
+    const mainW = main.count * mainL * w(main.diameter);
+    const mainFormula: FormulaStep[] = [
+      ...anchorSteps(main.grade, main.diameter, p.concreteGrade, p.seismicGrade),
+      { label: '抗震搭接长度 llE', formula: 'llE = ζl × laE', substitution: `= 1.4 × laE`, result: `= ${llE} mm` },
+      { label: '单根长度', formula: 'L = H + llE', substitution: `= ${colHeight} + ${llE}`, result: `= ${colHeight + llE} mm = ${mainL.toFixed(2)} m` },
+      weightSteps('纵向钢筋', main.count, mainL, main.diameter),
+    ];
+    items.push({ name: '纵向钢筋', spec: p.main, length: `${mainL.toFixed(2)}m × ${main.count} (含搭接${llE}mm)`, weight: `${mainW.toFixed(2)} kg`, color: '#C0392B', grade: main.grade, diameter: main.diameter, count: main.count, lengthM: mainL, weightKg: mainW, formulaSteps: mainFormula });
+    total += mainW;
+  }
+
+  // ── 箍筋 ──
   const innerB = p.b - 2 * cover;
   const innerH = p.h - 2 * cover;
   const perimeter = 2 * (innerB + innerH) / 1000;
-  const denseCount = Math.ceil(1000 / stir.spacingDense);
-  const normalCount = Math.ceil((colHeight - 1000) / stir.spacingNormal);
+  const denseCount = Math.ceil((2 * denseZoneLen) / stir.spacingDense);
+  const normalCount = Math.ceil(Math.max(colHeight - 2 * denseZoneLen, 0) / stir.spacingNormal);
   const stirCount = denseCount + normalCount;
   const stirSingleL = perimeter * stir.legs / 2;
   const stirW = stirCount * stirSingleL * w(stir.diameter);
   const colStirFormula: FormulaStep[] = [
     { label: '箍筋内净尺寸', formula: '内宽 = b - 2c, 内高 = h - 2c', substitution: `= ${p.b} - 2×${cover}, ${p.h} - 2×${cover}`, result: `= ${innerB}×${innerH} mm` },
-    { label: '加密区根数', formula: 'n_dense = ⌈1000 / s_dense⌉', substitution: `= ⌈1000 / ${stir.spacingDense}⌉`, result: `= ${denseCount}` },
-    { label: '非加密区根数', formula: 'n_normal = ⌈(H - 1000) / s_normal⌉', substitution: `= ⌈(${colHeight} - 1000) / ${stir.spacingNormal}⌉`, result: `= ${normalCount}` },
-    { label: '箍筋总数', formula: 'n = n_dense + n_normal', substitution: `= ${denseCount} + ${normalCount}`, result: `= ${stirCount} 根` },
+    { label: '加密区长度', formula: 'l_d = max(Hn/6, hc, 500)', substitution: `= max(⌈${colHeight}/6⌉=${Math.ceil(colHeight / 6)}, ${hcVal}, 500)`, result: `= ${denseZoneLen} mm` },
+    { label: '加密区根数(上下两端)', formula: 'n_d = ⌈2×l_d / s_d⌉', substitution: `= ⌈2×${denseZoneLen} / ${stir.spacingDense}⌉`, result: `= ${denseCount}` },
+    { label: '非加密区根数', formula: 'n_n = ⌈(H - 2×l_d) / s_n⌉', substitution: `= ⌈(${colHeight} - 2×${denseZoneLen}) / ${stir.spacingNormal}⌉`, result: `= ${normalCount}` },
+    { label: '箍筋总数', formula: 'n = n_d + n_n', substitution: `= ${denseCount} + ${normalCount}`, result: `= ${stirCount} 根` },
     weightSteps('箍筋', stirCount, stirSingleL, stir.diameter),
   ];
   items.push({
