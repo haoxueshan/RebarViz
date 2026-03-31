@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Columns3, Box, LayoutGrid, GitMerge, ChevronLeft, ChevronRight, PanelLeftOpen, Settings, Wallpaper, Footprints, Landmark, Layers } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { ContactAuthorButton } from './ContactAuthor';
 
 const NAV = [
@@ -18,11 +18,20 @@ const NAV = [
   { href: '/raft', label: '筏板 FB', desc: '筏板基础', icon: Landmark },
 ];
 
+const SIDEBAR_DEFAULT_WIDTH = 208;
+const SIDEBAR_MIN_WIDTH = 160;
+const SIDEBAR_MAX_WIDTH = 400;
+const COLLAPSE_THRESHOLD = 80;
+
 type SidebarMode = 'expanded' | 'collapsed' | 'hidden';
 
 export function Sidebar() {
   const pathname = usePathname();
   const [mode, setMode] = useState<SidebarMode>('expanded');
+  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStartX = useRef(0);
+  const dragStartWidth = useRef(0);
 
   const hidden = mode === 'hidden';
   const collapsed = mode === 'collapsed';
@@ -35,6 +44,41 @@ export function Sidebar() {
       return 'expanded';
     });
   };
+
+  const handleDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    dragStartX.current = e.clientX;
+    dragStartWidth.current = sidebarWidth;
+    setIsDragging(true);
+  }, [sidebarWidth]);
+
+  useEffect(() => {
+    if (!isDragging) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const delta = e.clientX - dragStartX.current;
+      const newWidth = dragStartWidth.current + delta;
+      if (newWidth < COLLAPSE_THRESHOLD) {
+        setMode('collapsed');
+      } else {
+        setMode('expanded');
+        setSidebarWidth(Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, newWidth)));
+      }
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging]);
+
+  const asideStyle = !hidden && !collapsed ? { width: sidebarWidth } : undefined;
 
   return (
     <>
@@ -50,9 +94,10 @@ export function Sidebar() {
       )}
 
       <aside
-        className={`hidden md:flex flex-col shrink-0 border-r border-gray-200 bg-gray-50 transition-all duration-200 overflow-hidden ${
-          hidden ? 'w-0 border-r-0' : collapsed ? 'w-16' : 'w-52'
-        }`}
+        style={asideStyle}
+        className={`hidden md:flex flex-col shrink-0 border-r border-gray-200 bg-gray-50 overflow-hidden relative ${
+          isDragging ? '' : 'transition-all duration-200'
+        } ${hidden ? 'w-0 border-r-0' : collapsed ? 'w-16' : ''}`}
       >
         <nav className="flex-1 py-3 px-2 space-y-1">
           {NAV.map(({ href, label, desc, icon: Icon }) => {
@@ -125,6 +170,16 @@ export function Sidebar() {
         >
           {collapsed ? <ChevronLeft className="w-4 h-4" /> : <ChevronRight className="w-4 h-4 rotate-180" />}
         </button>
+
+        {/* Drag handle */}
+        {!collapsed && !hidden && (
+          <div
+            onMouseDown={handleDragStart}
+            className={`absolute right-0 top-0 bottom-0 w-1 cursor-col-resize group hover:bg-accent/30 transition-colors ${isDragging ? 'bg-accent/40' : ''}`}
+          >
+            <div className="absolute right-0 top-1/2 -translate-y-1/2 w-1 h-8 rounded-full bg-gray-300 group-hover:bg-accent/60 transition-colors opacity-0 group-hover:opacity-100" />
+          </div>
+        )}
       </aside>
     </>
   );

@@ -489,6 +489,36 @@ export const STAIR_PRESETS = {
     topBar: 'C8@250', bottomBar: 'C10@200', distBar: 'A6@300',
     concreteGrade: 'C25' as const, cover: 15,
   },
+  bt_standard: {
+    id: 'BT-1', stairType: 'BT' as const,
+    stepCount: 11, stepHeight: 150, stepWidth: 280,
+    slabThickness: 120, flightWidth: 1200,
+    topPlatformLen: 1500, botPlatformLen: 1200, platformThickness: 120,
+    beamB: 250, beamH: 350,
+    botFlatLen: 700,
+    topBar: 'C8@200', bottomBar: 'C10@150', distBar: 'A6@250',
+    concreteGrade: 'C30' as const, cover: 15,
+  },
+  bt_wide: {
+    id: 'BT-2', stairType: 'BT' as const,
+    stepCount: 13, stepHeight: 160, stepWidth: 260,
+    slabThickness: 140, flightWidth: 1500,
+    topPlatformLen: 1800, botPlatformLen: 1500, platformThickness: 140,
+    beamB: 250, beamH: 400,
+    botFlatLen: 900,
+    topBar: 'C10@200', bottomBar: 'C12@150', distBar: 'A8@250',
+    concreteGrade: 'C30' as const, cover: 20,
+  },
+  bt_compact: {
+    id: 'BT-3', stairType: 'BT' as const,
+    stepCount: 9, stepHeight: 167, stepWidth: 260,
+    slabThickness: 100, flightWidth: 1100,
+    topPlatformLen: 1200, botPlatformLen: 1000, platformThickness: 100,
+    beamB: 200, beamH: 300,
+    botFlatLen: 600,
+    topBar: 'C8@250', bottomBar: 'C10@200', distBar: 'A6@300',
+    concreteGrade: 'C25' as const, cover: 15,
+  },
 } as const;
 
 export const FOUNDATION_PRESETS = {

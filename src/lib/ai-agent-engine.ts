@@ -82,6 +82,7 @@ async function requestWithTools(
 ): Promise<{
   content: string | null;
   toolCalls: ToolCallChunk[] | null;
+  reasoningContent?: string;
 }> {
   let systemContent = buildSidebarSystemPrompt(config.componentType, config.context) + AGENT_SYSTEM_SUFFIX;
   // Inject vision recognition prompt when images are present
@@ -105,7 +106,9 @@ async function requestWithTools(
 
   if (!res.ok) {
     const errText = await res.text().catch(() => '');
-    const err = new Error(`AI 接口错误: ${res.status}${errText ? ' - ' + errText.slice(0, 200) : ''}`);
+    let errMsg = `AI 接口错误 (${res.status})`;
+    try { const j = JSON.parse(errText); errMsg = j?.error?.message || j?.error || j?.message || errMsg; } catch { /* not JSON */ }
+    const err = new Error(errMsg);
     (err as Error & { statusCode?: number; bodyText?: string }).statusCode = res.status;
     (err as Error & { bodyText?: string }).bodyText = errText;
     throw err;
@@ -118,6 +121,7 @@ async function requestWithTools(
   return {
     content: choice.message?.content || null,
     toolCalls: choice.message?.tool_calls || null,
+    reasoningContent: choice.message?.reasoning_content || undefined,
   };
 }
 
@@ -146,7 +150,9 @@ async function streamFinalResponse(
 
   if (!res.ok) {
     const errText = await res.text().catch(() => '');
-    throw new Error(`AI 接口错误: ${res.status}${errText ? ' - ' + errText.slice(0, 200) : ''}`);
+    let errMsg = `AI 接口错误 (${res.status})`;
+    try { const j = JSON.parse(errText); errMsg = j?.error?.message || j?.error || j?.message || errMsg; } catch { /* not JSON */ }
+    throw new Error(errMsg);
   }
 
   const reader = res.body?.getReader();
@@ -227,7 +233,16 @@ export async function runAgent(
   while (round < config.maxToolRounds) {
     round++;
 
-    let response: { content: string | null; toolCalls: ToolCallChunk[] | null };
+    // Emit thinking step immediately so the user sees activity during the API call
+    stateCallbacks.onStepAdded({
+      type: 'thinking',
+      message: round === 1
+        ? (config.hasImages ? 'AI 正在识别图纸...' : 'AI 正在分析请求...')
+        : `第 ${round} 轮：处理工具结果，继续分析...`,
+      timestamp: Date.now(),
+    });
+
+    let response: { content: string | null; toolCalls: ToolCallChunk[] | null; reasoningContent?: string };
 
     try {
       response = await requestWithTools(config, messages, signal);
@@ -265,11 +280,17 @@ export async function runAgent(
     }
 
     // ─── 有 tool_calls → 执行工具 ───
-    messages.push({
+    const assistantMsg: AgentMsgPayload = {
       role: 'assistant',
       content: response.content || undefined,
       tool_calls: response.toolCalls,
-    });
+    };
+    // Kimi (and other thinking-enabled models) require reasoning_content to be
+    // replayed in the assistant message during multi-turn tool-call conversations.
+    if (response.reasoningContent) {
+      (assistantMsg as Record<string, unknown>).reasoning_content = response.reasoningContent;
+    }
+    messages.push(assistantMsg);
 
     for (const tc of response.toolCalls) {
       // 解析参数 — 容错处理
@@ -365,107 +386,83 @@ export const AGENT_SYSTEM_SUFFIX = `
 
 ## Agent 模式
 
-你现在具备**工具调用（function calling）**能力，可以直接操控用户界面和3D模型。
+你具备**工具调用**能力，可直接修改3D模型。**始终优先调用工具**，不要输出 rebar-json 代码块。
 
-### 可用工具一览
+### 工具速查
 
-| 工具名 | 用途 | 典型场景 |
-|--------|------|----------|
-| \`modify_params\` | 修改构件配筋参数 | 用户说"把梁宽改成350"、"上部钢筋改4C25" |
-| \`run_compliance_check\` | 对当前参数做 GB50010/22G101 规范校验 | 用户说"检查一下规范"、"配筋率够不够" |
-| \`run_calculation\` | 触发计算面板（ratio/weight/anchor/concrete） | 用户说"算一下配筋率"、"钢筋用量多少" |
-| \`switch_view\` | 切换数据面板视图 | 用户说"看截面图"、"切到用量估算" |
-| \`highlight_element\` | 在3D模型高亮指定钢筋 | 用户说"高亮箍筋"、"把支座负筋标出来" |
-| \`navigate_component\` | 跳转到其他构件页面 | 用户说"去看看柱子"、"帮我建一个板" |
-| \`apply_preset\` | 应用预设方案 | 用户说"用标准梁"、"切换到复杂梁" |
-| \`get_current_state\` | 获取当前完整参数和计算结果 | 开始分析前需要了解当前状态 |
-| \`save_favorite\` | 将当前方案保存为收藏 | 用户说"保存一下"、"收藏这个方案" |
-| \`reset_params\` | 重置参数为默认值 | 用户说"重置"、"恢复默认"、"重新开始" |
-| \`compare_with_preset\` | 与预设方案对比差异 | 用户说"跟标准方案比一下"、"和简单梁比" |
+| 工具 | 场景 |
+|------|------|
+| \`modify_params\` | 修改任意配筋参数 |
+| \`run_compliance_check\` | 规范校验（修参数后自动调用） |
+| \`get_current_state\` | 分析前获取当前参数 |
+| \`run_calculation\` | 配筋率/用量/锚固计算 |
+| \`switch_view\` | 切换面板视图 |
+| \`highlight_element\` | 3D高亮钢筋 |
+| \`navigate_component\` | 跳转构件页面 |
+| \`apply_preset\` | 应用预设方案 |
+| \`save_favorite\` | 保存当前方案 |
+| \`reset_params\` | 重置为默认值 |
+| \`compare_with_preset\` | 与预设对比 |
 
-### modify_params 参数格式
-
-调用 \`modify_params\` 时，\`params\` 对象使用与 rebar-json schema 相同的字段名：
+### modify_params 字段名（按构件）
 
 **梁 beam:**
-\`\`\`json
-{ "params": { "sectionWidth": 350, "sectionHeight": 600 } }
-{ "params": { "topRebar": { "count": 4, "grade": "HRB400", "diameter": 25 } } }
-{ "params": { "stirrup": { "grade": "HPB300", "diameter": 8, "spacingDense": 100, "spacingNormal": 200, "legs": 2 } } }
-{ "params": { "leftSupport": { "row1": { "count": 4, "grade": "HRB400", "diameter": 25 }, "row2": { "count": 2, "grade": "HRB400", "diameter": 25 } } } }
-\`\`\`
+- 截面: \`sectionWidth\`, \`sectionHeight\`, \`span\`
+- 通长筋: \`topRebar\`, \`bottomRebar\` → \`{ count, grade, diameter }\`
+- 支座负筋: \`leftSupport\`, \`rightSupport\` → \`{ row1: { count, grade, diameter }, row2: ... }\`
+- 箍筋: \`stirrup\` → \`{ grade, diameter, spacingDense, spacingNormal, legs }\`
+- 腰筋: \`sideBar\` → \`{ count, grade, diameter, spacing }\`
 
 **柱 column:**
-\`\`\`json
-{ "params": { "sectionWidth": 500, "sectionHeight": 500, "mainRebar": { "count": 8, "grade": "HRB400", "diameter": 25 } } }
-\`\`\`
+- 截面: \`sectionWidth\`, \`sectionHeight\`, \`height\`
+- 主筋: \`mainRebar\` → \`{ count, grade, diameter }\`
+- 箍筋: \`stirrup\` → \`{ grade, diameter, spacingDense, spacingNormal, legs }\`
 
 **板 slab:**
-\`\`\`json
-{ "params": { "thickness": 120, "bottomRebarX": { "diameter": 10, "spacing": 150 } } }
-\`\`\`
+- \`thickness\`, \`span\`
+- 底筋: \`bottomRebarX\`, \`bottomRebarY\` → \`{ diameter, spacing, grade }\`
+- 顶筋: \`topRebarX\`, \`topRebarY\`
+- 支座负筋: \`supportNegX\`, \`supportNegY\`
 
-### highlight_element 可用值
+**剪力墙 shearwall:**
+- \`length\`, \`thickness\`, \`height\`
+- \`verticalRebar\` → \`{ diameter, spacing, grade }\`
+- \`horizontalRebar\` → \`{ diameter, spacing, grade }\`
+- \`boundaryColumn\` → \`{ width, height, mainRebar: { count, grade, diameter } }\`
 
-- **梁**: top, bottom, stirrup, leftSupport, rightSupport, leftSupport2, rightSupport2, sideBar, tieBar, erection
-- **柱**: main, corner, bMiddle, hMiddle, stirrup
-- **板**: bottomX, bottomY, topX, topY, supportNegX, supportNegY, distribution
+**楼梯 stair:**
+- \`width\`, \`flightHeight\`, \`stepCount\`, \`stepWidth\`, \`stepHeight\`
+- \`longitudinalRebar\` → \`{ diameter, spacing, grade }\`
 
-### apply_preset 可用值
+**独立基础 isolatedFooting:**
+- \`bottomWidth\`, \`bottomLength\`, \`topWidth\`, \`topLength\`, \`height\`
+- \`bottomRebarX\`, \`bottomRebarY\` → \`{ diameter, spacing, grade }\`
 
-- **梁**: simple, standard, complex, mixedDia, haunchH, haunchV, multiSpan
-- **柱**: simple, standard
-- **板**: simple, standard, thick
-- **剪力墙**: simple, standard
-- **楼梯**: standard
-- **独立基础**: simple, standard, stepped
-- **承台**: twoPile, fourPile, sixPile
-- **筏板**: small, standard, large
+**承台 pileCapFoundation:**
+- \`pileCount\`, \`pileDiameter\`, \`pileSpacing\`
+- \`bottomRebar\` → \`{ diameter, spacing, grade }\`
 
-### switch_view 可用值
+**筏板 raftFoundation:**
+- \`length\`, \`width\`, \`thickness\`
+- \`bottomRebarX\`, \`bottomRebarY\`, \`topRebarX\`, \`topRebarY\`
 
-section（截面图）、ratio（配筋率）、compliance（规范校验）、weight（用量估算）、concrete（混凝土量）、bbs（弯折详图）、compare（方案对比）
+### 关键规则
 
-### 决策规则（何时用工具 vs rebar-json）
+1. **修改参数后，若用户关心合规性，自动调用 \`run_compliance_check\`**
+2. **分析当前状态时，先调用 \`get_current_state\`**
+3. **不确定字段名时，只传确定的字段，跳过不确定的**
+4. **纯问答无需工具，直接回答**
+5. **grade 固定值**: HPB300（光圆）/ HRB400（带肋，最常用）/ HRB500
 
-1. **优先使用工具调用**：用户要求修改参数时，使用 \`modify_params\` 而不是输出 rebar-json 代码块
-2. **多步操作必须用工具**：例如"修改参数并检查规范"→ 先 \`modify_params\`，再 \`run_compliance_check\`
-3. **分析前先获取状态**：如果需要分析当前配筋，先调用 \`get_current_state\`
-4. **只有在 fallback 模式时**才使用 rebar-json 代码块（当工具调用不可用时）
-5. **纯知识问答不需要工具**：直接用文字回答
+### 示例
 
-### 多步操作示例
+"把底筋改6C25再检规范" → \`modify_params\`({bottomRebar:{count:6,grade:"HRB400",diameter:25}}) → \`run_compliance_check\`()
 
-**场景1：用户说"帮我配一个标准梁，然后检查规范"**
-→ 调用 \`apply_preset\`({ preset: "standard" })
-→ 调用 \`run_compliance_check\`()
-→ 根据结果总结
+"分析当前配筋" → \`get_current_state\`() → \`run_compliance_check\`() → 文字分析
 
-**场景2：用户说"把底筋改成6C25，然后看看配筋率够不够"**
-→ 调用 \`modify_params\`({ params: { bottomRebar: { count: 6, grade: "HRB400", diameter: 25 } } })
-→ 调用 \`run_compliance_check\`()
-→ 如有问题，建议修改方案
+"高亮箍筋" → \`highlight_element\`({element:"stirrup"})
 
-**场景3：用户说"分析一下当前配筋是否合理"**
-→ 调用 \`get_current_state\`()
-→ 调用 \`run_compliance_check\`()
-→ 基于结果给出专业分析
-
-**场景4：用户说"高亮箍筋让我看看"**
-→ 调用 \`highlight_element\`({ element: "stirrup" })
-→ 简要说明
-
-**场景5：用户说"这个方案不错，保存一下"**
-→ 调用 \`save_favorite\`({ name: "优化方案", note: "调整后配筋率满足规范" })
-→ 确认保存成功
-
-**场景6：用户说"跟标准梁比一下有什么区别"**
-→ 调用 \`compare_with_preset\`({ preset: "standard" })
-→ 基于差异结果分析优劣
-
-**场景7：用户说"重新开始吧"**
-→ 调用 \`reset_params\`()
-→ 告知已重置为默认参数
+"标准梁" → \`apply_preset\`({preset:"standard"}) → \`run_compliance_check\`()
 
 ### 回复格式
 

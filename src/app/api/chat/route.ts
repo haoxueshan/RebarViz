@@ -3,6 +3,16 @@ import { AI_PROVIDERS } from '@/lib/ai-providers';
 
 export const runtime = 'edge';
 
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+};
+
+export function OPTIONS() {
+  return new Response(null, { status: 204, headers: CORS });
+}
+
 /**
  * Universal AI proxy — supports streaming, tool calling, and multimodal (vision) messages.
  * 
@@ -24,6 +34,7 @@ export const runtime = 'edge';
  */
 export async function POST(req: NextRequest) {
   try {
+    // Add CORS on successful early-exit branches too (provider not found, no key)
     const body = await req.json();
     const {
       providerId,
@@ -51,20 +62,21 @@ export async function POST(req: NextRequest) {
 
     const provider = AI_PROVIDERS.find(p => p.id === providerId);
     if (!provider) {
-      return Response.json({ error: '未知的 AI 提供商' }, { status: 400 });
+      return Response.json({ error: '未知的 AI 提供商' }, { status: 400, headers: CORS });
     }
 
     const apiKey = clientKey || process.env[provider.envKey];
     if (!apiKey) {
       return Response.json(
         { error: `未配置 ${provider.name} API Key，请在设置页面中添加` },
-        { status: 400 }
+        { status: 400, headers: CORS }
       );
     }
 
     const selectedModel = model || provider.defaultModel;
 
     // Build request payload — only include optional fields when present
+    const effectiveTemperature = provider.temperature ?? temperature;
     const payload: Record<string, unknown> = {
       model: selectedModel,
       messages: [
@@ -72,8 +84,9 @@ export async function POST(req: NextRequest) {
         ...messages,
       ],
       stream,
-      temperature,
+      temperature: effectiveTemperature,
       max_tokens,
+      ...(provider.extraParams ?? {}),
     };
 
     if (tools && tools.length > 0) {
@@ -91,18 +104,34 @@ export async function POST(req: NextRequest) {
     });
 
     if (!response.ok) {
+      const contentType = response.headers.get('content-type') || '';
       const errText = await response.text().catch(() => '');
       console.error(`${provider.name} API error (${response.status}):`, errText.slice(0, 500));
-      // Forward the status and body so the client can make fallback decisions
-      return new Response(errText || JSON.stringify({ error: `${provider.name} 接口错误: ${response.status}` }), {
-        status: response.status,
-        headers: { 'Content-Type': 'application/json' },
-      });
+
+      // Always return clean JSON to the client — never forward raw HTML
+      let errorMessage = `${provider.name} 接口错误 (${response.status})`;
+      if (contentType.includes('application/json') || contentType.includes('text/plain')) {
+        try {
+          const errJson = JSON.parse(errText);
+          errorMessage = errJson?.error?.message || errJson?.message || errJson?.error || errorMessage;
+        } catch { /* not JSON, use default */ }
+      } else if (response.status === 404) {
+        errorMessage = `模型不存在或无权访问: ${selectedModel}。请在设置中切换到其他模型。`;
+      } else if (response.status === 401) {
+        errorMessage = `API Key 无效或已过期，请在设置中重新配置 ${provider.name} 的 API Key。`;
+      } else if (response.status === 429) {
+        errorMessage = `请求过于频繁，已触发 ${provider.name} 限流，请稍后再试。`;
+      }
+
+      // Use 400 instead of forwarding upstream status — dev proxies (e.g. Cascade)
+      // intercept 404 responses and replace the body with their own HTML page.
+      return Response.json({ error: errorMessage }, { status: 400, headers: CORS });
     }
 
     if (stream) {
       return new Response(response.body, {
         headers: {
+          ...CORS,
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache',
           'Connection': 'keep-alive',
@@ -112,9 +141,9 @@ export async function POST(req: NextRequest) {
 
     // Non-streaming: forward the JSON response directly
     const data = await response.json();
-    return Response.json(data);
+    return Response.json(data, { headers: CORS });
   } catch (err) {
     console.error('Chat API error:', err);
-    return Response.json({ error: '服务器内部错误' }, { status: 500 });
+    return Response.json({ error: '服务器内部错误' }, { status: 500, headers: CORS });
   }
 }

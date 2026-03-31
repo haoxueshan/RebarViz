@@ -73,6 +73,50 @@ export function BeamPageClient() {
   const [showCut, setShowCut] = useState(false);
 
   const update = (patch: Partial<BeamParams>) => setParams(p => ({ ...p, ...patch }));
+
+  // 更新跨数时，同步调整 spanWidths / spanLengths 数组长度，并同步梁编号括号内跨数
+  const updateSpanCount = (n: number) => {
+    setParams(p => {
+      const oldCount = p.spanCount || 1;
+      const oldWidths = p.spanWidths && p.spanWidths.length === oldCount ? p.spanWidths : Array(oldCount).fill(p.b);
+      const oldLengths = p.spanLengths && p.spanLengths.length === oldCount ? p.spanLengths : Array(oldCount).fill(p.spanLength || 4000);
+      const newWidths = Array.from({ length: n }, (_, i) => oldWidths[i] ?? p.b);
+      const newLengths = Array.from({ length: n }, (_, i) => oldLengths[i] ?? (p.spanLength || 4000));
+      const allWidthsSame = newWidths.every(w => w === p.b);
+      const allLengthsSame = newLengths.every(l => l === (p.spanLength || 4000));
+      // 同步梁编号括号内的跨数，如 KL1(3) → KL1(5)
+      const newId = p.id.replace(/\(\d+\)/, `(${n})`);
+      return {
+        ...p,
+        id: newId,
+        spanCount: n,
+        spanWidths: allWidthsSame ? undefined : newWidths,
+        spanLengths: allLengthsSame ? undefined : newLengths,
+      };
+    });
+  };
+
+  const updateSpanWidth = (i: number, val: number) => {
+    setParams(p => {
+      const n = p.spanCount || 1;
+      const arr = p.spanWidths && p.spanWidths.length === n ? [...p.spanWidths] : Array(n).fill(p.b);
+      arr[i] = val;
+      return { ...p, spanWidths: arr };
+    });
+  };
+
+  const updateSpanLength = (i: number, val: number) => {
+    setParams(p => {
+      const n = p.spanCount || 1;
+      const arr = p.spanLengths && p.spanLengths.length === n ? [...p.spanLengths] : Array(n).fill(p.spanLength || 4000);
+      arr[i] = val;
+      return { ...p, spanLengths: arr };
+    });
+  };
+
+  const resetSpanArrays = () => {
+    setParams(p => ({ ...p, spanWidths: undefined, spanLengths: undefined }));
+  };
   const calcResult = useMemo(() => calcBeam(params), [params]);
   const concreteResult = useMemo(() => calcBeamConcrete(params), [params]);
   const ratioResult = useMemo(() => calcBeamRebarRatios(params), [params]);
@@ -202,14 +246,75 @@ export function BeamPageClient() {
               <NumField label="保护层 (mm)" value={params.cover} onChange={v => update({ cover: v })} min={15} max={50} />
               <NumField label="梁净跨 (mm)" value={params.spanLength} onChange={v => update({ spanLength: v })} min={1000} max={15000} />
               <NumField label="柱截面宽度 hc (mm)" value={params.hc} onChange={v => update({ hc: v })} min={200} max={1200} />
-              <NumField label="跨数" value={params.spanCount || 1} onChange={v => update({ spanCount: v })} min={1} max={6} />
+              <NumField label="跨数" value={params.spanCount || 1} onChange={updateSpanCount} min={1} max={6} />
             </Section>
+
+            {(params.spanCount || 1) > 1 && (
+              <Section title="分跨参数">
+                <p className="text-[11px] text-muted -mt-1">各跨截面宽和净跨长度（留空则使用上方统一值）</p>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs border-collapse">
+                    <thead>
+                      <tr className="text-muted">
+                        <th className="text-left py-1 pr-2 font-medium">跨号</th>
+                        <th className="text-left py-1 pr-2 font-medium">截面宽 b (mm)</th>
+                        <th className="text-left py-1 font-medium">净跨 ln (mm)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Array.from({ length: params.spanCount || 1 }, (_, i) => {
+                        const spanWidths = params.spanWidths && params.spanWidths.length === (params.spanCount || 1) ? params.spanWidths : null;
+                        const spanLengths = params.spanLengths && params.spanLengths.length === (params.spanCount || 1) ? params.spanLengths : null;
+                        const bVal = spanWidths ? spanWidths[i] : params.b;
+                        const lVal = spanLengths ? spanLengths[i] : (params.spanLength || 4000);
+                        return (
+                          <tr key={i} className="border-t border-gray-100">
+                            <td className="py-1 pr-2 text-muted font-medium">第{i + 1}跨</td>
+                            <td className="py-1 pr-2">
+                              <input
+                                type="number"
+                                value={bVal}
+                                min={100}
+                                max={1000}
+                                onChange={e => updateSpanWidth(i, Number(e.target.value))}
+                                className="w-full border border-gray-200 rounded px-2 py-0.5 text-xs focus:outline-none focus:border-blue-400"
+                              />
+                            </td>
+                            <td className="py-1">
+                              <input
+                                type="number"
+                                value={lVal}
+                                min={1000}
+                                max={15000}
+                                onChange={e => updateSpanLength(i, Number(e.target.value))}
+                                className="w-full border border-gray-200 rounded px-2 py-0.5 text-xs focus:outline-none focus:border-blue-400"
+                              />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {(params.spanWidths || params.spanLengths) && (
+                  <button
+                    onClick={resetSpanArrays}
+                    className="mt-1 text-[11px] text-blue-500 hover:text-blue-700 cursor-pointer"
+                  >
+                    重置为统一值
+                  </button>
+                )}
+              </Section>
+            )}
 
             <Section title="原位标注（支座负筋）">
               <p className="text-[11px] text-muted -mt-1">留空表示无支座负筋，第二排伸入跨内 ln/4</p>
               <Field label="左支座负筋" value={params.leftSupport || ''} onChange={v => update({ leftSupport: v })} placeholder="如: 2C25" error={errors.leftSupport?.message} />
               {params.leftSupport && (
                 <Field label="左支座(二排)" value={params.leftSupport2 || ''} onChange={v => update({ leftSupport2: v || undefined })} placeholder="如: 2C25（留空=无二排）" error={errors.leftSupport2?.message} />
+              )}
+              {(params.spanCount || 1) > 1 && (
+                <Field label="中间支座负筋" value={params.innerSupport || ''} onChange={v => update({ innerSupport: v || undefined })} placeholder="如: 4C25（贯通中间柱，两侧各 ln/3）" />
               )}
               <Field label="右支座负筋" value={params.rightSupport || ''} onChange={v => update({ rightSupport: v })} placeholder="如: 4C25" error={errors.rightSupport?.message} />
               {params.rightSupport && (

@@ -11,6 +11,8 @@ export interface AIProvider {
   models: string[];
   visionModel?: string; // model that supports image input
   envKey: string; // env variable name for API key
+  temperature?: number;  // provider-level override; some models only accept specific values
+  extraParams?: Record<string, unknown>;  // merged into every API request payload
 }
 
 export const AI_PROVIDERS: AIProvider[] = [
@@ -35,9 +37,12 @@ export const AI_PROVIDERS: AIProvider[] = [
     id: 'kimi',
     name: 'Kimi (月之暗面)',
     baseUrl: 'https://api.moonshot.cn/v1',
-    defaultModel: 'moonshot-v1-8k',
-    models: ['moonshot-v1-8k', 'moonshot-v1-32k'],
+    defaultModel: 'kimi-k2.5',
+    models: ['kimi-k2.5', 'kimi-k2-0711-preview', 'moonshot-v1-128k', 'moonshot-v1-32k', 'moonshot-v1-8k'],
+    visionModel: 'kimi-k2.5',
     envKey: 'KIMI_API_KEY',
+    temperature: 1,  // kimi-k2.5 only accepts temperature=1
+    extraParams: { enable_thinking: false },  // thinking requires reasoning_content in tool-call history
   },
   {
     id: 'openai',

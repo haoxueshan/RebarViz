@@ -457,7 +457,7 @@ export function checkShearWallCompliance(p: ShearWallParams): ComplianceResult[]
   return results;
 }
 
-// ─── 楼梯合规性校验 (22G101-2 AT型) ───
+// ─── 楼梯合规性校验 (22G101-2 AT/BT型) ───
 
 export function checkStairCompliance(p: StairParams): ComplianceResult[] {
   const results: ComplianceResult[] = [];
@@ -465,9 +465,12 @@ export function checkStairCompliance(p: StairParams): ComplianceResult[] {
   const distR = parseSlabRebar(p.distBar);
   const cover = p.cover || 15;
 
+  const isBT = p.stairType === 'BT';
   const totalRise = p.stepCount * p.stepHeight;
   const totalRun = p.stepCount * p.stepWidth;
-  const slabLen = Math.sqrt(totalRise * totalRise + totalRun * totalRun);
+  const slopeLen = Math.sqrt(totalRise * totalRise + totalRun * totalRun);
+  const botFlatLen = isBT ? (p.botFlatLen ?? 700) : 0;
+  const slabLen = isBT ? slopeLen + botFlatLen : slopeLen;
 
   // 1. 踏步舒适度: 2h + b ≈ 600mm (550~650)
   const comfortVal = 2 * p.stepHeight + p.stepWidth;
@@ -599,8 +602,7 @@ export function checkStairCompliance(p: StairParams): ComplianceResult[] {
   }
 
   // 10. 上部纵筋伸入平台长度检查: 22G101-2 图示要求 ≥ ln/4
-  const ln = slabLen; // 梯板净跨近似取斜长
-  const topExtend = Math.round(ln / 4);
+  const topExtend = Math.round(slabLen / 4);
   if (p.topPlatformLen < topExtend && p.botPlatformLen < topExtend) {
     results.push({
       field: 'topPlatformLen', rule: '22G101-2 页2-8',
@@ -610,8 +612,32 @@ export function checkStairCompliance(p: StairParams): ComplianceResult[] {
     });
   }
 
+  // 11. BT型专属: 低端平板长校验
+  if (isBT) {
+    const minFlatLen = Math.max(p.beamB, Math.round(slabLen * 0.1));
+    if (botFlatLen < minFlatLen) {
+      results.push({
+        field: 'botFlatLen', rule: '22G101-2 BT型构造',
+        status: 'warn',
+        message: `低端平板长 ${botFlatLen}mm 偏短，建议 ≥ ${minFlatLen}mm (梯梁宽与板跨1/10取大值)`,
+        suggestion: `22G101-2 BT型: 低端平板长宜 ≥ max(b梁, ln/10) = ${minFlatLen}mm`,
+      });
+    }
+    // BT型: 低端锚固验证 ≥5d 且 ≥b/2
+    const bot5d = 5 * botR.diameter;
+    const halfBeamB = p.beamB / 2;
+    if (bot5d > p.beamB) {
+      results.push({
+        field: 'bottomBar', rule: '22G101-2 BT型 页2-10',
+        status: 'warn',
+        message: `下部纵筋5d = ${bot5d}mm > 梯梁宽 ${p.beamB}mm，低端锚固空间不足`,
+        suggestion: `增大梯梁宽度或减小纵筋直径，确保锚固长度满足 max(b/2, 5d) = max(${halfBeamB}, ${bot5d})mm`,
+      });
+    }
+  }
+
   if (results.length === 0) {
-    results.push({ field: '-', rule: '22G101-2 & GB50010', status: 'pass', message: 'AT型楼梯配筋满足规范要求' });
+    results.push({ field: '-', rule: '22G101-2 & GB50010', status: 'pass', message: `${p.stairType}型楼梯配筋满足规范要求` });
   }
 
   return results;

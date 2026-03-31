@@ -29,8 +29,10 @@ interface AIFetchResult {
   proxied: boolean;
 }
 
-/** Provider IDs known to block CORS from browser origins */
-const CORS_BLOCKED_PROVIDERS = new Set<string>(['kimi']);
+/** Provider IDs that require proxy due to CORS restrictions.
+ *  Note: Kimi (Moonshot) supports browser CORS — direct calls work fine.
+ */
+const CORS_BLOCKED_PROVIDERS = new Set<string>();
 
 /** Cache: track which providers need proxy */
 const proxyRequired = new Set<string>();
@@ -39,7 +41,9 @@ const proxyRequired = new Set<string>();
  * Make an AI API request, auto-falling back to /api/chat proxy on CORS errors.
  */
 export async function aiFetch(opts: AIFetchOptions): Promise<AIFetchResult> {
-  const { provider, model, apiKey, systemPrompt, messages, tools, tool_choice, stream = true, temperature = 0.3, max_tokens = 4096, signal } = opts;
+  const { provider, model, apiKey, systemPrompt, messages, tools, tool_choice, stream = true, max_tokens = 4096, signal } = opts;
+  // Use provider-level temperature override if set (e.g. kimi-k2.5 requires temperature=1)
+  const temperature = provider.temperature ?? opts.temperature ?? 0.3;
 
   // If we know this provider needs proxy, skip direct attempt
   const needsProxy = proxyRequired.has(provider.id) || CORS_BLOCKED_PROVIDERS.has(provider.id);
@@ -61,21 +65,24 @@ export async function aiFetch(opts: AIFetchOptions): Promise<AIFetchResult> {
   }
 
   // Proxy mode via /api/chat
+  const proxyBody = JSON.stringify({
+    providerId: provider.id,
+    model,
+    apiKey,
+    systemPrompt,
+    messages,
+    tools,
+    tool_choice,
+    stream,
+    temperature,
+    max_tokens,
+  });
+  const proxyHeaders = { 'Content-Type': 'application/json' };
+
   const response = await fetch('/api/chat', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      providerId: provider.id,
-      model,
-      apiKey,
-      systemPrompt,
-      messages,
-      tools,
-      tool_choice,
-      stream,
-      temperature,
-      max_tokens,
-    }),
+    headers: proxyHeaders,
+    body: proxyBody,
     signal,
   });
 
@@ -84,7 +91,8 @@ export async function aiFetch(opts: AIFetchOptions): Promise<AIFetchResult> {
 
 /** Direct fetch to the provider API */
 async function directFetch(opts: AIFetchOptions): Promise<Response> {
-  const { provider, model, apiKey, systemPrompt, messages, tools, tool_choice, stream = true, temperature = 0.3, max_tokens = 4096, signal } = opts;
+  const { provider, model, apiKey, systemPrompt, messages, tools, tool_choice, stream = true, max_tokens = 4096, signal } = opts;
+  const temperature = provider.temperature ?? opts.temperature ?? 0.3;
 
   const payload: Record<string, unknown> = {
     model,
@@ -95,6 +103,7 @@ async function directFetch(opts: AIFetchOptions): Promise<Response> {
     stream,
     temperature,
     max_tokens,
+    ...(provider.extraParams ?? {}),
   };
 
   if (tools && tools.length > 0) {

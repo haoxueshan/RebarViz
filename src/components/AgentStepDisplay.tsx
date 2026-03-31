@@ -188,10 +188,16 @@ interface AgentStepDisplayProps {
 export const AgentStepDisplay = memo(function AgentStepDisplay({ steps, isStreaming }: AgentStepDisplayProps) {
   const { groups, thinking } = groupSteps(steps);
 
+  // Show initial spinner immediately when streaming starts (before any steps arrive)
+  const showInitialSpinner = isStreaming && steps.length === 0;
+
   if (groups.length === 0 && !thinking && !isStreaming) return null;
 
   return (
     <div className="mt-1.5 space-y-1.5">
+      {/* Initial spinner — appears instantly before any step is emitted */}
+      {showInitialSpinner && <ThinkingIndicator message="AI 正在启动..." />}
+
       {/* Step count header */}
       {groups.length > 0 && (
         <div className="flex items-center gap-1.5 px-1">
@@ -207,10 +213,10 @@ export const AgentStepDisplay = memo(function AgentStepDisplay({ steps, isStream
         <StepGroupCard key={i} group={group} index={i} />
       ))}
 
-      {/* Thinking indicator */}
+      {/* Thinking indicator (latest thinking step, shown at bottom) */}
       {thinking && <ThinkingIndicator message={thinking.message} />}
 
-      {/* Active streaming indicator (no thinking step yet) */}
+      {/* Fallback spinner when last tool call has no result yet */}
       {isStreaming && !thinking && groups.length > 0 && !groups[groups.length - 1].result && (
         <ThinkingIndicator message="正在执行工具..." />
       )}

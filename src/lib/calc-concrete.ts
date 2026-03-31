@@ -24,23 +24,38 @@ export interface ConcreteCalcResult {
 // 含加腋增量; 不扣钢筋
 export function calcBeamConcrete(p: BeamParams): ConcreteCalcResult {
   const items: ConcreteCalcItem[] = [];
-  const b = p.b;              // mm
   const h = p.h;              // mm
-  const spanLen = p.spanLength || 4000; // mm
   const spanCount = p.spanCount || 1;
   const hc = p.hc || 500;     // 柱宽 mm
 
-  // 梁净跨总长 (多跨含中间柱)
-  const totalNetLen = spanCount * spanLen + (spanCount - 1) * hc;
+  // 各跨宽度/跨长数组
+  const spanLengthsArr: number[] = (p.spanLengths && p.spanLengths.length === spanCount)
+    ? p.spanLengths
+    : Array(spanCount).fill(p.spanLength || 4000);
+  const spanWidthsArr: number[] = (p.spanWidths && p.spanWidths.length === spanCount)
+    ? p.spanWidths
+    : Array(spanCount).fill(p.b);
 
-  // 梁体 = b × h × totalNetLen
-  const beamBodyVol = (b / 1000) * (h / 1000) * (totalNetLen / 1000);
-  const beamBodySteps: FormulaStep[] = [
-    { label: '截面尺寸', formula: 'b × h', substitution: `= ${b} × ${h}`, result: `= ${b * h} mm²` },
-    { label: '梁净跨总长', formula: 'L = 跨数×净跨 + (跨数-1)×柱宽', substitution: `= ${spanCount}×${spanLen} + ${Math.max(spanCount - 1, 0)}×${hc}`, result: `= ${totalNetLen} mm` },
-    { label: '梁体体积', formula: 'V = b × h × L', substitution: `= ${b/1000} × ${h/1000} × ${totalNetLen/1000}`, result: `= ${beamBodyVol.toFixed(4)} m³` },
-  ];
-  items.push({ name: '梁体', volume: beamBodyVol, description: `${b}×${h}mm × ${totalNetLen}mm`, formulaSteps: beamBodySteps, color: '#3B82F6' });
+  // 梁体 = Σ(b_i × h × l_i) + 中间柱宽段 (用第一跨宽)
+  let beamBodyVol = 0;
+  for (let i = 0; i < spanCount; i++) {
+    beamBodyVol += (spanWidthsArr[i] / 1000) * (h / 1000) * (spanLengthsArr[i] / 1000);
+    if (i < spanCount - 1) {
+      beamBodyVol += (spanWidthsArr[i] / 1000) * (h / 1000) * (hc / 1000);
+    }
+  }
+  const totalNetLen = spanLengthsArr.reduce((s, l) => s + l, 0) + (spanCount - 1) * hc;
+  const b = p.b; // for haunch calc below
+  const beamBodySteps: FormulaStep[] = spanCount > 1 && spanWidthsArr.some((w, i) => w !== spanWidthsArr[0])
+    ? [
+      { label: '各跨截面尺寸', formula: 'V = Σ(b_i × h × l_i) + 中间柱段', substitution: spanWidthsArr.map((bi, i) => `第${i+1}跨:${bi}×${h}×${spanLengthsArr[i]}`).join('，'), result: `= ${beamBodyVol.toFixed(4)} m³` },
+    ]
+    : [
+      { label: '截面尺寸', formula: 'b × h', substitution: `= ${spanWidthsArr[0]} × ${h}`, result: `= ${spanWidthsArr[0] * h} mm²` },
+      { label: '梁净跨总长', formula: 'L = 跨数×净跨 + (跨数-1)×柱宽', substitution: `= ${spanCount}×${spanLengthsArr[0]} + ${Math.max(spanCount - 1, 0)}×${hc}`, result: `= ${totalNetLen} mm` },
+      { label: '梁体体积', formula: 'V = b × h × L', substitution: `= ${spanWidthsArr[0]/1000} × ${h/1000} × ${totalNetLen/1000}`, result: `= ${beamBodyVol.toFixed(4)} m³` },
+    ];
+  items.push({ name: '梁体', volume: beamBodyVol, description: `${spanWidthsArr[0]}×${h}mm × ${totalNetLen}mm`, formulaSteps: beamBodySteps, color: '#3B82F6' });
 
   // 加腋增量
   const haunchType = p.haunchType || 'none';
@@ -178,21 +193,31 @@ export function calcStairConcrete(p: StairParams): ConcreteCalcResult {
   const platTMM = p.platformThickness;
   const beamBMM = p.beamB;
   const beamHMM = p.beamH;
+  const isBT = p.stairType === 'BT';
+  const botFlatLenMM = isBT ? (p.botFlatLen ?? 700) : 0;
 
   const totalRise = n * hMM;
   const totalRun = n * bMM;
-  const slabLen = Math.sqrt(totalRise * totalRise + totalRun * totalRun);
+  const slopeLen = Math.sqrt(totalRise * totalRise + totalRun * totalRun);
 
-  // 1. 梯段斜板: slabLen × flightWidth × slabThickness
-  const slabVol = (slabLen / 1000) * (wMM / 1000) * (tMM / 1000);
+  // 1. 梯段斜板
+  const slabVol = (slopeLen / 1000) * (wMM / 1000) * (tMM / 1000);
   const slabSteps: FormulaStep[] = [
-    { label: '梯段斜长', formula: 'L = √(H² + B²)', substitution: `= √(${totalRise}² + ${totalRun}²)`, result: `= ${Math.round(slabLen)} mm` },
-    { label: '梯段板体积', formula: 'V = L × w × t', substitution: `= ${(slabLen/1000).toFixed(3)} × ${wMM/1000} × ${tMM/1000}`, result: `= ${slabVol.toFixed(4)} m³` },
+    { label: '踏步段斜长', formula: 'L = √(H² + B²)', substitution: `= √(${totalRise}² + ${totalRun}²)`, result: `= ${Math.round(slopeLen)} mm` },
+    { label: '梯段板体积', formula: 'V = L × w × t', substitution: `= ${(slopeLen/1000).toFixed(3)} × ${wMM/1000} × ${tMM/1000}`, result: `= ${slabVol.toFixed(4)} m³` },
   ];
-  items.push({ name: '梯段斜板', volume: slabVol, description: `斜长${Math.round(slabLen)}mm × 宽${wMM}mm × 厚${tMM}mm`, formulaSteps: slabSteps, color: '#3B82F6' });
+  items.push({ name: '梯段斜板', volume: slabVol, description: `斜长${Math.round(slopeLen)}mm × 宽${wMM}mm × 厚${tMM}mm`, formulaSteps: slabSteps, color: '#3B82F6' });
+
+  // BT型专属: 低端平板
+  if (isBT && botFlatLenMM > 0) {
+    const flatVol = (botFlatLenMM / 1000) * (wMM / 1000) * (tMM / 1000);
+    const flatSteps: FormulaStep[] = [
+      { label: '低端平板体积', formula: 'V = L_flat × w × t', substitution: `= ${botFlatLenMM/1000} × ${wMM/1000} × ${tMM/1000}`, result: `= ${flatVol.toFixed(4)} m³` },
+    ];
+    items.push({ name: '低端平板', volume: flatVol, description: `${botFlatLenMM}×${wMM}×${tMM}mm (BT型梯板平板段)`, formulaSteps: flatSteps, color: '#38BDF8' });
+  }
 
   // 2. 踏步三角体积: 0.5 × b × h × w × (n-2)
-  // 首末踏步被梯梁覆盖, 中间 n-2 个踏步
   const stepCount = Math.max(n - 2, 0);
   const stepVol = stepCount * 0.5 * (bMM / 1000) * (hMM / 1000) * (wMM / 1000);
   const stepSteps: FormulaStep[] = [
@@ -202,22 +227,21 @@ export function calcStairConcrete(p: StairParams): ConcreteCalcResult {
   ];
   items.push({ name: '踏步', volume: stepVol, description: `${stepCount}个 × ${bMM}×${hMM}mm三角形`, formulaSteps: stepSteps, color: '#60A5FA' });
 
-  // 3. 下平台板: botPlatLen × flightWidth × platformThickness
+  // 3. 下平台板 (AT型: 独立平台; BT型: 梯梁外侧平台板)
   const botPlatVol = (botPlatMM / 1000) * (wMM / 1000) * (platTMM / 1000);
   const botPlatSteps: FormulaStep[] = [
-    { label: '下平台板体积', formula: 'V = L × w × t', substitution: `= ${botPlatMM/1000} × ${wMM/1000} × ${platTMM/1000}`, result: `= ${botPlatVol.toFixed(4)} m³` },
+    { label: isBT ? '低端梯梁外平台板体积' : '下平台板体积', formula: 'V = L × w × t', substitution: `= ${botPlatMM/1000} × ${wMM/1000} × ${platTMM/1000}`, result: `= ${botPlatVol.toFixed(4)} m³` },
   ];
-  items.push({ name: '下平台板', volume: botPlatVol, description: `${botPlatMM}×${wMM}×${platTMM}mm`, formulaSteps: botPlatSteps, color: '#93C5FD' });
+  items.push({ name: isBT ? '低端平台板' : '下平台板', volume: botPlatVol, description: `${botPlatMM}×${wMM}×${platTMM}mm`, formulaSteps: botPlatSteps, color: '#93C5FD' });
 
-  // 4. 上平台板: topPlatLen × flightWidth × platformThickness
+  // 4. 上平台板
   const topPlatVol = (topPlatMM / 1000) * (wMM / 1000) * (platTMM / 1000);
   const topPlatSteps: FormulaStep[] = [
     { label: '上平台板体积', formula: 'V = L × w × t', substitution: `= ${topPlatMM/1000} × ${wMM/1000} × ${platTMM/1000}`, result: `= ${topPlatVol.toFixed(4)} m³` },
   ];
   items.push({ name: '上平台板', volume: topPlatVol, description: `${topPlatMM}×${wMM}×${platTMM}mm`, formulaSteps: topPlatSteps, color: '#93C5FD' });
 
-  // 5. 低端梯梁: beamB × beamH × (flightWidth + 墙体出挑)
-  // 梯梁宽度 ≈ 梯段宽 (简化, 梯梁两端嵌入墙内不单独计)
+  // 5. 低端梯梁
   const botBeamVol = (beamBMM / 1000) * (beamHMM / 1000) * (wMM / 1000);
   const botBeamSteps: FormulaStep[] = [
     { label: '低端梯梁体积', formula: 'V = b × h × w', substitution: `= ${beamBMM/1000} × ${beamHMM/1000} × ${wMM/1000}`, result: `= ${botBeamVol.toFixed(4)} m³` },

@@ -541,6 +541,406 @@ function StairDimensions({
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// BT 型楼梯 尺寸标注
+// ═══════════════════════════════════════════════════════════════════
+
+function BTStairDimensions({
+  totalRun, totalRise, b, h, t, w, n, botFlat,
+  stepHeight, stepWidth, slabThickness, flightWidth, botFlatLenMM,
+}: {
+  totalRun: number; totalRise: number;
+  b: number; h: number; t: number; w: number; n: number;
+  botFlat: number;
+  stepHeight: number; stepWidth: number;
+  slabThickness: number; flightWidth: number; botFlatLenMM: number;
+}) {
+  const zFront = w / 2 + 0.08;
+  const tickLen = 0.03;
+  const dimColor = '#2563EB';
+  const dimColor2 = '#D97706';
+  return (
+    <group>
+      <Line points={[[-botFlat, -0.12, zFront], [0, -0.12, zFront]]} color="#0891B2" lineWidth={1.5} />
+      <Line points={[[-botFlat, -0.12 - tickLen, zFront], [-botFlat, -0.12 + tickLen, zFront]]} color="#0891B2" lineWidth={1} />
+      <Line points={[[0, -0.12 - tickLen, zFront], [0, -0.12 + tickLen, zFront]]} color="#0891B2" lineWidth={1} />
+      <DimLabel3D position={[-botFlat / 2, -0.12, zFront]} label={`平板=${botFlatLenMM}mm`} color="#0891B2" />
+      <Line points={[[0, -0.2, zFront], [totalRun, -0.2, zFront]]} color={dimColor} lineWidth={1.5} />
+      <Line points={[[0, -0.2 - tickLen, zFront], [0, -0.2 + tickLen, zFront]]} color={dimColor} lineWidth={1} />
+      <Line points={[[totalRun, -0.2 - tickLen, zFront], [totalRun, -0.2 + tickLen, zFront]]} color={dimColor} lineWidth={1} />
+      <DimLabel3D position={[totalRun / 2, -0.2, zFront]} label={`${n}×${stepWidth}=${n * stepWidth}mm`} color={dimColor} />
+      <Line points={[[totalRun + 0.12, 0, zFront], [totalRun + 0.12, totalRise, zFront]]} color={dimColor} lineWidth={1.5} />
+      <Line points={[[totalRun + 0.12 - tickLen, 0, zFront], [totalRun + 0.12 + tickLen, 0, zFront]]} color={dimColor} lineWidth={1} />
+      <Line points={[[totalRun + 0.12 - tickLen, totalRise, zFront], [totalRun + 0.12 + tickLen, totalRise, zFront]]} color={dimColor} lineWidth={1} />
+      <DimLabel3D position={[totalRun + 0.12, totalRise / 2, zFront]} label={`${n}×${stepHeight}=${n * stepHeight}mm`} color={dimColor} />
+      <Line points={[[0, -0.06, zFront], [b, -0.06, zFront]]} color={dimColor2} lineWidth={1} />
+      <Line points={[[0, -0.06 - tickLen * 0.7, zFront], [0, -0.06 + tickLen * 0.7, zFront]]} color={dimColor2} lineWidth={1} />
+      <Line points={[[b, -0.06 - tickLen * 0.7, zFront], [b, -0.06 + tickLen * 0.7, zFront]]} color={dimColor2} lineWidth={1} />
+      <DimLabel3D position={[b / 2, -0.06, zFront]} label={`b=${stepWidth}`} color={dimColor2} />
+      <Line points={[[-0.08, 0, zFront], [-0.08, h, zFront]]} color={dimColor2} lineWidth={1} />
+      <Line points={[[-0.08 - tickLen * 0.7, 0, zFront], [-0.08 + tickLen * 0.7, 0, zFront]]} color={dimColor2} lineWidth={1} />
+      <Line points={[[-0.08 - tickLen * 0.7, h, zFront], [-0.08 + tickLen * 0.7, h, zFront]]} color={dimColor2} lineWidth={1} />
+      <DimLabel3D position={[-0.08, h / 2, zFront]} label={`h=${stepHeight}`} color={dimColor2} />
+      <Line points={[[-botFlat, -0.05, -w / 2], [-botFlat, -0.05, w / 2]]} color="#059669" lineWidth={1.5} />
+      <Line points={[[-botFlat - tickLen, -0.05, -w / 2], [-botFlat + tickLen, -0.05, -w / 2]]} color="#059669" lineWidth={1} />
+      <Line points={[[-botFlat - tickLen, -0.05, w / 2], [-botFlat + tickLen, -0.05, w / 2]]} color="#059669" lineWidth={1} />
+      <DimLabel3D position={[-botFlat, -0.05, 0]} label={`梯段宽=${flightWidth}mm`} color="#059669" />
+      {(() => {
+        const midX = totalRun * 0.4;
+        const midY = totalRise * 0.4;
+        const cosA = Math.cos(Math.atan2(totalRise, totalRun));
+        const sinA = Math.sin(Math.atan2(totalRise, totalRun));
+        const nx = -sinA; const ny = cosA;
+        return (
+          <group>
+            <Line points={[[midX, midY, zFront], [midX + nx * t, midY + ny * t, zFront]]} color="#DC2626" lineWidth={1} />
+            <DimLabel3D position={[midX + nx * t * 0.5 + nx * 0.04, midY + ny * t * 0.5 + ny * 0.04, zFront]} label={`t=${slabThickness}`} color="#DC2626" />
+          </group>
+        );
+      })()}
+    </group>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// BT 型楼梯 3D 场景
+// ═══════════════════════════════════════════════════════════════════
+
+function BTStairScene({ params, selected, onSelect, concreteOpacity, visibleGroups, showDimensions, cutPosition }: {
+  params: StairParams; selected: RebarMeshInfo | null;
+  onSelect: (info: RebarMeshInfo | null) => void;
+  concreteOpacity: number; visibleGroups: Set<string> | null;
+  showDimensions: boolean; cutPosition: number | null;
+}) {
+  const {
+    stepCount: n, stepHeight: hMM, stepWidth: bMM,
+    slabThickness: tMM, flightWidth: wMM,
+    topPlatformLen: topPlatMM, botPlatformLen: botPlatMM,
+    platformThickness: platTMM,
+    beamB: beamBMM, beamH: beamHMM,
+    cover: coverMM,
+    botFlatLen: botFlatLenMM = 700,
+  } = params;
+
+  const h = hMM * S;
+  const b = bMM * S;
+  const t = tMM * S;
+  const w = wMM * S;
+  const topPlat = topPlatMM * S;
+  const botPlat = botPlatMM * S;
+  const platT = platTMM * S;
+  const beamB = beamBMM * S;
+  const beamH = beamHMM * S;
+  const cover = coverMM * S;
+  const botFlat = botFlatLenMM * S;
+
+  const topR = parseSlabRebar(params.topBar);
+  const botR = parseSlabRebar(params.bottomBar);
+  const distR = parseSlabRebar(params.distBar);
+
+  const totalRise = n * h;
+  const totalRun = n * b;
+  const angle = Math.atan2(totalRise, totalRun);
+  const slopeLen = Math.sqrt(totalRise * totalRise + totalRun * totalRun);
+  const tCosA = t * Math.cos(angle);
+  const slope = totalRise / totalRun;
+
+  // Coordinate system:
+  // X=0 at flat-plate / slope junction
+  // Flat plate: X from -botFlat to 0, Y top=0, bottom=-t
+  // Slope section: X from 0 to totalRun, Y from 0 to totalRise
+  // Low beam: X from -botFlat-beamB to -botFlat, top Y=0
+  // High beam: X from totalRun to totalRun+beamB, top Y=totalRise
+
+  const gv = (g: string) => !visibleGroups || visibleGroups.has(g);
+  const isSelected = (type: string) => selected?.type === type;
+
+  const botInfo: RebarMeshInfo = { type: 'stairBottom', label: '下部纵筋', detail: `${params.bottomBar} · ${gradeLabel(botR.grade)} Φ${botR.diameter}@${botR.spacing}` };
+  const topInfo: RebarMeshInfo = { type: 'stairTop', label: '上部纵筋', detail: `${params.topBar} · ${gradeLabel(topR.grade)} Φ${topR.diameter}@${topR.spacing}` };
+  const distInfo: RebarMeshInfo = { type: 'stairDist', label: '分布筋', detail: `${params.distBar} · ${gradeLabel(distR.grade)} Φ${distR.diameter}@${distR.spacing}` };
+
+  // Steps (all n-1 visible; last covered by high beam)
+  const stepsGeo = useMemo(() => {
+    const geos: THREE.ExtrudeGeometry[] = [];
+    for (let i = 0; i < n - 1; i++) {
+      const shape = new THREE.Shape();
+      shape.moveTo(i * b, (i + 1) * h);
+      shape.lineTo(i * b, i * h);
+      shape.lineTo((i + 1) * b, (i + 1) * h);
+      shape.closePath();
+      const geo = new THREE.ExtrudeGeometry(shape, { depth: w, bevelEnabled: false });
+      geo.translate(0, 0, -w / 2);
+      geos.push(geo);
+    }
+    return geos;
+  }, [n, b, h, w]);
+
+  const botBarZs = useMemo(() => {
+    const spacing = botR.spacing * S;
+    const bars: number[] = [];
+    for (let z = -w / 2 + cover + botR.diameter * S / 2; z <= w / 2 - cover - botR.diameter * S / 2; z += spacing) bars.push(z);
+    return bars;
+  }, [botR.spacing, botR.diameter, w, cover]);
+
+  const topBarZs = useMemo(() => {
+    const spacing = topR.spacing * S;
+    const bars: number[] = [];
+    for (let z = -w / 2 + cover + topR.diameter * S / 2; z <= w / 2 - cover - topR.diameter * S / 2; z += spacing) bars.push(z);
+    return bars;
+  }, [topR.spacing, topR.diameter, w, cover]);
+
+  const distBarPositions = useMemo(() => {
+    const spacing = distR.spacing * S;
+    const positions: { x: number; y: number; isFlat: boolean }[] = [];
+    const cosA = Math.cos(angle);
+    const sinA = Math.sin(angle);
+    for (let x = -botFlat + spacing; x < -spacing / 2; x += spacing) {
+      positions.push({ x, y: 0, isFlat: true });
+    }
+    const visibleSlopeArcLen = (totalRun - beamB) / cosA;
+    for (let s = spacing; s < visibleSlopeArcLen - spacing / 2; s += spacing) {
+      positions.push({ x: s * cosA, y: s * sinA, isFlat: false });
+    }
+    return positions;
+  }, [distR.spacing, angle, botFlat, totalRun, beamB]);
+
+  const cvBot = (cover + botR.diameter * S / 2) / Math.cos(angle);
+  const cvBotFlat = cover + botR.diameter * S / 2;
+  const cvTop = (cover + topR.diameter * S / 2) / Math.cos(angle);
+  const cvTopFlat = cover + topR.diameter * S / 2;
+  const bot5d = 5 * botR.diameter * S;
+  const topHook15d = 15 * topR.diameter * S;
+
+  // Bottom bar: horizontal in low beam → flat (horizontal) → kink at X=0 → slope → anchor in high beam (AT-style)
+  const botBarPath = useMemo(() => {
+    const botAncHorizLow = Math.max(beamB / 2, bot5d);
+    const yFlat = -t + cvBotFlat;
+    const ySlopeAt0 = -tCosA + cvBot;
+    // High anchor: pass beam centreline or >=5d from inner face, whichever is deeper (same as AT)
+    const highAncX = Math.min(
+      Math.max(totalRun - beamB / 2, totalRun - beamB + bot5d),
+      totalRun - cover,
+    );
+    const highAncY = slope * highAncX - tCosA + cvBot;
+    return [
+      new THREE.Vector3(-botFlat - botAncHorizLow, yFlat, 0),
+      new THREE.Vector3(-botFlat, yFlat, 0),
+      new THREE.Vector3(0, yFlat, 0),          // keep horizontal to flat/slope junction
+      new THREE.Vector3(0, ySlopeAt0, 0),      // kink down to slope bottom surface
+      new THREE.Vector3(highAncX, highAncY, 0),
+    ];
+  }, [beamB, bot5d, t, cvBotFlat, tCosA, cvBot, slope, totalRun, cover, botFlat]);
+
+  // Top bars (two separate pieces)
+  const topBarPaths = useMemo((): { low: THREE.Vector3[]; high: THREE.Vector3[] } => {
+    const cosA = Math.cos(angle);
+    const topY = (x: number) => slope * x - cvTop;
+    // Low end: from inside low beam → flat plate top → slope ln/4
+    const lowAncX = -botFlat - (beamB - cover);
+    const lowAncY = -cvTopFlat;
+    const lowHookBottom = lowAncY - topHook15d;
+    const ln = botFlat + slopeLen;
+    const ln4 = ln / 4;
+    const low: THREE.Vector3[] = [
+      new THREE.Vector3(lowAncX, lowHookBottom, 0),
+      new THREE.Vector3(lowAncX, lowAncY, 0),
+      new THREE.Vector3(-botFlat, -cvTopFlat, 0),
+    ];
+    if (ln4 <= botFlat) {
+      // bar stays entirely in flat section
+      low.push(new THREE.Vector3(-botFlat + ln4, -cvTopFlat, 0));
+    } else {
+      // bar crosses from flat into slope — add junction kink at X=0
+      const slopeLen4 = ln4 - botFlat;
+      const lowEndX = slopeLen4 * cosA;
+      low.push(new THREE.Vector3(0, -cvTopFlat, 0));       // end of flat section (horizontal)
+      low.push(new THREE.Vector3(lowEndX, topY(lowEndX), 0)); // continue along slope top
+    }
+    // High end: AT-style — outer face at X=totalRun, anchor near outer face
+    const highAncX = totalRun - cover;
+    const highAncY = topY(highAncX);
+    const highHookBottom = Math.max(highAncY - topHook15d, totalRise - beamH + cover);
+    const highStartX = Math.max(0, totalRun - beamB - (slopeLen / 4) * cosA);
+    const high: THREE.Vector3[] = [
+      new THREE.Vector3(highStartX, topY(highStartX), 0),
+      new THREE.Vector3(highAncX, highAncY, 0),
+      new THREE.Vector3(highAncX, highHookBottom, 0),
+    ];
+    return { low, high };
+  }, [botFlat, slopeLen, angle, slope, beamB, cover, cvTopFlat, cvTop, topHook15d, totalRun, totalRise, beamH]);
+
+  // Flat plate slab geometry
+  const flatSlabGeo = useMemo(() => {
+    const shape = new THREE.Shape();
+    shape.moveTo(-botFlat, -t);
+    shape.lineTo(0, -t);
+    shape.lineTo(0, 0);
+    shape.lineTo(-botFlat, 0);
+    shape.closePath();
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: w, bevelEnabled: false });
+    geo.translate(0, 0, -w / 2);
+    return geo;
+  }, [botFlat, t, w]);
+
+  // Slope slab geometry — ends at inner face of high beam (matching AT convention)
+  const slopeSlabGeo = useMemo(() => {
+    const ex = totalRun - beamB;
+    const shape = new THREE.Shape();
+    shape.moveTo(0, -tCosA);
+    shape.lineTo(ex, slope * ex - tCosA);
+    shape.lineTo(ex, slope * ex);
+    shape.lineTo(0, 0);
+    shape.closePath();
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: w, bevelEnabled: false });
+    geo.translate(0, 0, -w / 2);
+    return geo;
+  }, [totalRun, beamB, slope, tCosA, w]);
+
+  const sceneCenter = [(-botFlat - beamB + totalRun) / 2, totalRise / 2, 0] as [number, number, number];
+
+  return (
+    <>
+      <mesh position={sceneCenter} onClick={() => onSelect(null)} visible={false}>
+        <boxGeometry args={[totalRun + botFlat + beamB + botPlat + topPlat + 1, totalRise + beamH + 1, w + 1]} />
+        <meshBasicMaterial />
+      </mesh>
+
+      {/* ═══ 混凝土 ═══ */}
+      {gv('concrete') && (
+        <group>
+          <mesh geometry={flatSlabGeo}>
+            <meshPhysicalMaterial color="#BDC3C7" transparent opacity={concreteOpacity} side={THREE.DoubleSide} depthWrite={false} roughness={0.8} />
+          </mesh>
+          <lineSegments>
+            <edgesGeometry args={[flatSlabGeo]} />
+            <lineBasicMaterial color="#94A3B8" />
+          </lineSegments>
+          <mesh geometry={slopeSlabGeo}>
+            <meshPhysicalMaterial color="#BDC3C7" transparent opacity={concreteOpacity} side={THREE.DoubleSide} depthWrite={false} roughness={0.8} />
+          </mesh>
+          <lineSegments>
+            <edgesGeometry args={[slopeSlabGeo]} />
+            <lineBasicMaterial color="#94A3B8" />
+          </lineSegments>
+          {stepsGeo.map((geo, i) => (
+            <mesh key={`step-${i}`} geometry={geo}>
+              <meshPhysicalMaterial color="#C8CED4" transparent opacity={concreteOpacity * 1.2} side={THREE.DoubleSide} depthWrite={false} roughness={0.8} />
+            </mesh>
+          ))}
+          {stepsGeo.map((geo, i) => (
+            <lineSegments key={`step-edge-${i}`}>
+              <edgesGeometry args={[geo]} />
+              <lineBasicMaterial color="#94A3B8" />
+            </lineSegments>
+          ))}
+          {/* Low beam */}
+          <mesh position={[-botFlat - beamB / 2, -beamH / 2, 0]}>
+            <boxGeometry args={[beamB, beamH, w + 0.4]} />
+            <meshPhysicalMaterial color="#A0A8B1" transparent opacity={concreteOpacity * 1.3} side={THREE.DoubleSide} depthWrite={false} roughness={0.8} />
+          </mesh>
+          <lineSegments position={[-botFlat - beamB / 2, -beamH / 2, 0]}>
+            <edgesGeometry args={[new THREE.BoxGeometry(beamB, beamH, w + 0.4)]} />
+            <lineBasicMaterial color="#7F8C9A" />
+          </lineSegments>
+          {/* High beam — outer face at X=totalRun, inner face at X=totalRun-beamB (same as AT) */}
+          <mesh position={[totalRun - beamB / 2, totalRise - beamH / 2, 0]}>
+            <boxGeometry args={[beamB, beamH, w + 0.4]} />
+            <meshPhysicalMaterial color="#A0A8B1" transparent opacity={concreteOpacity * 1.3} side={THREE.DoubleSide} depthWrite={false} roughness={0.8} />
+          </mesh>
+          <lineSegments position={[totalRun - beamB / 2, totalRise - beamH / 2, 0]}>
+            <edgesGeometry args={[new THREE.BoxGeometry(beamB, beamH, w + 0.4)]} />
+            <lineBasicMaterial color="#7F8C9A" />
+          </lineSegments>
+          {/* Low landing */}
+          <mesh position={[-botFlat - beamB - botPlat / 2, -platT / 2, 0]}>
+            <boxGeometry args={[botPlat, platT, w]} />
+            <meshPhysicalMaterial color="#B0B8C1" transparent opacity={concreteOpacity * 1.1} side={THREE.DoubleSide} depthWrite={false} roughness={0.8} />
+          </mesh>
+          <lineSegments position={[-botFlat - beamB - botPlat / 2, -platT / 2, 0]}>
+            <edgesGeometry args={[new THREE.BoxGeometry(botPlat, platT, w)]} />
+            <lineBasicMaterial color="#94A3B8" />
+          </lineSegments>
+          {/* High landing — starts at X=totalRun (outer face of high beam) */}
+          <mesh position={[totalRun + topPlat / 2, totalRise - platT / 2, 0]}>
+            <boxGeometry args={[topPlat, platT, w]} />
+            <meshPhysicalMaterial color="#B0B8C1" transparent opacity={concreteOpacity * 1.1} side={THREE.DoubleSide} depthWrite={false} roughness={0.8} />
+          </mesh>
+          <lineSegments position={[totalRun + topPlat / 2, totalRise - platT / 2, 0]}>
+            <edgesGeometry args={[new THREE.BoxGeometry(topPlat, platT, w)]} />
+            <lineBasicMaterial color="#94A3B8" />
+          </lineSegments>
+        </group>
+      )}
+
+      {/* ═══ 下部纵筋 ═══ */}
+      {gv('bottom') && botBarZs.map((z, i) => {
+        const pts = botBarPath.map(p => new THREE.Vector3(p.x, p.y, z));
+        return (
+          <TubeBar key={`bot-${i}`} path={pts} diameter={botR.diameter}
+            color={COLOR_STAIR_BOTTOM} hiColor={COLOR_STAIR_BOTTOM_HI}
+            info={botInfo} selected={isSelected('stairBottom')} onSelect={onSelect} />
+        );
+      })}
+
+      {/* ═══ 上部纵筋 ═══ */}
+      {gv('top') && topBarZs.map((z, i) => {
+        const ptsLow = topBarPaths.low.map(p => new THREE.Vector3(p.x, p.y, z));
+        const ptsHigh = topBarPaths.high.map(p => new THREE.Vector3(p.x, p.y, z));
+        return (
+          <group key={`top-${i}`}>
+            <TubeBar path={ptsLow} diameter={topR.diameter}
+              color={COLOR_STAIR_TOP} hiColor={COLOR_STAIR_TOP_HI}
+              info={topInfo} selected={isSelected('stairTop')} onSelect={onSelect} />
+            <TubeBar path={ptsHigh} diameter={topR.diameter}
+              color={COLOR_STAIR_TOP} hiColor={COLOR_STAIR_TOP_HI}
+              info={topInfo} selected={isSelected('stairTop')} onSelect={onSelect} />
+          </group>
+        );
+      })}
+
+      {/* ═══ 分布筋 ═══ */}
+      {gv('dist') && distBarPositions.map((pos, i) => {
+        const cvDistBot = pos.isFlat
+          ? cover + botR.diameter * S + distR.diameter * S / 2
+          : (cover + botR.diameter * S + distR.diameter * S / 2) / Math.cos(angle);
+        const barBotY = pos.isFlat ? -t + cvDistBot : slope * pos.x - tCosA + cvDistBot;
+        const cvDistTop = pos.isFlat
+          ? cover + topR.diameter * S + distR.diameter * S / 2
+          : (cover + topR.diameter * S + distR.diameter * S / 2) / Math.cos(angle);
+        const barTopY = pos.isFlat ? -cvDistTop : slope * pos.x - cvDistTop;
+        return (
+          <group key={`dist-${i}`}>
+            <StairBar position={[pos.x, barBotY, 0]} rotation={[Math.PI / 2, 0, 0]}
+              length={w - 2 * cover} diameter={distR.diameter}
+              color={COLOR_STAIR_DIST} hiColor={COLOR_STAIR_DIST_HI}
+              info={distInfo} selected={isSelected('stairDist')} onSelect={onSelect} />
+            <StairBar position={[pos.x, barTopY, 0]} rotation={[Math.PI / 2, 0, 0]}
+              length={w - 2 * cover} diameter={distR.diameter}
+              color={COLOR_STAIR_DIST} hiColor={COLOR_STAIR_DIST_HI}
+              info={distInfo} selected={isSelected('stairDist')} onSelect={onSelect} />
+          </group>
+        );
+      })}
+
+      {/* ═══ 尺寸标注 ═══ */}
+      {showDimensions && (
+        <BTStairDimensions
+          totalRun={totalRun} totalRise={totalRise}
+          b={b} h={h} t={t} w={w} n={n} botFlat={botFlat}
+          stepHeight={hMM} stepWidth={bMM}
+          slabThickness={tMM} flightWidth={wMM}
+          botFlatLenMM={botFlatLenMM}
+        />
+      )}
+
+      {/* ═══ 剖切面 ═══ */}
+      {cutPosition !== null && (
+        <SectionCutPlane position={cutPosition - botFlat} height={totalRise + platT} width={w} />
+      )}
+    </>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // 信息提示
 // ═══════════════════════════════════════════════════════════════════
 
@@ -581,7 +981,11 @@ export default function StairViewer({ params }: { params: StairParams }) {
   // 相机目标中心
   const totalRise = params.stepCount * params.stepHeight * S;
   const totalRun = params.stepCount * params.stepWidth * S;
-  const centerX = totalRun / 2;
+  const botFlat = params.stairType === 'BT' ? (params.botFlatLen ?? 700) * S : 0;
+  const beamBForCam = params.stairType === 'BT' ? params.beamB * S : 0;
+  const centerX = params.stairType === 'BT'
+    ? (-botFlat - beamBForCam + totalRun) / 2
+    : totalRun / 2;
   const centerY = totalRise / 2;
 
   // 剖切范围
@@ -734,9 +1138,13 @@ export default function StairViewer({ params }: { params: StairParams }) {
           <CameraController targetPosition={cameraTarget} />
           <ambientLight intensity={0.6} />
           <directionalLight position={[5, 8, 5]} intensity={0.8} castShadow />
-          <ATStairScene params={params} selected={selected} onSelect={setSelected}
-            concreteOpacity={concreteOpacity} visibleGroups={visibleGroups}
-            showDimensions={showDimensions} cutPosition={cutPosition} />
+          {params.stairType === 'BT'
+            ? <BTStairScene params={params} selected={selected} onSelect={setSelected}
+                concreteOpacity={concreteOpacity} visibleGroups={visibleGroups}
+                showDimensions={showDimensions} cutPosition={cutPosition} />
+            : <ATStairScene params={params} selected={selected} onSelect={setSelected}
+                concreteOpacity={concreteOpacity} visibleGroups={visibleGroups}
+                showDimensions={showDimensions} cutPosition={cutPosition} />}
           <Grid args={[20, 20]} position={[0, -0.01, 0]} cellColor="#E2E8F0" sectionColor="#E2E8F0" fadeDistance={15} />
           <axesHelper args={[0.5]} />
           <OrbitControls target={[centerX, centerY, 0]} enableDamping dampingFactor={0.1} />

@@ -238,6 +238,75 @@ export function buildVisionSystemPrompt(componentType?: ComponentType): string {
 识别后调用 \`navigate_component\` 跳转到对应页面，再调用 \`modify_params\` 应用参数。`;
 }
 
+/**
+ * 专为 /scan 页面构建结构化识别 system prompt
+ * 要求 AI 只输出 JSON，便于解析后直接建模
+ */
+export function buildScanSystemPrompt(): string {
+  return `你是一位资深结构工程师，专门识别中国结构施工图中的平法标注（22G101）。
+用户上传了一张结构施工图或配筋详图。请分析图纸并以严格的 JSON 格式返回识别结果。
+
+## 输出格式（必须严格遵守）
+只输出一个 JSON 对象，不要包含任何 markdown 代码块、注释或其他文字：
+
+{
+  "detectedType": "beam" | "column" | "slab" | "shearwall" | "stair" | "foundation" | "pilecap" | "raft",
+  "confidence": 0.0到1.0之间的数值,
+  "componentId": "KL1" 或 "KZ1" 等（如能识别，否则为null）,
+  "params": {
+    梁(beam): sectionWidth, sectionHeight, topRebar{count,grade,diameter}, bottomRebar{count,grade,diameter}, stirrup{grade,diameter,spacingDense,spacingNormal,legs}, leftSupport{row1{count,grade,diameter},row2?}, rightSupport{row1{count,grade,diameter},row2?}, sideBar{totalCount,grade,diameter,spacing}
+    柱(column): sectionWidth, sectionHeight, mainRebar{count,grade,diameter}, stirrup{grade,diameter,spacingDense,spacingNormal,legs}
+    板(slab): thickness, bottomRebarX{diameter,spacing}, bottomRebarY{diameter,spacing}, topRebarX{diameter,spacing}, topRebarY{diameter,spacing}
+    剪力墙(shearwall): thickness, verticalRebar{diameter,spacing}, horizontalRebar{diameter,spacing}
+    楼梯(stair): slabThickness, stepWidth, stepHeight, stepCount, mainRebar{diameter,spacing}
+    独立基础(foundation): bx, by, totalHeight, bottomRebarX{diameter,spacing}, bottomRebarY{diameter,spacing}
+    承台(pilecap): bx, by, height, pileCount, bottomRebarX{diameter,spacing}, bottomRebarY{diameter,spacing}
+    筏板(raft): thickness, bottomRebarX{diameter,spacing}, bottomRebarY{diameter,spacing}, topRebarX{diameter,spacing}, topRebarY{diameter,spacing}
+  },
+  "uncertain": ["不能确定的字段名列表"],
+  "rawAnnotations": "图纸中识别到的原始标注文字（逐行列举）",
+  "summary": "1-2句简短中文描述识别结果"
+}
+
+## 钢筋等级规则
+- grade 字段统一使用全称: "HPB300" / "HRB400" / "HRB335"
+- 图纸代号: A→HPB300, B→HRB335, C→HRB400, E→HRBF400
+- 尺寸单位: mm（不要带单位符号）
+
+## 注意事项
+- 如果图纸清晰度低，confidence 设为 0.5 以下，并在 uncertain 中列出所有不确定字段
+- 只输出 JSON，绝对不要有任何其他文字
+- 如果图纸包含多个构件，识别最主要或最清晰的那个`;
+}
+
+/**
+ * 解析 scan 结构化结果 — 将 AI 返回的 JSON 转为应用所需格式
+ */
+export interface ScanResult {
+  detectedType: ComponentType;
+  confidence: number;
+  componentId?: string | null;
+  params: Record<string, unknown>;
+  uncertain: string[];
+  rawAnnotations: string;
+  summary: string;
+}
+
+export function parseScanResult(raw: string): ScanResult | null {
+  try {
+    // Strip markdown code fences if model outputs them anyway
+    const cleaned = raw
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim();
+    const obj = JSON.parse(cleaned);
+    if (!obj.detectedType || !obj.params) return null;
+    return obj as ScanResult;
+  } catch {
+    return null;
+  }
+}
+
 /** 
  * 构建包含图片的消息内容，自动添加 vision 引导文本
  */

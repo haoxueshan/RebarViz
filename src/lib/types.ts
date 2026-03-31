@@ -53,6 +53,9 @@ export interface BeamParams {
   tieBar?: string;  // 拉筋，如 A6（HPB300 Φ6），留空时按22G101自动确定
   erectionBar?: string; // 架立筋，如 2C12，留空时按规范自动确定
   spanCount?: number; // 跨数（多跨连续梁），默认1
+  spanWidths?: number[];  // 各跨截面宽 mm，length = spanCount，未定义则全用 b
+  spanLengths?: number[]; // 各跨净跨 mm，length = spanCount，未定义则全用 spanLength
+  innerSupport?: string;  // 中间支座负筋（内跨支座，贯通中间柱），如 4C25
 }
 
 export interface ColumnParams {
@@ -149,6 +152,8 @@ export interface StairParams {
   // 梯梁（梯板端支座梁）
   beamB: number;               // 梯梁宽 (mm)
   beamH: number;               // 梯梁高 (mm)
+  // BT型专属
+  botFlatLen?: number;         // BT型 低端平板长 (mm)，AT型忽略
   // 配筋
   topBar: string;              // 上部纵筋 e.g. C10@150
   bottomBar: string;           // 下部纵筋 e.g. C12@150
@@ -274,7 +279,7 @@ export interface RebarMeshInfo {
     | 'bottomX' | 'bottomY' | 'topX' | 'topY' | 'distribution' | 'supportNegX' | 'supportNegY'
     | 'colMain' | 'colStirrup' | 'beamTop' | 'beamBottom' | 'beamStirrup' | 'jointStirrup' | 'anchor'
     | 'vertBar' | 'horizBar' | 'boundaryMain' | 'boundaryStirrup'
-    | 'sideBar' | 'erection' | 'tieBar'
+    | 'sideBar' | 'erection' | 'tieBar' | 'innerSupport'
     | 'stairTop' | 'stairBottom' | 'stairDist' | 'stairPlatform'
     | 'foundBottomX' | 'foundBottomY' | 'foundColMain' | 'foundTopX' | 'foundTopY'
     | 'pcBottomX' | 'pcBottomY' | 'pcColMain' | 'pcPile'

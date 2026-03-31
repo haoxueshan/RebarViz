@@ -5,7 +5,7 @@ import Link from 'next/link';
 import {
   ArrowRight, Columns3, Box, LayoutGrid, GitMerge, Wallpaper, Landmark,
   RotateCcw, MousePointerClick, Scissors, BookOpen, Sparkles, Layers,
-  ChevronDown, Zap, Eye, Brain,
+  ChevronDown, Zap, Eye, Brain, Camera,
 } from 'lucide-react';
 import { GlobalAIInput } from '@/components/GlobalAIInput';
 import { ContactModal } from '@/components/ContactAuthor';
@@ -182,6 +182,7 @@ const FEATURES = [
   { icon: BookOpen, title: '标注自动解读', desc: '输入平法标注，自动解析钢筋等级、直径、间距', color: 'from-emerald-500 to-green-400', bg: 'bg-emerald-50' },
   { icon: Sparkles, title: 'AI 平法助手', desc: '接入 DeepSeek / Qwen / Kimi，随时提问构造问题', color: 'from-pink-500 to-rose-400', bg: 'bg-pink-50' },
   { icon: Layers, title: '截面配筋图', desc: '同步生成 2D 截面示意，对照理解更直观', color: 'from-indigo-500 to-blue-400', bg: 'bg-indigo-50' },
+  { icon: Camera, title: '图纸扫描建模', desc: '上传施工图，AI 自动识别平法标注并生成 3D 配筋模型', color: 'from-fuchsia-500 to-cyan-400', bg: 'bg-fuchsia-50' },
 ];
 
 const COMPONENTS = [
@@ -386,6 +387,30 @@ export function LandingPage() {
               <h2 className="text-4xl sm:text-5xl lg:text-6xl font-black tracking-tight">选择构件，开始学习</h2>
               <p className="text-gray-500 mt-4 text-lg">点击进入对应的 3D 识图学习页面</p>
             </div>
+          </Reveal>
+
+          {/* Scan CTA — full-width highlight card */}
+          <Reveal delay={0}>
+            <Link
+              href="/scan"
+              className="group relative flex items-center gap-6 bg-gradient-to-r from-blue-600/[0.12] to-cyan-500/[0.08] border border-blue-500/25 rounded-3xl p-8 hover:border-blue-400/50 hover:from-blue-600/[0.18] transition-all duration-300 overflow-hidden cursor-pointer mb-6"
+            >
+              <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-cyan-500 opacity-0 group-hover:opacity-[0.05] transition-opacity duration-500 pointer-events-none" />
+              <div className="relative w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-400 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform duration-300 shrink-0">
+                <Camera className="w-8 h-8 text-white" />
+              </div>
+              <div className="relative flex-1 min-w-0">
+                <div className="flex items-center gap-3 mb-1.5">
+                  <h3 className="text-2xl font-bold text-white">图纸扫描建模</h3>
+                  <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-blue-500/20 border border-blue-400/30 text-blue-300 tracking-wide">NEW</span>
+                </div>
+                <p className="text-gray-400 leading-relaxed">上传结构施工图或手绘草图，AI 自动识别平法标注，一键生成对应构件的 3D 配筋模型</p>
+              </div>
+              <div className="relative flex items-center gap-2 text-sm font-semibold text-blue-400 group-hover:text-cyan-300 transition-colors shrink-0">
+                立即体验
+                <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+              </div>
+            </Link>
           </Reveal>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

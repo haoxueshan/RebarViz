@@ -38,15 +38,21 @@ const StairViewer = dynamic(() => import('@/components/StairViewer'), {
   loading: () => <ViewerSkeleton />,
 });
 
-const presetList = [
-  { key: 'standard', label: '标准 AT 型', dot: 'bg-blue-400' },
-  { key: 'wide', label: '宽梯段 AT 型', dot: 'bg-green-400' },
-  { key: 'compact', label: '紧凑 AT 型', dot: 'bg-purple-400' },
+const AT_PRESETS = [
+  { key: 'standard', label: '标准 AT', dot: 'bg-blue-400' },
+  { key: 'wide', label: '宽梯 AT', dot: 'bg-green-400' },
+  { key: 'compact', label: '紧凑 AT', dot: 'bg-purple-400' },
+] as const;
+
+const BT_PRESETS = [
+  { key: 'bt_standard', label: '标准 BT', dot: 'bg-orange-400' },
+  { key: 'bt_wide', label: '宽梯 BT', dot: 'bg-amber-400' },
+  { key: 'bt_compact', label: '紧凑 BT', dot: 'bg-yellow-400' },
 ] as const;
 
 const STAIR_TYPE_OPTIONS: { value: StairType; label: string; enabled: boolean }[] = [
   { value: 'AT', label: 'AT 型 — 板式楼梯', enabled: true },
-  { value: 'BT', label: 'BT 型 — 梁式楼梯（待开发）', enabled: false },
+  { value: 'BT', label: 'BT 型 — 梁式楼梯', enabled: true },
   { value: 'CT', label: 'CT 型 — 剪刀楼梯（待开发）', enabled: false },
   { value: 'DT', label: 'DT 型 — 双分平行楼梯（待开发）', enabled: false },
   { value: 'ET', label: 'ET 型 — 交叉楼梯（待开发）', enabled: false },
@@ -100,8 +106,8 @@ export function StairPageClient() {
             <div className="mb-4">
               <label className="text-xs text-muted mb-2 block">快速示例</label>
               <div className="flex flex-wrap gap-1.5">
-                {presetList.map(({ key, label, dot }) => (
-                  <button key={key} onClick={() => setParams({ ...STAIR_PRESETS[key] })}
+                {(params.stairType === 'BT' ? BT_PRESETS : AT_PRESETS).map(({ key, label, dot }) => (
+                  <button key={key} onClick={() => setParams({ ...STAIR_PRESETS[key as keyof typeof STAIR_PRESETS] })}
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium cursor-pointer transition-all bg-gray-50 text-gray-600 border border-gray-200 hover:border-gray-300 hover:bg-white hover:shadow-sm active:scale-95">
                     <span className={`w-1.5 h-1.5 rounded-full ${dot}`} />
                     {label}
@@ -122,8 +128,8 @@ export function StairPageClient() {
                     </option>
                   ))}
                 </select>
-                {params.stairType !== 'AT' && (
-                  <p className="text-[11px] text-amber-600 mt-1">该类型尚在开发中，当前仅支持 AT 型</p>
+                {params.stairType !== 'AT' && params.stairType !== 'BT' && (
+                  <p className="text-[11px] text-amber-600 mt-1">该类型尚在开发中，当前仅支持 AT / BT 型</p>
                 )}
               </div>
             </div>
@@ -134,6 +140,9 @@ export function StairPageClient() {
               <NumField label="踏步宽 b (mm)" value={params.stepWidth} onChange={v => update({ stepWidth: v })} min={220} max={350} />
               <NumField label="梯板厚 (mm)" value={params.slabThickness} onChange={v => update({ slabThickness: v })} min={80} max={200} />
               <NumField label="梯段宽 (mm)" value={params.flightWidth} onChange={v => update({ flightWidth: v })} min={800} max={2000} />
+              {params.stairType === 'BT' && (
+                <NumField label="低端平板长 (mm)" value={params.botFlatLen ?? 700} onChange={v => update({ botFlatLen: v })} min={200} max={2000} />
+              )}
             </Section>
 
             <Section title="平台">
@@ -204,11 +213,11 @@ export function StairPageClient() {
                       <InfoCard label="梯板斜长" value={`${geoInfo.slabLen} mm`} sub="沿斜面" />
                     </div>
                     <div className="mt-3">
-                      <h4 className="text-xs font-semibold text-muted mb-2">22G101-2 AT型 注写方式</h4>
+                      <h4 className="text-xs font-semibold text-muted mb-2">22G101-2 {params.stairType}型 注写方式</h4>
                       <div className="bg-gray-50 rounded-lg p-3 text-xs text-gray-600 font-mono leading-relaxed">
-                        <p>AT{params.stepCount}×{params.stepHeight}/{params.stepWidth}</p>
+                        <p>{params.stairType}{params.stepCount}×{params.stepHeight}/{params.stepWidth}{params.stairType === 'BT' ? ` Lf=${params.botFlatLen ?? 700}` : ''}</p>
                         <p className="text-[11px] text-muted mt-1">
-                          第1项: 楼梯类型代号 AT · 第2项: 踏步数×踏步高/踏步宽
+                          第1项: 楼梯类型代号 {params.stairType} · 第2项: 踏步数×踏步高/踏步宽{params.stairType === 'BT' ? ' · Lf: 低端平板长' : ''}
                         </p>
                       </div>
                     </div>

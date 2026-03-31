@@ -144,6 +144,26 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
   const [showImagePreview, setShowImagePreview] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // ─── Image compression helper ───
+  const compressImage = async (dataUrl: string, maxSize = 1024): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new window.Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxSize || height > maxSize) {
+          if (width > height) { height = Math.round((height / width) * maxSize); width = maxSize; }
+          else { width = Math.round((width / height) * maxSize); height = maxSize; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext('2d')!.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.85));
+      };
+      img.src = dataUrl;
+    });
+  };
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -796,8 +816,26 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
           <div key={i}>
             <div className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
               {msg.role === 'user' ? (
-                <div className="max-w-[85%] px-3 py-2 rounded-xl rounded-br-md text-sm leading-relaxed whitespace-pre-wrap bg-accent text-white">
-                  {typeof msg.content === 'string' ? msg.content : msg.content.map(p => p.type === 'text' ? p.text : '').join('')}
+                <div className="max-w-[85%] space-y-1.5">
+                  {/* Show image thumbnails in message */}
+                  {Array.isArray(msg.content) && msg.content.some(p => p.type === 'image_url') && (
+                    <div className="flex flex-wrap gap-1.5 justify-end">
+                      {msg.content.filter(p => p.type === 'image_url').map((p, pi) => (
+                        <img
+                          key={pi}
+                          src={(p as { type: 'image_url'; image_url: { url: string } }).image_url.url}
+                          alt="上传图片"
+                          className="w-20 h-20 rounded-lg object-cover border border-white/20"
+                        />
+                      ))}
+                    </div>
+                  )}
+                  {/* Text bubble */}
+                  {(typeof msg.content === 'string' ? msg.content : msg.content.filter(p => p.type === 'text').map(p => (p as { type: 'text'; text: string }).text).join('')).trim() && (
+                    <div className="px-3 py-2 rounded-xl rounded-br-md text-sm leading-relaxed whitespace-pre-wrap bg-accent text-white">
+                      {typeof msg.content === 'string' ? msg.content : msg.content.filter(p => p.type === 'text').map(p => (p as { type: 'text'; text: string }).text).join('')}
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="max-w-[95%] px-3 py-2 rounded-xl rounded-bl-md text-[13px] leading-relaxed bg-gray-50 text-gray-800 border border-gray-100">
@@ -815,10 +853,10 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
               )}
             </div>
 
-            {/* Agent steps (tool calls) */}
-            {agentSteps[i] && agentSteps[i].length > 0 && msg.role === 'assistant' && (
+            {/* Agent steps (tool calls) — show even when steps empty but streaming, for initial spinner */}
+            {msg.role === 'assistant' && agentMode && (agentSteps[i]?.length > 0 || (loading && i === messages.length - 1)) && (
               <AgentStepDisplay
-                steps={agentSteps[i]}
+                steps={agentSteps[i] || []}
                 isStreaming={loading && i === messages.length - 1}
               />
             )}
@@ -946,9 +984,12 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
               if (!files) return;
               Array.from(files).forEach(file => {
                 const reader = new FileReader();
-                reader.onload = (ev) => {
+                reader.onload = async (ev) => {
                   const dataUrl = ev.target?.result as string;
-                  if (dataUrl) setPendingImages(prev => [...prev, dataUrl]);
+                  if (dataUrl) {
+                    const compressed = await compressImage(dataUrl);
+                    setPendingImages(prev => [...prev, compressed]);
+                  }
                 };
                 reader.readAsDataURL(file);
               });
@@ -969,6 +1010,26 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
+            onPaste={async (e) => {
+              const items = e.clipboardData?.items;
+              if (!items) return;
+              for (const item of Array.from(items)) {
+                if (item.type.startsWith('image/')) {
+                  e.preventDefault();
+                  const file = item.getAsFile();
+                  if (!file) continue;
+                  const reader = new FileReader();
+                  reader.onload = async (ev) => {
+                    const dataUrl = ev.target?.result as string;
+                    if (dataUrl) {
+                      const compressed = await compressImage(dataUrl);
+                      setPendingImages(prev => [...prev, compressed]);
+                    }
+                  };
+                  reader.readAsDataURL(file);
+                }
+              }
+            }}
             placeholder={pendingImages.length > 0 ? '描述图纸内容或直接发送...' : '描述配筋或提问...'}
             rows={1}
             className="flex-1 resize-none px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/10 transition-colors max-h-24 overflow-y-auto"

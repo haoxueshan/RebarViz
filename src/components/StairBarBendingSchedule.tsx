@@ -212,7 +212,7 @@ function drawHeader(ctx: CanvasRenderingContext2D, shape: BarShape, ox: number, 
   ctx.restore();
 }
 
-/* ─── draw: 下部纵筋 (straight, sloped) ─── */
+/* ─── draw: AT型 下部纵筋 (straight, sloped) ─── */
 
 function drawBotBar(ctx: CanvasRenderingContext2D, shape: BarShape, ox: number, oy: number, cw: number) {
   drawHeader(ctx, shape, ox, oy, cw, '1');
@@ -263,21 +263,95 @@ function drawBotBar(ctx: CanvasRenderingContext2D, shape: BarShape, ox: number, 
   ctx.restore();
 
   // Dimension lines
-  // Segment dimensions (above the bar, parallel to slope)
   dimLine(ctx, x0, yAt(x0), x1, yAt(x1), `${anc}`, 14, 'above');
   dimLine(ctx, x1, yAt(x1), x2, yAt(x2), `${body}`, 14, 'above');
   dimLine(ctx, x2, yAt(x2), x3, yAt(x3), `${anc}`, 14, 'above');
-
-  // Total dimension (below)
   dimLine(ctx, x0, yAt(x0), x3, yAt(x3), `L = ${Math.round(shape.totalLen)}`, 22, 'below');
 
-  // Annotation: anchor requirement
   ctx.save();
   ctx.font = '8.5px "Helvetica Neue", system-ui, sans-serif';
   ctx.fillStyle = '#94A3B8';
   ctx.textAlign = 'center'; ctx.textBaseline = 'top';
   ctx.fillText('≥5d 且过中线', (x0 + x1) / 2, yAt((x0 + x1) / 2) + 28);
   ctx.fillText('≥5d 且过中线', (x2 + x3) / 2, yAt((x2 + x3) / 2) + 28);
+  ctx.restore();
+}
+
+/* ─── draw: BT型 下部纵筋 (平板水平段 + 踏步段斜面) ─── */
+
+function drawBotBarBT(ctx: CanvasRenderingContext2D, shape: BarShape, ox: number, oy: number, cw: number, botFlatLen: number, slopeLen: number) {
+  drawHeader(ctx, shape, ox, oy, cw, '1');
+
+  const area = { x: ox + PAD + 8, y: oy + 56, w: cw - PAD * 2 - 16, h: CARD_H - 100 };
+  const totalBody = botFlatLen + slopeLen;
+  const anc = shape.anchorLen || 0;
+  const grandTotal = anc + totalBody + anc;
+  const pAncL = Math.max(22, area.w * (anc / grandTotal)); // low end anchor (horizontal)
+  const pAncH = Math.max(22, area.w * (anc / grandTotal)); // high end anchor (sloped)
+  const pBodyTotal = area.w - pAncL - pAncH;
+  const pFlat = pBodyTotal * (botFlatLen / totalBody);
+  const pSlope = pBodyTotal - pFlat;
+
+  const slopeRise = Math.min(area.h * 0.38, 36);
+  const yBase = area.y + area.h * 0.55; // flat section Y
+  const yTop = yBase - slopeRise;        // high end Y
+
+  // Key X positions
+  const x0 = area.x;                        // low anchor start
+  const x1 = x0 + pAncL;                    // low beam inner face
+  const x2 = x1 + pFlat;                    // flat-to-slope transition
+  const x3 = x2 + pSlope;                   // high beam inner face
+  const x4 = x3 + pAncH;                    // high anchor end
+
+  // Y at each key point
+  const slopeY = (x: number) => yBase + (yTop - yBase) * ((x - x2) / (x3 - x2));
+
+  // Beam faces
+  beamFace(ctx, x1, yBase - 20, yBase + 20, 10, 'left');
+  beamFace(ctx, x3, slopeY(x3) - 20, slopeY(x3) + 20, 10, 'right');
+
+  // Bar: low anchor (horizontal) → flat section → slope → high anchor (along slope)
+  ctx.save();
+  ctx.strokeStyle = shape.color;
+  ctx.lineWidth = BAR_LW;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(x0, yBase);          // low anchor start
+  ctx.lineTo(x1, yBase);          // low beam inner face
+  ctx.lineTo(x2, yBase);          // flat section end
+  ctx.lineTo(x3, yTop);           // slope end (high beam inner face)
+  ctx.lineTo(x4, yTop + (yTop - yBase) * ((x4 - x3) / (x3 - x2))); // high anchor along slope
+  ctx.stroke();
+
+  // End dots
+  ctx.beginPath();
+  ctx.arc(x0, yBase, 2.5, 0, Math.PI * 2);
+  ctx.arc(x4, yTop + (yTop - yBase) * ((x4 - x3) / (x3 - x2)), 2.5, 0, Math.PI * 2);
+  ctx.fillStyle = shape.color; ctx.fill();
+  ctx.restore();
+
+  // Label: flat section
+  ctx.save();
+  ctx.font = '7.5px "Helvetica Neue", system-ui, sans-serif';
+  ctx.fillStyle = '#475569';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  ctx.fillText('平板段', (x1 + x2) / 2, yBase - 6);
+  ctx.fillText('踏步段', (x2 + x3) / 2, (yBase + yTop) / 2 - 6);
+  ctx.restore();
+
+  // Dimensions
+  dimLine(ctx, x0, yBase, x1, yBase, `${anc}`, 14, 'above');
+  dimLine(ctx, x1, yBase, x2, yBase, `${botFlatLen}`, 14, 'above');
+  dimLine(ctx, x2, yBase, x3, yTop, `${Math.round(slopeLen)}`, 14, 'above');
+  dimLine(ctx, x3, yTop, x4, yTop + (yTop - yBase) * ((x4 - x3) / (x3 - x2)), `${anc}`, 14, 'above');
+  dimLine(ctx, x0, yBase, x4, yTop + (yTop - yBase) * ((x4 - x3) / (x3 - x2)), `L = ${Math.round(shape.totalLen)}`, 22, 'below');
+
+  ctx.save();
+  ctx.font = '8px "Helvetica Neue", system-ui, sans-serif';
+  ctx.fillStyle = '#94A3B8';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  ctx.fillText('≥5d且≥b/2', (x0 + x1) / 2, yBase + 6);
   ctx.restore();
 }
 
@@ -423,9 +497,14 @@ function drawDistBar(ctx: CanvasRenderingContext2D, shape: BarShape, ox: number,
 
 /* ─── draw dispatcher ─── */
 
-function drawShape(ctx: CanvasRenderingContext2D, shape: BarShape, ox: number, oy: number, cw: number, idx: number) {
+function drawShape(
+  ctx: CanvasRenderingContext2D, shape: BarShape, ox: number, oy: number, cw: number, idx: number,
+  stairType?: string, botFlatLen?: number, slopeLen?: number
+) {
   if (shape.shapeType === 'bentAnchor') {
     drawTopBar(ctx, shape, ox, oy, cw);
+  } else if (shape.name === '下部纵筋' && stairType === 'BT' && botFlatLen && slopeLen) {
+    drawBotBarBT(ctx, shape, ox, oy, cw, botFlatLen, slopeLen);
   } else if (shape.anchorLen && shape.anchorLen > 0) {
     drawBotBar(ctx, shape, ox, oy, cw);
   } else {
@@ -437,6 +516,11 @@ function drawShape(ctx: CanvasRenderingContext2D, shape: BarShape, ox: number, o
 
 export function StairBarBendingSchedule({ params }: { params: StairParams }) {
   const shapes = useMemo(() => calcStairBarShapes(params), [params]);
+  const isBT = params.stairType === 'BT';
+  const totalRise = params.stepCount * params.stepHeight;
+  const totalRun = params.stepCount * params.stepWidth;
+  const slopeLen = useMemo(() => Math.sqrt(totalRise * totalRise + totalRun * totalRun), [totalRise, totalRun]);
+  const botFlatLen = isBT ? (params.botFlatLen ?? 700) : 0;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [containerW, setContainerW] = useState(0);
@@ -473,9 +557,9 @@ export function StairBarBendingSchedule({ params }: { params: StairParams }) {
     ctx.scale(DPR, DPR);
     ctx.clearRect(0, 0, totalW, totalH);
     shapes.forEach((shape, i) => {
-      drawShape(ctx, shape, (i % cols) * cardW, Math.floor(i / cols) * CARD_H, cardW, i);
+      drawShape(ctx, shape, (i % cols) * cardW, Math.floor(i / cols) * CARD_H, cardW, i, params.stairType, botFlatLen, slopeLen);
     });
-  }, [shapes, totalW, totalH, cols, cardW]);
+  }, [shapes, totalW, totalH, cols, cardW, params.stairType, botFlatLen, slopeLen]);
 
   useEffect(draw, [draw]);
 
@@ -485,7 +569,7 @@ export function StairBarBendingSchedule({ params }: { params: StairParams }) {
     <div ref={wrapRef}>
       <h2 className="text-sm font-semibold text-primary mb-3">
         钢筋下料图 (BBS)
-        <span className="text-[10px] font-normal text-gray-400 ml-1">22G101-2 AT型</span>
+        <span className="text-[10px] font-normal text-gray-400 ml-1">22G101-2 {params.stairType}型</span>
       </h2>
       <div className="overflow-x-auto">
         <canvas ref={canvasRef} className="mx-auto" />
