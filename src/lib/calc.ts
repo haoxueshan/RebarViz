@@ -1455,17 +1455,86 @@ export function calcRaft(p: RaftFoundationParams): CalcResult {
       topY.grade, topY.diameter, topYCount, topYLen, '#27AE60');
   }
 
-  // 柱插筋: 每根柱 h + 500mm 预留
+  // 柱插筋: 每根柱 h + 500mm 预留 (beamSlab 用 max(h, beamH))
   if (p.colMain) {
     const colR = parseRebar(p.colMain);
     const colTotal = p.colCountX * p.colCountY;
-    const insertLen = (p.h + 500) / 1000;
+    const foundH = p.raftType === 'beamSlab' ? Math.max(p.h, p.beamH ?? 900) : p.h;
+    const insertLen = (foundH + 500) / 1000;
     const colFormula: FormulaStep[] = [
-      { label: '插筋长度', formula: 'L = h筏板 + 预留', substitution: `= ${p.h} + 500`, result: `= ${p.h + 500} mm` },
+      { label: '插筋长度', formula: 'L = h + 预留', substitution: `= ${foundH} + 500`, result: `= ${foundH + 500} mm` },
       { label: '柱数', formula: 'n柱 = colCountX × colCountY', substitution: `= ${p.colCountX} × ${p.colCountY}`, result: `= ${colTotal}` },
     ];
     push('柱插筋', p.colMain, `${insertLen.toFixed(2)}m × ${colR.count * colTotal}`,
       colR.grade, colR.diameter, colR.count * colTotal, insertLen, '#8E44AD', colFormula);
+  }
+
+  // ── 梁板式筏基 JL 基础梁钢筋 ──
+  if (p.raftType === 'beamSlab') {
+    const beamH = p.beamH ?? 900;
+    const beamB = p.beamB ?? 600;
+    // X方向基础梁 (沿lx, 共colCountY道) + Y方向基础梁 (沿ly, 共colCountX道)
+    const xBeamLen = p.lx / 1000;
+    const yBeamLen = p.ly / 1000;
+    const totalXBeams = p.colCountY;
+    const totalYBeams = p.colCountX;
+
+    if (p.beamBottom) {
+      const bb = parseRebar(p.beamBottom);
+      const botLen = xBeamLen;
+      const botCount = bb.count * totalXBeams + bb.count * totalYBeams;
+      push('JL底部纵筋 (B)', p.beamBottom,
+        `${botLen.toFixed(2)}m × ${bb.count * totalXBeams} (X向) + ${yBeamLen.toFixed(2)}m × ${bb.count * totalYBeams} (Y向)`,
+        bb.grade, bb.diameter,
+        bb.count * totalXBeams,
+        botLen, '#C0392B');
+      // Y-direction bars
+      push('JL底部纵筋 B (Y向)', p.beamBottom, `${yBeamLen.toFixed(2)}m × ${bb.count * totalYBeams}`,
+        bb.grade, bb.diameter, bb.count * totalYBeams, yBeamLen, '#C0392B');
+    }
+
+    if (p.beamTop) {
+      const bt = parseRebar(p.beamTop);
+      push('JL顶部纵筋 T (X向)', p.beamTop, `${xBeamLen.toFixed(2)}m × ${bt.count * totalXBeams}`,
+        bt.grade, bt.diameter, bt.count * totalXBeams, xBeamLen, '#E67E22');
+      push('JL顶部纵筋 T (Y向)', p.beamTop, `${yBeamLen.toFixed(2)}m × ${bt.count * totalYBeams}`,
+        bt.grade, bt.diameter, bt.count * totalYBeams, yBeamLen, '#E67E22');
+    }
+
+    if (p.beamStirrup) {
+      const stir = parseStirrup(p.beamStirrup);
+      const stirSpacing = Math.min(stir.spacingDense, stir.spacingNormal);
+      // Stirrup length = 2*(bw + hw) - 8c + hooks (approx)
+      const stirLenMm = 2 * (beamB + beamH) - 8 * cover + 4 * Math.max(10 * stir.diameter, 75);
+      const stirLenM = stirLenMm / 1000;
+      const xStirCount = totalXBeams * (Math.floor(p.lx / stirSpacing) + 1);
+      const yStirCount = totalYBeams * (Math.floor(p.ly / stirSpacing) + 1);
+      push('JL箍筋 (X向)', p.beamStirrup, `${stirLenM.toFixed(2)}m × ${xStirCount}`,
+        stir.grade, stir.diameter, xStirCount, stirLenM, '#27AE60');
+      push('JL箍筋 (Y向)', p.beamStirrup, `${stirLenM.toFixed(2)}m × ${yStirCount}`,
+        stir.grade, stir.diameter, yStirCount, stirLenM, '#27AE60');
+    }
+  }
+
+  // ── 平板式筏基 ZXB 柱下板带附加钢筋 ──
+  if (p.raftType === 'flatPlate' && p.colStripWidth) {
+    if (p.colStripBarX) {
+      const csX = parseSlabRebar(p.colStripBarX);
+      // ZXB X向附加筋: 分布在Y列线的±colStripWidth/2带内，沿X向通长
+      const csXLen = (p.lx - 2 * cover) / 1000;
+      const stripZoneCount = Math.floor(p.colStripWidth / csX.spacing) + 1;
+      const csXCount = p.colCountY * stripZoneCount;
+      push('ZXB X向附加底筋', p.colStripBarX, `${csXLen.toFixed(2)}m × ${csXCount}`,
+        csX.grade, csX.diameter, csXCount, csXLen, '#D35400');
+    }
+    if (p.colStripBarY) {
+      const csY = parseSlabRebar(p.colStripBarY);
+      const csYLen = (p.ly - 2 * cover) / 1000;
+      const stripZoneCount = Math.floor(p.colStripWidth / csY.spacing) + 1;
+      const csYCount = p.colCountX * stripZoneCount;
+      push('ZXB Y向附加底筋', p.colStripBarY, `${csYLen.toFixed(2)}m × ${csYCount}`,
+        csY.grade, csY.diameter, csYCount, csYLen, '#D35400');
+    }
   }
 
   return { items, total: `${total.toFixed(2)} kg` };

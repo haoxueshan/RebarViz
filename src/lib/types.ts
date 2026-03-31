@@ -244,20 +244,37 @@ export interface PileCapParams {
 // 筏板基础参数
 // ═══════════════════════════════════════════════════════════════════
 
+/**
+ * 筏形基础类型 (22G101-3)
+ * flat     — 平板式（仅配筋均匀分布，原有逻辑）
+ * beamSlab — 梁板式（JL 基础主梁 + LPB 平板）
+ * flatPlate— 平板式筏基板带（ZXB 柱下板带 + KZB 跨中板带，配筋密度有别）
+ */
+export type RaftType = 'flat' | 'beamSlab' | 'flatPlate';
+
+/**
+ * 梁板式筏基 — 基础梁位置 (22G101-3 §4.1.3)
+ * high — 高板位：梁顶与板顶齐平，梁向下突出
+ * low  — 低板位：梁底与板底齐平，梁向上突出
+ * mid  — 中板位：板在梁的中部
+ */
+export type RaftBeamPosition = 'high' | 'low' | 'mid';
+
 /** 筏板基础参数 */
 export interface RaftFoundationParams {
   id: string;
+  raftType: RaftType;            // 筏基类型（默认 'flat'）
   // 筏板尺寸
   lx: number;                    // X 向长度 (mm)
   ly: number;                    // Y 向宽度 (mm)
   h: number;                     // 板厚 (mm)
-  // 底部配筋
+  // 底部配筋 (LPB 平板 / 均匀平板)
   bottomBarX: string;            // X 向底筋 e.g. C14@150
   bottomBarY: string;            // Y 向底筋 e.g. C14@150
   // 顶部配筋
   topBarX: string;               // X 向面筋 e.g. C12@200
   topBarY: string;               // Y 向面筋 e.g. C12@200
-  // 柱网 (简化: 单柱或矩形柱网)
+  // 柱网 (矩形柱网)
   colBx: number;                 // 柱截面 X 向 (mm)
   colBy: number;                 // 柱截面 Y 向 (mm)
   colMain: string;               // 柱插筋 e.g. 8C20
@@ -265,6 +282,17 @@ export interface RaftFoundationParams {
   colCountY: number;             // Y 向柱数
   colSpacingX: number;           // X 向柱距 (mm)
   colSpacingY: number;           // Y 向柱距 (mm)
+  // ── 梁板式筏基 专属 (raftType === 'beamSlab') ──────────────────
+  beamB?: number;                // 基础主梁宽 bw (mm), e.g. 600
+  beamH?: number;                // 基础主梁高 hw (mm), e.g. 900
+  beamPosition?: RaftBeamPosition; // 梁板位置关系
+  beamBottom?: string;           // 基础梁底部贯通纵筋 e.g. 4C25
+  beamTop?: string;              // 基础梁顶部贯通纵筋 e.g. 6C25
+  beamStirrup?: string;          // 基础梁箍筋 e.g. A10@150(4)
+  // ── 平板式筏基板带 专属 (raftType === 'flatPlate') ─────────────
+  colStripWidth?: number;        // 柱下板带 ZXB 宽度 (mm, 通常取 colSpacing/2)
+  colStripBarX?: string;         // ZXB X 向附加底筋 (叠加于 bottomBarX) e.g. C16@150
+  colStripBarY?: string;         // ZXB Y 向附加底筋 e.g. C16@150
   // 材料
   concreteGrade: import('./anchor').ConcreteGrade;
   seismicGrade: import('./anchor').SeismicGrade;
@@ -283,7 +311,8 @@ export interface RebarMeshInfo {
     | 'stairTop' | 'stairBottom' | 'stairDist' | 'stairPlatform'
     | 'foundBottomX' | 'foundBottomY' | 'foundColMain' | 'foundTopX' | 'foundTopY'
     | 'pcBottomX' | 'pcBottomY' | 'pcColMain' | 'pcPile'
-    | 'raftBottomX' | 'raftBottomY' | 'raftTopX' | 'raftTopY' | 'raftColMain';
+    | 'raftBottomX' | 'raftBottomY' | 'raftTopX' | 'raftTopY' | 'raftColMain'
+    | 'raftBeamBottom' | 'raftBeamTop' | 'raftBeamStirrup' | 'raftColStrip';
   label: string;
   detail: string;
 }

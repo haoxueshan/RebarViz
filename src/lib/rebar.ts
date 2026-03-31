@@ -607,6 +607,7 @@ export const PILECAP_PRESETS = {
 export const RAFT_PRESETS = {
   small: {
     id: 'FB-1',
+    raftType: 'flat' as const,
     lx: 9000, ly: 9000, h: 500,
     bottomBarX: 'C14@150', bottomBarY: 'C14@150',
     topBarX: 'C12@200', topBarY: 'C12@200',
@@ -616,6 +617,7 @@ export const RAFT_PRESETS = {
   },
   standard: {
     id: 'FB-2',
+    raftType: 'flat' as const,
     lx: 18000, ly: 12000, h: 700,
     bottomBarX: 'C16@150', bottomBarY: 'C16@150',
     topBarX: 'C14@200', topBarY: 'C14@200',
@@ -625,11 +627,37 @@ export const RAFT_PRESETS = {
   },
   large: {
     id: 'FB-3',
+    raftType: 'flat' as const,
     lx: 30000, ly: 18000, h: 1000,
     bottomBarX: 'C20@150', bottomBarY: 'C20@150',
     topBarX: 'C16@150', topBarY: 'C16@150',
     colBx: 600, colBy: 600, colMain: '16C25',
     colCountX: 4, colCountY: 3, colSpacingX: 8000, colSpacingY: 7500,
     concreteGrade: 'C35' as const, seismicGrade: '二级' as const, cover: 50,
+  },
+  beamSlab: {
+    id: 'JL-FB-1',
+    raftType: 'beamSlab' as const,
+    lx: 18000, ly: 12000, h: 400,
+    bottomBarX: 'C14@200', bottomBarY: 'C14@200',
+    topBarX: 'C12@200', topBarY: 'C12@200',
+    colBx: 500, colBy: 500, colMain: '12C25',
+    colCountX: 3, colCountY: 2, colSpacingX: 7500, colSpacingY: 9000,
+    beamB: 600, beamH: 900,
+    beamPosition: 'low' as const,
+    beamBottom: '4C25', beamTop: '6C25', beamStirrup: 'A10@150(4)',
+    concreteGrade: 'C35' as const, seismicGrade: '三级' as const, cover: 40,
+  },
+  flatPlate: {
+    id: 'BPB-FB-1',
+    raftType: 'flatPlate' as const,
+    lx: 18000, ly: 12000, h: 700,
+    bottomBarX: 'C14@200', bottomBarY: 'C14@200',
+    topBarX: 'C12@200', topBarY: 'C12@200',
+    colBx: 500, colBy: 500, colMain: '12C25',
+    colCountX: 3, colCountY: 2, colSpacingX: 7500, colSpacingY: 9000,
+    colStripWidth: 3750,
+    colStripBarX: 'C16@200', colStripBarY: 'C16@200',
+    concreteGrade: 'C35' as const, seismicGrade: '三级' as const, cover: 40,
   },
 } as const;

@@ -209,7 +209,23 @@ export const COLOR_RAFT_TOP_Y_HI = '#2ECC71';
 export const COLOR_RAFT_COL = '#8E44AD';
 export const COLOR_RAFT_COL_HI = '#9B59B6';
 
-/** 筏板基础施工步骤 */
+/** 基础主梁 JL 底部纵筋 */
+export const COLOR_RAFT_BEAM_BOTTOM = '#C0392B';
+export const COLOR_RAFT_BEAM_BOTTOM_HI = '#E74C3C';
+
+/** 基础主梁 JL 顶部纵筋 */
+export const COLOR_RAFT_BEAM_TOP = '#E67E22';
+export const COLOR_RAFT_BEAM_TOP_HI = '#F39C12';
+
+/** 基础主梁 JL 箍筋 */
+export const COLOR_RAFT_BEAM_STIRRUP = '#27AE60';
+export const COLOR_RAFT_BEAM_STIRRUP_HI = '#2ECC71';
+
+/** 平板式筏基 — 柱下板带 ZXB 附加底筋 */
+export const COLOR_RAFT_COL_STRIP = '#D35400';
+export const COLOR_RAFT_COL_STRIP_HI = '#E67E22';
+
+/** 筏板基础施工步骤 (平板式) */
 export const RAFT_CONSTRUCTION_STEPS: ConstructionStep[] = [
   { groups: new Set(['concrete']), label: '模板+混凝土' },
   { groups: new Set(['concrete', 'bottomX']), label: '+X向底筋' },
@@ -217,6 +233,30 @@ export const RAFT_CONSTRUCTION_STEPS: ConstructionStep[] = [
   { groups: new Set(['concrete', 'bottomX', 'bottomY', 'topX']), label: '+X向面筋' },
   { groups: new Set(['concrete', 'bottomX', 'bottomY', 'topX', 'topY']), label: '+Y向面筋' },
   { groups: new Set(['concrete', 'bottomX', 'bottomY', 'topX', 'topY', 'colMain']), label: '+柱插筋' },
+];
+
+/** 梁板式筏基施工步骤 (beamSlab) */
+export const RAFT_BEAM_SLAB_STEPS: ConstructionStep[] = [
+  { groups: new Set(['concrete']), label: '模板+混凝土' },
+  { groups: new Set(['concrete', 'bottomX']), label: '+LPB X向底筋' },
+  { groups: new Set(['concrete', 'bottomX', 'bottomY']), label: '+LPB Y向底筋' },
+  { groups: new Set(['concrete', 'bottomX', 'bottomY', 'topX']), label: '+LPB X向面筋' },
+  { groups: new Set(['concrete', 'bottomX', 'bottomY', 'topX', 'topY']), label: '+LPB Y向面筋' },
+  { groups: new Set(['concrete', 'bottomX', 'bottomY', 'topX', 'topY', 'beamStirrup']), label: '+JL箍筋' },
+  { groups: new Set(['concrete', 'bottomX', 'bottomY', 'topX', 'topY', 'beamStirrup', 'beamBottom']), label: '+JL底部纵筋' },
+  { groups: new Set(['concrete', 'bottomX', 'bottomY', 'topX', 'topY', 'beamStirrup', 'beamBottom', 'beamTop']), label: '+JL顶部纵筋' },
+  { groups: new Set(['concrete', 'bottomX', 'bottomY', 'topX', 'topY', 'beamStirrup', 'beamBottom', 'beamTop', 'colMain']), label: '+柱插筋' },
+];
+
+/** 平板式筏基板带施工步骤 (flatPlate / ZXB+KZB) */
+export const RAFT_FLAT_PLATE_STEPS: ConstructionStep[] = [
+  { groups: new Set(['concrete']), label: '模板+混凝土' },
+  { groups: new Set(['concrete', 'bottomX']), label: '+跨中底筋X (KZB)' },
+  { groups: new Set(['concrete', 'bottomX', 'bottomY']), label: '+跨中底筋Y (KZB)' },
+  { groups: new Set(['concrete', 'bottomX', 'bottomY', 'colStrip']), label: '+柱下板带附加筋 (ZXB)' },
+  { groups: new Set(['concrete', 'bottomX', 'bottomY', 'colStrip', 'topX']), label: '+X向面筋' },
+  { groups: new Set(['concrete', 'bottomX', 'bottomY', 'colStrip', 'topX', 'topY']), label: '+Y向面筋' },
+  { groups: new Set(['concrete', 'bottomX', 'bottomY', 'colStrip', 'topX', 'topY', 'colMain']), label: '+柱插筋' },
 ];
 
 /** 钢筋材质默认参数 */

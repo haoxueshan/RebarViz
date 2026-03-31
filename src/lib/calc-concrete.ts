@@ -341,7 +341,26 @@ export function calcRaftConcrete(p: RaftFoundationParams): ConcreteCalcResult {
   const raftSteps: FormulaStep[] = [
     { label: '筏板体积', formula: 'V = lx × ly × h', substitution: `= ${lxM} × ${lyM} × ${hM}`, result: `= ${raftVol.toFixed(4)} m³` },
   ];
-  items.push({ name: '筏板', volume: raftVol, description: `${p.lx}×${p.ly}×${p.h}mm`, formulaSteps: raftSteps, color: '#94A3B8' });
+  items.push({ name: p.raftType === 'beamSlab' ? 'LPB 平板' : '筏板', volume: raftVol, description: `${p.lx}×${p.ly}×${p.h}mm`, formulaSteps: raftSteps, color: '#94A3B8' });
+
+  // ── 梁板式筏基 JL 基础梁混凝土 ──
+  if (p.raftType === 'beamSlab') {
+    const beamB = (p.beamB ?? 600) / 1000;
+    const beamH = (p.beamH ?? 900) / 1000;
+    // X方向基础梁: colCountY道，每道长 lx
+    const xBeamVol = p.colCountY * lxM * beamB * beamH;
+    const xBeamSteps: FormulaStep[] = [
+      { label: 'X向梁体积', formula: 'V = nY × lx × bw × hw', substitution: `= ${p.colCountY} × ${lxM} × ${beamB} × ${beamH}`, result: `= ${xBeamVol.toFixed(4)} m³` },
+    ];
+    items.push({ name: 'JL X向基础梁', volume: xBeamVol, description: `${p.colCountY}道 × ${p.lx}×${p.beamB ?? 600}×${p.beamH ?? 900}mm`, formulaSteps: xBeamSteps, color: '#9EB6C8' });
+
+    // Y方向基础梁: colCountX道，每道长 ly (扣除与X梁交叉部分简化不扣)
+    const yBeamVol = p.colCountX * lyM * beamB * beamH;
+    const yBeamSteps: FormulaStep[] = [
+      { label: 'Y向梁体积', formula: 'V = nX × ly × bw × hw', substitution: `= ${p.colCountX} × ${lyM} × ${beamB} × ${beamH}`, result: `= ${yBeamVol.toFixed(4)} m³` },
+    ];
+    items.push({ name: 'JL Y向基础梁', volume: yBeamVol, description: `${p.colCountX}道 × ${p.ly}×${p.beamB ?? 600}×${p.beamH ?? 900}mm`, formulaSteps: yBeamSteps, color: '#9EB6C8' });
+  }
 
   const totalVol = items.reduce((s, it) => s + it.volume, 0);
   return { items, totalVolume: totalVol };

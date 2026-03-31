@@ -33,9 +33,11 @@ const RaftViewer = dynamic(() => import('@/components/RaftViewer'), {
 });
 
 const presetList = [
-  { key: 'small', label: '小型筏板', dot: 'bg-blue-400' },
-  { key: 'standard', label: '标准筏板', dot: 'bg-green-400' },
-  { key: 'large', label: '大型筏板', dot: 'bg-orange-400' },
+  { key: 'small', label: '小型平板式', dot: 'bg-blue-400' },
+  { key: 'standard', label: '标准平板式', dot: 'bg-green-400' },
+  { key: 'large', label: '大型平板式', dot: 'bg-orange-400' },
+  { key: 'beamSlab', label: '梁板式示例', dot: 'bg-blue-600' },
+  { key: 'flatPlate', label: '板带式示例', dot: 'bg-amber-500' },
 ] as const;
 
 const DEFAULT: RaftFoundationParams = {
@@ -96,9 +98,36 @@ export function RaftPageClient() {
 
             <div className="space-y-3">
               <Field label="筏板编号" value={params.id} onChange={v => update({ id: v })} />
+
+              {/* 筏基类型选择器 */}
+              <div>
+                <label className="text-xs text-muted mb-1.5 block">筏基类型 (22G101-3)</label>
+                <div className="grid grid-cols-3 gap-1">
+                  {([
+                    { val: 'flat', label: '平板式' },
+                    { val: 'beamSlab', label: '梁板式' },
+                    { val: 'flatPlate', label: '板带式' },
+                  ] as const).map(({ val, label }) => (
+                    <button key={val} onClick={() => update({ raftType: val })}
+                      className={`py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-all border ${
+                        params.raftType === val
+                          ? 'bg-accent text-white border-accent shadow-sm'
+                          : 'bg-gray-50 text-gray-600 border-gray-200 hover:border-gray-300'
+                      }`}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10px] text-muted mt-1">
+                  {params.raftType === 'flat' && '均匀平板，无基础棁'}
+                  {params.raftType === 'beamSlab' && 'JL基础主棁 + LPB平板'}
+                  {params.raftType === 'flatPlate' && 'ZXB柱下板带 + KZB跨中板带'}
+                </p>
+              </div>
+
               <NumField label="X 向长度 lx (mm)" value={params.lx} onChange={v => update({ lx: v })} min={3000} max={60000} />
               <NumField label="Y 向宽度 ly (mm)" value={params.ly} onChange={v => update({ ly: v })} min={3000} max={40000} />
-              <NumField label="板厚 h (mm)" value={params.h} onChange={v => update({ h: v })} min={300} max={2000} />
+              <NumField label="板厚 h (mm) (LPB平板厂)" value={params.h} onChange={v => update({ h: v })} min={300} max={2000} />
             </div>
 
             <Section title="底部配筋">
@@ -121,6 +150,52 @@ export function RaftPageClient() {
               <NumField label="Y 向柱距 (mm)" value={params.colSpacingY} onChange={v => update({ colSpacingY: v })} min={3000} max={12000} />
             </Section>
 
+            {/* ── 梁板式筏基专属参数 (JL) ── */}
+            {params.raftType === 'beamSlab' && (
+              <Section title="基础主梁 JL 参数 (22G101-3 §4)">
+                <NumField label="梁宽 bw (mm)" value={params.beamB ?? 600} onChange={v => update({ beamB: v })} min={300} max={1500} />
+                <NumField label="梁高 hw (mm)" value={params.beamH ?? 900} onChange={v => update({ beamH: v })} min={400} max={2500} />
+                <div>
+                  <label className="text-xs text-muted mb-1.5 block">梁板位置关系</label>
+                  <div className="grid grid-cols-3 gap-1">
+                    {([
+                      { val: 'low', label: '低板位' },
+                      { val: 'mid', label: '中板位' },
+                      { val: 'high', label: '高板位' },
+                    ] as const).map(({ val, label }) => (
+                      <button key={val} onClick={() => update({ beamPosition: val })}
+                        className={`py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-all border ${
+                          (params.beamPosition ?? 'low') === val
+                            ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                            : 'bg-gray-50 text-gray-600 border-gray-200 hover:border-gray-300'
+                        }`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-muted mt-1">
+                    {(params.beamPosition ?? 'low') === 'low' && '梁底与板底齐平，梁向上凸出'}
+                    {params.beamPosition === 'high' && '梁顶与板顶齐平，梁向下凸出'}
+                    {params.beamPosition === 'mid' && '板在梁高度中部'}
+                  </p>
+                </div>
+                <Field label="底部贯通纵筋 (B)" value={params.beamBottom ?? '4C25'} onChange={v => update({ beamBottom: v })} placeholder="如: 4C25" />
+                <Field label="顶部贯通纵筋 (T)" value={params.beamTop ?? '6C25'} onChange={v => update({ beamTop: v })} placeholder="如: 6C25" />
+                <Field label="箍筋" value={params.beamStirrup ?? 'A10@150(4)'} onChange={v => update({ beamStirrup: v })} placeholder="如: A10@150(4)" />
+              </Section>
+            )}
+
+            {/* ── 平板式筏基板带专属参数 (ZXB/KZB) ── */}
+            {params.raftType === 'flatPlate' && (
+              <Section title="柱下板带 ZXB 参数 (22G101-3 §5)">
+                <NumField label="ZXB 板带宽度 (mm)" value={params.colStripWidth ?? Math.round(Math.min(params.colSpacingX, params.colSpacingY) / 2)}
+                  onChange={v => update({ colStripWidth: v })} min={500} max={8000} />
+                <Field label="ZXB X向附加底筋" value={params.colStripBarX ?? 'C16@200'} onChange={v => update({ colStripBarX: v })} placeholder="如: C16@200" />
+                <Field label="ZXB Y向附加底筋" value={params.colStripBarY ?? 'C16@200'} onChange={v => update({ colStripBarY: v })} placeholder="如: C16@200" />
+                <p className="text-[10px] text-muted">KZB跨中板带配筋使用上方底部配筋区域指定即可</p>
+              </Section>
+            )}
+
             <Section title="材料">
               <SelectField label="混凝土等级" value={params.concreteGrade} onChange={v => update({ concreteGrade: v as ConcreteGrade })}
                 options={CONCRETE_GRADES.map(g => ({ value: g, label: g }))} />
@@ -136,6 +211,15 @@ export function RaftPageClient() {
             { color: '#E67E22', label: 'X向面筋' },
             { color: '#27AE60', label: 'Y向面筋' },
             { color: '#8E44AD', label: '柱插筋' },
+            ...(params.raftType === 'beamSlab' ? [
+              { color: '#C0392B', label: 'JL底部纵筋' },
+              { color: '#E67E22', label: 'JL顶部纵筋' },
+              { color: '#27AE60', label: 'JL箍筋' },
+              { color: '#9EB6C8', label: 'JL基础梁混凝土', opacity: 0.55 },
+            ] : []),
+            ...(params.raftType === 'flatPlate' ? [
+              { color: '#D35400', label: 'ZXB柱下板带附加筋' },
+            ] : []),
             { color: '#BDC3C7', label: '混凝土（半透明）', opacity: 0.6 },
           ]} />
         </div>

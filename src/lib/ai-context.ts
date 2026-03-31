@@ -245,10 +245,23 @@ export function buildRaftContext(p: RaftFoundationParams): string {
     ? `\nX向面筋: ${p.topBarX} (${gradeLabel(topX.grade)} Φ${topX.diameter}@${topX.spacing})
 Y向面筋: ${p.topBarY} (${gradeLabel(topY.grade)} Φ${topY.diameter}@${topY.spacing})`
     : '';
-  return `构件类型: 筏板基础 ${p.id}
+  const raftTypeLabel = p.raftType === 'beamSlab' ? '梁板式筏形基础 (JL+LPB)'
+    : p.raftType === 'flatPlate' ? '平板式筏形基础-板带式 (ZXB/KZB)'
+    : '平板式筏形基础 (BPB)';
+
+  const beamInfo = p.raftType === 'beamSlab' && p.beamB && p.beamH
+    ? `\nJL基础梁: ${p.beamB}×${p.beamH}mm，${p.beamPosition ?? 'low'}板位
+JL底部纵筋: ${p.beamBottom ?? '未设置'}，顶部纵筋: ${p.beamTop ?? '未设置'}，箍筋: ${p.beamStirrup ?? '未设置'}`
+    : '';
+
+  const stripInfo = p.raftType === 'flatPlate' && p.colStripWidth
+    ? `\nZXB柱下板带宽: ${p.colStripWidth}mm，X向附加筋: ${p.colStripBarX ?? '未设置'}，Y向附加筋: ${p.colStripBarY ?? '未设置'}`
+    : '';
+
+  return `构件类型: ${raftTypeLabel} — ${p.id}
 筏板尺寸: ${p.lx}×${p.ly}×${p.h}mm (${(p.lx / 1000).toFixed(1)}×${(p.ly / 1000).toFixed(1)}m)
 X向底筋: ${p.bottomBarX} (${gradeLabel(botX.grade)} Φ${botX.diameter}@${botX.spacing}，As=${AsBotX.toFixed(0)}mm²/m，ρ=${rhoBotX}%)
-Y向底筋: ${p.bottomBarY} (${gradeLabel(botY.grade)} Φ${botY.diameter}@${botY.spacing}，As=${AsBotY.toFixed(0)}mm²/m，ρ=${rhoBotY}%)${topInfo}
+Y向底筋: ${p.bottomBarY} (${gradeLabel(botY.grade)} Φ${botY.diameter}@${botY.spacing}，As=${AsBotY.toFixed(0)}mm²/m，ρ=${rhoBotY}%)${topInfo}${beamInfo}${stripInfo}
 柱网: ${p.colCountX}×${p.colCountY} (共${colTotal}根柱)，柱距 ${p.colSpacingX}×${p.colSpacingY}mm
 柱截面: ${p.colBx}×${p.colBy}mm
 柱插筋: ${p.colMain} (每柱${colR.count}根 ${gradeLabel(colR.grade)} Φ${colR.diameter}，As=${AsCol.toFixed(0)}mm²)
