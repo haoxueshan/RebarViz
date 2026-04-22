@@ -176,6 +176,14 @@ export function FoundationAnchorPanel({ params }: { params: FoundationParams }) 
           <div className="text-[11px] mt-1 px-2 py-1 rounded bg-blue-50 text-blue-700">
             基础宽度 ≥ 2500mm 时，底筋可隔根缩短（缩短筋长 = 0.9L，居中布置），两端各留出半个间距，22G101-3 §2-2
           </div>
+          {(params.shortenBottomBarX || params.shortenBottomBarY) && (
+            <div className="text-[11px] mt-1 px-2 py-1 rounded bg-emerald-50 text-emerald-700">
+              当前 3D 模型已显示：{[
+                params.shortenBottomBarX ? 'X向底筋减短' : null,
+                params.shortenBottomBarY ? 'Y向底筋减短' : null,
+              ].filter(Boolean).join('，')}
+            </div>
+          )}
         </RuleCard>
       )}
 
@@ -204,9 +212,32 @@ export function FoundationAnchorPanel({ params }: { params: FoundationParams }) 
         <RuleCard title="双柱基础顶部配筋 (22G101-3 §2-12)">
           <Row label="柱距" value={`${params.colSpacing ?? '—'} mm`} />
           <Row label="顶部纵向受力筋" value={params.topBarX} />
+          {params.topBarXCount && <Row label="顶部纵向筋总根数" value={`${params.topBarXCount} 根`} />}
           <Row label="顶部分布筋" value={params.topBarY} />
+          {params.topBandWidth && <Row label="顶部钢筋带宽" value={`${params.topBandWidth} mm`} />}
           <div className="text-[11px] mt-1 px-2 py-1 rounded bg-blue-50 text-blue-700">
             双柱联合基础顶部配筋在两柱之间受拉区布置，需满足 §2-12 连接与锚固要求
+          </div>
+        </RuleCard>
+      )}
+
+      {isDual && params.hasFoundationBeam && (
+        <RuleCard title="双柱基础梁 JL (22G101-3 §2-13)">
+          <Row label="梁截面" value={`${params.foundationBeamB || '—'} × ${params.foundationBeamH || '—'} mm`} />
+          <Row label="底部纵筋" value={params.foundationBeamBottom || '未设置'} />
+          <Row label="顶部纵筋" value={params.foundationBeamTop || '未设置'} />
+          <Row
+            label="端部外伸"
+            value={
+              params.foundationBeamEndType === 'bothSides'
+                ? `双端外伸 ${params.foundationBeamOverhang || 0} mm`
+                : params.foundationBeamEndType === 'oneSide'
+                  ? `${params.foundationBeamOverhangSide === 'left' ? '左端' : '右端'}外伸 ${params.foundationBeamOverhang || 0} mm`
+                  : '无外伸'
+            }
+          />
+          <div className="text-[11px] mt-1 px-2 py-1 rounded bg-amber-50 text-amber-700">
+            当前 3D 模型已显示基础梁与梁筋，用于辅助观察双柱基础与基础梁组合构造。
           </div>
         </RuleCard>
       )}

@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import Image from 'next/image';
+import { useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Send, Sparkles, Loader2, ArrowRight, Camera, X } from 'lucide-react';
 import { detectComponentType } from '@/lib/component-detector';
@@ -8,7 +9,7 @@ import type { ComponentType } from '@/lib/types';
 
 async function compressForScan(dataUrl: string, maxSize = 1200): Promise<string> {
   return new Promise((resolve) => {
-    const img = new Image();
+    const img = new window.Image();
     img.onload = () => {
       let { width, height } = img;
       if (width > maxSize || height > maxSize) {
@@ -31,6 +32,7 @@ const EXAMPLE_PROMPTS = [
   { text: '120厚板，底筋C10@150', type: 'slab' as ComponentType },
   { text: '200厚剪力墙，竖向C10@200', type: 'shearwall' as ComponentType },
   { text: '11步楼梯，踏步高150宽280', type: 'stair' as ComponentType },
+  { text: '条形基础长9000，宽1800，底部横向筋C14@150', type: 'stripfoundation' as ComponentType },
 ];
 
 const TYPE_COLORS: Record<ComponentType, string> = {
@@ -41,6 +43,7 @@ const TYPE_COLORS: Record<ComponentType, string> = {
   joint: 'text-orange-400',
   stair: 'text-cyan-400',
   foundation: 'text-teal-400',
+  stripfoundation: 'text-cyan-400',
   pilecap: 'text-sky-400',
   raft: 'text-indigo-400',
 };
@@ -48,14 +51,16 @@ const TYPE_COLORS: Record<ComponentType, string> = {
 export function GlobalAIInput() {
   const [input, setInput] = useState('');
   const [detecting, setDetecting] = useState(false);
-  const [detectedLabel, setDetectedLabel] = useState<string | null>(null);
-  const [detectedType, setDetectedType] = useState<ComponentType | null>(null);
-  const [noMatch, setNoMatch] = useState(false);
   const [pendingImage, setPendingImage] = useState<string | null>(null);
   const [scanLoading, setScanLoading] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
+  const trimmedInput = input.trim();
+  const detectionResult = trimmedInput ? detectComponentType(trimmedInput) : null;
+  const detectedLabel = detectionResult?.detected ? detectionResult.label : null;
+  const detectedType = detectionResult?.detected ? detectionResult.componentType : null;
+  const noMatch = !!trimmedInput && !detectionResult?.detected && trimmedInput.length > 3;
 
   const handleImageSelect = async (file: File) => {
     if (!file.type.startsWith('image/')) return;
@@ -79,40 +84,13 @@ export function GlobalAIInput() {
     router.push('/scan');
   };
 
-  // Real-time detection as user types
-  useEffect(() => {
-    const trimmed = input.trim();
-    if (!trimmed) {
-      setDetectedLabel(null);
-      setDetectedType(null);
-      setNoMatch(false);
-      return;
-    }
-
-    const result = detectComponentType(trimmed);
-    if (result.detected) {
-      setDetectedLabel(result.label);
-      setDetectedType(result.componentType);
-      setNoMatch(false);
-    } else {
-      setDetectedLabel(null);
-      setDetectedType(null);
-      setNoMatch(trimmed.length > 3);
-    }
-  }, [input]);
-
   const handleSubmit = () => {
-    const trimmed = input.trim();
-    if (!trimmed) return;
+    if (!trimmedInput) return;
 
-    const result = detectComponentType(trimmed);
-    if (result.detected) {
+    if (detectionResult?.detected) {
       setDetecting(true);
-      // Navigate to target page with AI message as query param
-      const encoded = encodeURIComponent(trimmed);
-      router.push(`${result.route}?ai=${encoded}`);
-    } else {
-      setNoMatch(true);
+      const encoded = encodeURIComponent(trimmedInput);
+      router.push(`${detectionResult.route}?ai=${encoded}`);
     }
   };
 
@@ -148,7 +126,14 @@ export function GlobalAIInput() {
       {/* Image scan entry — shown when image is pending */}
       {pendingImage && (
         <div className="flex items-center gap-3 px-4 py-3 bg-white/[0.05] border border-white/[0.1] rounded-2xl backdrop-blur-sm">
-          <img src={pendingImage} alt="待识别图纸" className="w-12 h-12 rounded-lg object-cover border border-white/10 shrink-0" />
+          <Image
+            src={pendingImage}
+            alt="待识别图纸"
+            width={48}
+            height={48}
+            unoptimized
+            className="h-12 w-12 rounded-lg border border-white/10 object-cover shrink-0"
+          />
           <div className="flex-1 min-w-0">
             <p className="text-sm text-gray-200 font-medium">图纸已就绪</p>
             <p className="text-xs text-gray-500 mt-0.5">点击「开始识别」上传至 AI 分析配筋信息</p>

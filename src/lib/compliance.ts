@@ -2,7 +2,7 @@
  * 规范合规性校验 — 基于 GB50010-2010 和 22G101 图集
  * 在 AI 生成配筋参数后，自动检查是否满足规范要求
  */
-import type { BeamParams, ColumnParams, SlabParams, ShearWallParams, StairParams, RaftFoundationParams, ComponentType } from './types';
+import type { BeamParams, ColumnParams, SlabParams, ShearWallParams, StairParams, FoundationParams, StripFoundationParams, PileCapParams, RaftFoundationParams, ComponentType } from './types';
 import { parseRebar, parseRebarBottom, parseStirrup, parseSlabRebar, resolveColumnBars } from './rebar';
 import { calcEffectiveDepth } from './layout';
 import { FT, FY, calcLaE } from './anchor';
@@ -643,6 +643,219 @@ export function checkStairCompliance(p: StairParams): ComplianceResult[] {
   return results;
 }
 
+// ─── 基础族合规性校验 (22G101-3) ───
+
+export function checkFoundationCompliance(p: FoundationParams): ComplianceResult[] {
+  const results: ComplianceResult[] = [];
+  const cover = p.cover || 40;
+  const barX = parseSlabRebar(p.bottomBarX);
+  const barY = parseSlabRebar(p.bottomBarY);
+
+  if (cover < 40) {
+    results.push({
+      field: 'cover', rule: 'GB50010 §8.2.1',
+      status: 'warn',
+      message: `保护层 ${cover}mm < 建议最小 40mm（有垫层独立基础）`,
+      suggestion: '建议独立基础保护层按 40mm 或更大值取值',
+    });
+  }
+
+  for (const [field, bar] of [['bottomBarX', barX], ['bottomBarY', barY]] as const) {
+    if (bar.diameter < 10) {
+      results.push({
+        field, rule: '22G101-3 独立基础构造',
+        status: 'fail',
+        message: `${field === 'bottomBarX' ? 'X向' : 'Y向'}底筋直径 Φ${bar.diameter} < 建议最小 Φ10`,
+        suggestion: '建议底筋直径不小于 Φ10',
+      });
+    }
+    if (bar.spacing > 200) {
+      results.push({
+        field, rule: '22G101-3 独立基础构造',
+        status: 'warn',
+        message: `${field === 'bottomBarX' ? 'X向' : 'Y向'}底筋间距 ${bar.spacing}mm > 常用上限 200mm`,
+        suggestion: '建议减小间距或增大钢筋直径',
+      });
+    }
+  }
+
+  const colR = parseRebar(p.colMain);
+  const laE = calcLaE(colR.grade, colR.diameter, p.concreteGrade, p.seismicGrade || '三级');
+  const anchor = determineColFoundAnchor(p.h, cover, colR.diameter, laE);
+  results.push(anchor.canStraight
+    ? { field: 'colMain', rule: '22G101-3 §2-10', status: 'pass', message: `柱插筋可直锚，laE=${laE}mm，可用深度=${p.h - cover}mm` }
+    : { field: 'colMain', rule: '22G101-3 §2-10', status: 'warn', message: `柱插筋需弯锚，laE=${laE}mm > 可用深度=${p.h - cover}mm`, suggestion: `建议按底弯 ${anchor.bendLength}mm、直段 ≥${anchor.straightPortion}mm 处理` });
+
+  if ((p.columnCount || 1) === 2 && (!p.topBarX || !p.topBarY)) {
+    results.push({
+      field: 'topBarX/topBarY', rule: '22G101-3 §2-12',
+      status: 'warn',
+      message: '双柱独立基础未完整设置顶部柱间钢筋',
+      suggestion: '建议明确顶部纵向受力筋和分布筋',
+    });
+  }
+
+  if ((p.columnCount || 1) === 2 && p.hasFoundationBeam && (!p.foundationBeamBottom || !p.foundationBeamTop || !p.foundationBeamStirrup)) {
+    results.push({
+      field: 'foundationBeam', rule: '22G101-3 §2-13',
+      status: 'warn',
+      message: '已启用基础梁，但梁底筋、顶筋或箍筋参数不完整',
+      suggestion: '建议补全基础梁底筋、顶筋和箍筋',
+    });
+  }
+
+  if (results.length === 0) {
+    results.push({ field: '-', rule: 'GB50010/22G101-3', status: 'pass', message: '独立基础配筋满足当前校验规则' });
+  }
+  return results;
+}
+
+export function checkStripFoundationCompliance(p: StripFoundationParams): ComplianceResult[] {
+  const results: ComplianceResult[] = [];
+  const cover = p.cover || 40;
+  const bottom = parseSlabRebar(p.bottomBar);
+  const dist = parseSlabRebar(p.distBar);
+
+  if (cover < 40) {
+    results.push({
+      field: 'cover', rule: 'GB50010 §8.2.1',
+      status: 'warn',
+      message: `条基保护层 ${cover}mm < 建议最小 40mm`,
+      suggestion: '建议条形基础保护层按基础构件要求校核',
+    });
+  }
+  if (bottom.diameter < 10) {
+    results.push({
+      field: 'bottomBar', rule: '22G101-3 条形基础构造',
+      status: 'fail',
+      message: `底部横向受力筋直径 Φ${bottom.diameter} < 建议最小 Φ10`,
+      suggestion: '建议底部横向受力筋直径不小于 Φ10',
+    });
+  }
+  if (bottom.spacing > 200) {
+    results.push({
+      field: 'bottomBar', rule: '22G101-3 条形基础构造',
+      status: 'warn',
+      message: `底部横向受力筋间距 ${bottom.spacing}mm > 常用上限 200mm`,
+      suggestion: '建议减小间距或增大直径',
+    });
+  }
+  if (dist.spacing > 250) {
+    results.push({
+      field: 'distBar', rule: '22G101-3 条形基础构造',
+      status: 'warn',
+      message: `底部分布筋间距 ${dist.spacing}mm > 常用上限 250mm`,
+      suggestion: '建议分布筋间距 ≤250mm',
+    });
+  }
+  if (p.supportCount === 2 && (!p.topBar || !p.topDistBar)) {
+    results.push({
+      field: 'topBar/topDistBar', rule: '22G101-3 第1-19~1-20页',
+      status: 'warn',
+      message: '双梁/双墙条基未完整设置两支承之间的顶部钢筋',
+      suggestion: '建议明确 T 筋和顶部分布筋',
+    });
+  }
+  if (p.supportCount === 2 && !p.supportSpacing) {
+    results.push({
+      field: 'supportSpacing', rule: '22G101-3 第1部分',
+      status: 'fail',
+      message: '双梁/双墙条基缺少支承中心距',
+      suggestion: '建议补充两支承中心距，便于读取顶部钢筋范围',
+    });
+  }
+  if (p.supportType === 'beam' && (!p.jlBottom || !p.jlTop || !p.jlStirrup)) {
+    results.push({
+      field: 'jl', rule: '22G101-3 第2-23~2-28页',
+      status: 'warn',
+      message: '当前条基为梁支承，但 JL 主梁细部筋信息不完整',
+      suggestion: '建议补充 JL 底筋、顶筋和箍筋，便于识图和对比',
+    });
+  }
+  if (p.hasJcl && (!p.jclBottom || !p.jclTop || !p.jclStirrup || !p.jclB || !p.jclH)) {
+    results.push({
+      field: 'jcl', rule: '22G101-3 第2-29~2-31页',
+      status: 'warn',
+      message: '已启用 JCL 次梁，但截面或配筋信息不完整',
+      suggestion: '建议补充 JCL 宽高、纵筋和箍筋参数',
+    });
+  }
+  if (p.hasLocalOverride) {
+    if (!p.localOverrideLength || !p.localOverrideStart && p.localOverrideStart !== 0) {
+      results.push({
+        field: 'localOverride', rule: '22G101-3 第1-20页',
+        status: 'warn',
+        message: '已启用原位修正，但起点或长度未完整填写',
+        suggestion: '建议明确原位修正段起点和长度',
+      });
+    } else if ((p.localOverrideStart || 0) + (p.localOverrideLength || 0) > p.length) {
+      results.push({
+        field: 'localOverride', rule: '22G101-3 第1-20页',
+        status: 'fail',
+        message: '原位修正段超出条形基础总长度',
+        suggestion: '建议调整原位修正起点或长度，使其落在条基范围内',
+      });
+    }
+  }
+  if (results.length === 0) {
+    results.push({ field: '-', rule: 'GB50010/22G101-3', status: 'pass', message: '条形基础配筋满足当前校验规则' });
+  }
+  return results;
+}
+
+export function checkPileCapCompliance(p: PileCapParams): ComplianceResult[] {
+  const results: ComplianceResult[] = [];
+  const cover = p.cover || 50;
+  const barX = parseSlabRebar(p.bottomBarX);
+  const barY = parseSlabRebar(p.bottomBarY);
+
+  if (cover < 50) {
+    results.push({
+      field: 'cover', rule: 'GB50010 §8.2.1',
+      status: 'warn',
+      message: `承台保护层 ${cover}mm < 建议最小 50mm`,
+      suggestion: '建议承台保护层按基础构件要求校核',
+    });
+  }
+  if (p.h < Math.max(500, p.pileDiameter)) {
+    results.push({
+      field: 'h', rule: '22G101-3 承台构造',
+      status: 'warn',
+      message: `承台高度 ${p.h}mm < max(500, 桩径${p.pileDiameter}mm)`,
+      suggestion: '建议承台高度不小于桩径且不小于 500mm',
+    });
+  }
+  for (const [field, bar] of [['bottomBarX', barX], ['bottomBarY', barY]] as const) {
+    if (bar.diameter < 10) {
+      results.push({
+        field, rule: '22G101-3 承台构造',
+        status: 'fail',
+        message: `${field === 'bottomBarX' ? 'X向' : 'Y向'}底筋直径 Φ${bar.diameter} < 建议最小 Φ10`,
+        suggestion: '建议承台底筋直径不小于 Φ10',
+      });
+    }
+    if (bar.spacing > 200) {
+      results.push({
+        field, rule: '22G101-3 承台构造',
+        status: 'warn',
+        message: `${field === 'bottomBarX' ? 'X向' : 'Y向'}底筋间距 ${bar.spacing}mm > 常用上限 200mm`,
+        suggestion: '建议减小间距或增大直径',
+      });
+    }
+  }
+  const colR = parseRebar(p.colMain);
+  const laE = calcLaE(colR.grade, colR.diameter, p.concreteGrade, p.seismicGrade || '三级');
+  const anchor = determineColFoundAnchor(p.h, cover, colR.diameter, laE);
+  results.push(anchor.canStraight
+    ? { field: 'colMain', rule: '22G101-3 §2-10', status: 'pass', message: `柱插筋可直锚，laE=${laE}mm，可用深度=${p.h - cover}mm` }
+    : { field: 'colMain', rule: '22G101-3 §2-10', status: 'warn', message: `柱插筋需弯锚，laE=${laE}mm > 可用深度=${p.h - cover}mm`, suggestion: `建议按底弯 ${anchor.bendLength}mm 处理` });
+
+  if (results.length === 0) {
+    results.push({ field: '-', rule: 'GB50010/22G101-3', status: 'pass', message: '承台配筋满足当前校验规则' });
+  }
+  return results;
+}
+
 // ─── 筏板基础合规性校验 (GB50007 / GB50010 / 22G101-3) ───
 
 export function checkRaftCompliance(p: RaftFoundationParams): ComplianceResult[] {
@@ -851,7 +1064,7 @@ export function checkRaftCompliance(p: RaftFoundationParams): ComplianceResult[]
 
 export function checkCompliance(
   componentType: ComponentType,
-  params: BeamParams | ColumnParams | SlabParams | ShearWallParams | StairParams | RaftFoundationParams,
+  params: BeamParams | ColumnParams | SlabParams | ShearWallParams | StairParams | FoundationParams | StripFoundationParams | PileCapParams | RaftFoundationParams,
 ): ComplianceResult[] {
   switch (componentType) {
     case 'beam': return checkBeamCompliance(params as BeamParams);
@@ -859,6 +1072,9 @@ export function checkCompliance(
     case 'slab': return checkSlabCompliance(params as SlabParams);
     case 'shearwall': return checkShearWallCompliance(params as ShearWallParams);
     case 'stair': return checkStairCompliance(params as StairParams);
+    case 'foundation': return checkFoundationCompliance(params as FoundationParams);
+    case 'stripfoundation': return checkStripFoundationCompliance(params as StripFoundationParams);
+    case 'pilecap': return checkPileCapCompliance(params as PileCapParams);
     case 'raft': return checkRaftCompliance(params as RaftFoundationParams);
     case 'joint': return [{ field: '-', rule: 'GB50010', status: 'pass', message: '节点构造校验暂未实现' }];
     default: return [{ field: '-', rule: '-', status: 'pass', message: '暂未实现' }];

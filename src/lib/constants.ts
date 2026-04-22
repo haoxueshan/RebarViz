@@ -142,6 +142,18 @@ export const COLOR_FOUND_TOP_X_HI = '#F39C12';
 export const COLOR_FOUND_TOP_Y = '#27AE60';
 export const COLOR_FOUND_TOP_Y_HI = '#2ECC71';
 
+/** 双柱基础基础梁底筋 */
+export const COLOR_FOUND_BEAM_BOTTOM = '#8B4513';
+export const COLOR_FOUND_BEAM_BOTTOM_HI = '#B5651D';
+
+/** 双柱基础基础梁顶筋 */
+export const COLOR_FOUND_BEAM_TOP = '#C97B36';
+export const COLOR_FOUND_BEAM_TOP_HI = '#E09A4B';
+
+/** 双柱基础基础梁箍筋 */
+export const COLOR_FOUND_BEAM_STIRRUP = '#2E8B57';
+export const COLOR_FOUND_BEAM_STIRRUP_HI = '#3CB371';
+
 /** 独立基础施工步骤 */
 export const FOUNDATION_CONSTRUCTION_STEPS: ConstructionStep[] = [
   { groups: new Set(['concrete']), label: '模板+混凝土' },
@@ -157,7 +169,10 @@ export const FOUNDATION_DUAL_COL_STEPS: ConstructionStep[] = [
   { groups: new Set(['concrete', 'bottomX', 'bottomY']), label: '+Y向底筋' },
   { groups: new Set(['concrete', 'bottomX', 'bottomY', 'topX']), label: '+X向顶筋' },
   { groups: new Set(['concrete', 'bottomX', 'bottomY', 'topX', 'topY']), label: '+Y向顶筋' },
-  { groups: new Set(['concrete', 'bottomX', 'bottomY', 'topX', 'topY', 'colMain']), label: '+柱插筋' },
+  { groups: new Set(['concrete', 'bottomX', 'bottomY', 'topX', 'topY', 'beamStirrup']), label: '+基础梁箍筋' },
+  { groups: new Set(['concrete', 'bottomX', 'bottomY', 'topX', 'topY', 'beamStirrup', 'beamBottom']), label: '+基础梁底筋' },
+  { groups: new Set(['concrete', 'bottomX', 'bottomY', 'topX', 'topY', 'beamStirrup', 'beamBottom', 'beamTop']), label: '+基础梁顶筋' },
+  { groups: new Set(['concrete', 'bottomX', 'bottomY', 'topX', 'topY', 'beamStirrup', 'beamBottom', 'beamTop', 'colMain']), label: '+柱插筋' },
 ];
 
 // ─── 承台 (Pile Cap) ─────────────────────────────────

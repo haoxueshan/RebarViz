@@ -2,7 +2,7 @@
 
 import { useRef, useEffect, useState, useCallback, type RefObject } from 'react';
 import { Download } from 'lucide-react';
-import type { BeamParams, ColumnParams, SlabParams, ShearWallParams, StairParams, FoundationParams, PileCapParams, RaftFoundationParams } from '@/lib/types';
+import type { BeamParams, ColumnParams, SlabParams, ShearWallParams, StairParams, FoundationParams, StripFoundationParams, PileCapParams, RaftFoundationParams } from '@/lib/types';
 import { parseRebar, parseRebarBottom, parseStirrup, parseSlabRebar, parseSideBar, resolveColumnBars } from '@/lib/rebar';
 import {
   setupHiDPI, drawConcreteSection, drawRebarDot, drawRebarCross,
@@ -861,6 +861,129 @@ export function FoundationCrossSection({ params }: { params: FoundationParams })
   return (
     <div ref={containerRef} className="relative w-full">
       <ExportButton canvasRef={canvasRef} filename="foundation-section.png" />
+      <canvas ref={canvasRef} className="max-w-full" />
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// STRIP FOUNDATION (条形基础 俯视示意)
+// ═══════════════════════════════════════════════════════════════════
+export function StripFoundationCrossSection({ params }: { params: StripFoundationParams }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const containerW = useContainerWidth(containerRef, 420);
+  const LW = Math.min(Math.max(containerW, 320), 640);
+  const LH = LW * 0.62;
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = setupHiDPI(canvas, LW, LH);
+    if (!ctx) return;
+
+    const length = params.length;
+    const width = params.width;
+    const cover = params.cover || 40;
+    const bottom = parseSlabRebar(params.bottomBar);
+    const dist = parseSlabRebar(params.distBar);
+
+    const margin = 40;
+    const drawW = LW - margin * 2;
+    const drawH = LH - margin * 2;
+    const scale = Math.min(drawW / length, drawH / width);
+    const cx = LW / 2;
+    const cy = LH / 2;
+    const secW = length * scale;
+    const secH = width * scale;
+    const secL = cx - secW / 2;
+    const secR = cx + secW / 2;
+    const secT = cy - secH / 2;
+    const secB = cy + secH / 2;
+    const coverS = cover * scale;
+
+    drawConcreteSection(ctx, secL, secT, secW, secH);
+
+    const supportWidth = params.supportWidth * scale;
+    const supportLabel = params.supportType === 'beam' ? '基础梁' : '墙';
+    const supportCenters = params.supportCount === 2 && params.supportSpacing
+      ? [cy - params.supportSpacing * scale / 2, cy + params.supportSpacing * scale / 2]
+      : [cy];
+
+    ctx.setLineDash([4, 3]);
+    ctx.strokeStyle = '#64748B';
+    ctx.lineWidth = 1.5;
+    ctx.fillStyle = 'rgba(100,116,139,0.08)';
+    for (const supportCy of supportCenters) {
+      ctx.fillRect(secL + coverS, supportCy - supportWidth / 2, secW - 2 * coverS, supportWidth);
+      ctx.strokeRect(secL + coverS, supportCy - supportWidth / 2, secW - 2 * coverS, supportWidth);
+    }
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#64748B';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'center';
+    for (const supportCy of supportCenters) {
+      ctx.fillText(supportLabel, cx, supportCy + 4);
+    }
+
+    const bottomCount = Math.min(Math.floor((length - 2 * cover) / bottom.spacing) + 1, 60);
+    const bottomStart = secL + coverS + bottom.diameter * scale / 2;
+    const bottomEnd = secR - coverS - bottom.diameter * scale / 2;
+    const bottomStep = bottomCount > 1 ? (bottomEnd - bottomStart) / (bottomCount - 1) : 0;
+    const bottomY = secB - coverS - bottom.diameter * scale / 2;
+    for (let i = 0; i < bottomCount; i++) {
+      drawRebarDot(ctx, bottomStart + i * bottomStep, bottomY, Math.max(bottom.diameter * scale * 0.5, 3), '#C0392B');
+    }
+
+    const distCount = Math.min(Math.floor((width - 2 * cover) / dist.spacing) + 1, 24);
+    const distStart = secT + coverS + dist.diameter * scale / 2;
+    const distEnd = secB - coverS - dist.diameter * scale / 2;
+    const distStep = distCount > 1 ? (distEnd - distStart) / (distCount - 1) : 0;
+    const distX = secL + coverS + dist.diameter * scale / 2;
+    for (let i = 0; i < distCount; i++) {
+      drawRebarDot(ctx, distX, distStart + i * distStep, Math.max(dist.diameter * scale * 0.5, 3), '#2980B9');
+    }
+
+    if (params.supportCount === 2 && params.supportSpacing && params.topBar) {
+      const top = parseSlabRebar(params.topBar);
+      const clearGap = Math.max(params.supportSpacing - params.supportWidth, 0);
+      const gapTop = cy - clearGap * scale / 2;
+      const gapBottom = cy + clearGap * scale / 2;
+      ctx.fillStyle = 'rgba(230,126,34,0.08)';
+      ctx.fillRect(secL + coverS, gapTop, secW - 2 * coverS, gapBottom - gapTop);
+      const topCount = Math.min(Math.floor((length - 2 * cover) / top.spacing) + 1, 60);
+      const topStep = topCount > 1 ? (bottomEnd - bottomStart) / (topCount - 1) : 0;
+      const topY = gapTop + (gapBottom - gapTop) / 2;
+      for (let i = 0; i < topCount; i++) {
+        drawRebarDot(ctx, bottomStart + i * topStep, topY, Math.max(top.diameter * scale * 0.5, 3), '#E67E22');
+      }
+    }
+
+    drawCoverDim(ctx, secL, secB, coverS, cover);
+    drawDimLine(ctx, secL, secB, secR, secB, `${length}`, 'bottom', 16);
+    drawDimLine(ctx, secL, secT, secL, secB, `${width}`, 'left', 18);
+    if (params.supportCount === 2 && params.supportSpacing) {
+      drawDimLine(ctx, secL + secW * 0.25, supportCenters[0], secL + secW * 0.25, supportCenters[1], `s=${params.supportSpacing}`, 'right', 16);
+    }
+
+    const labelX = secR + 8;
+    let labelY = cy - 18;
+    drawLabel(ctx, `B: ${params.bottomBar}`, labelX, labelY, '#C0392B', LW);
+    labelY += 14;
+    drawLabel(ctx, `分布: ${params.distBar}`, labelX, labelY, '#2980B9', LW);
+    if (params.topBar) {
+      labelY += 14;
+      drawLabel(ctx, `T: ${params.topBar}`, labelX, labelY, '#E67E22', LW);
+    }
+    if (params.topDistBar) {
+      labelY += 14;
+      drawLabel(ctx, `顶分: ${params.topDistBar}`, labelX, labelY, '#27AE60', LW);
+    }
+  }, [params, LW, LH]);
+
+  return (
+    <div ref={containerRef} className="relative w-full">
+      <ExportButton canvasRef={canvasRef} filename="stripfoundation-section.png" />
       <canvas ref={canvasRef} className="max-w-full" />
     </div>
   );

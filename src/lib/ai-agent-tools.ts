@@ -10,9 +10,7 @@ export interface ModifyParamsArgs {
   params: Record<string, unknown>;
 }
 
-export interface RunComplianceCheckArgs {
-  // no args needed — uses current params
-}
+export type RunComplianceCheckArgs = Record<string, never>;
 
 export interface RunCalculationArgs {
   type: 'ratio' | 'weight' | 'anchor' | 'concrete';
@@ -35,18 +33,14 @@ export interface ApplyPresetArgs {
   preset: string;
 }
 
-export interface GetCurrentStateArgs {
-  // no args
-}
+export type GetCurrentStateArgs = Record<string, never>;
 
 export interface SaveFavoriteArgs {
   name: string;
   note?: string;
 }
 
-export interface ResetParamsArgs {
-  // no args — resets to default
-}
+export type ResetParamsArgs = Record<string, never>;
 
 export interface CompareWithPresetArgs {
   preset: string;
@@ -217,7 +211,7 @@ export const AGENT_TOOLS = [
         properties: {
           type: {
             type: 'string',
-            enum: ['beam', 'column', 'slab', 'joint', 'shearwall', 'stair', 'foundation', 'pilecap', 'raft'],
+            enum: ['beam', 'column', 'slab', 'joint', 'shearwall', 'stair', 'foundation', 'stripfoundation', 'pilecap', 'raft'],
             description: '目标构件类型',
           },
           message: {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Grid } from '@react-three/drei';
 import { Maximize2, Minimize2 } from 'lucide-react';
@@ -8,8 +8,8 @@ import { useFullscreen } from '@/lib/useFullscreen';
 import * as THREE from 'three';
 import type { PileCapParams, RebarMeshInfo } from '@/lib/types';
 import { parseSlabRebar, parseRebar, gradeLabel } from '@/lib/rebar';
-import { calcLaE } from '@/lib/anchor';
-import { determineColFoundAnchor } from '@/lib/construction-rules';
+import { calcLaE, getPileEmbedDepth } from '@/lib/anchor';
+import { determineColFoundAnchor, determinePileCapRebarEnd } from '@/lib/construction-rules';
 import { CameraController, InstancedRebarGroup, buildZBarMatrices, buildXBarMatrices, buildVertBarMatrices, buildColBendMatrices } from '@/components/InstancedRebar';
 import {
   S,
@@ -49,6 +49,15 @@ function PileCylinder({ position, height, diameter, color, hiColor, info, select
 function computePilePositions(params: PileCapParams): { x: number; z: number }[] {
   const positions: { x: number; z: number }[] = [];
   const { pileCount, pileSpacingX, pileSpacingY } = params;
+
+  if (params.pileLayout === 'circular' && pileCount >= 3) {
+    const radius = Math.max(pileSpacingX, pileSpacingY || pileSpacingX) * S / 2;
+    for (let i = 0; i < pileCount; i++) {
+      const angle = (Math.PI * 2 * i) / pileCount - Math.PI / 2;
+      positions.push({ x: Math.cos(angle) * radius, z: Math.sin(angle) * radius });
+    }
+    return positions;
+  }
 
   if (pileCount === 1) {
     positions.push({ x: 0, z: 0 });
@@ -99,10 +108,15 @@ function PileCapScene({ params, selected, onSelect, concreteOpacity, visibleGrou
   const bendLenM = anchor.bendLength * S;
   const anchorLabel = anchor.canStraight ? '直锚' : '弯锚';
 
-  const barXInfo: RebarMeshInfo = { type: 'pcBottomX', label: 'X向底筋', detail: `${params.bottomBarX} · ${gradeLabel(barX.grade)} Φ${barX.diameter}@${barX.spacing}` };
-  const barYInfo: RebarMeshInfo = { type: 'pcBottomY', label: 'Y向底筋', detail: `${params.bottomBarY} · ${gradeLabel(barY.grade)} Φ${barY.diameter}@${barY.spacing}` };
+  const availLenX = params.by / 2 - coverMm;
+  const availLenY = params.bx / 2 - coverMm;
+  const rebarEndX = determinePileCapRebarEnd(barX.diameter, 'round', params.pileDiameter, availLenX);
+  const rebarEndY = determinePileCapRebarEnd(barY.diameter, 'round', params.pileDiameter, availLenY);
+
+  const barXInfo: RebarMeshInfo = { type: 'pcBottomX', label: 'X向底筋', detail: `${params.bottomBarX} · ${gradeLabel(barX.grade)} Φ${barX.diameter}@${barX.spacing}${rebarEndX.needBend ? ` · 端弯${rebarEndX.bendLen}mm` : ''}` };
+  const barYInfo: RebarMeshInfo = { type: 'pcBottomY', label: 'Y向底筋', detail: `${params.bottomBarY} · ${gradeLabel(barY.grade)} Φ${barY.diameter}@${barY.spacing}${rebarEndY.needBend ? ` · 端弯${rebarEndY.bendLen}mm` : ''}` };
   const colInfo: RebarMeshInfo = { type: 'pcColMain', label: '柱插筋', detail: `${params.colMain} · ${colR.count}根 ${gradeLabel(colR.grade)} Φ${colR.diameter} · ${anchorLabel} 底弯${anchor.bendLength}mm` };
-  const pileInfo: RebarMeshInfo = { type: 'pcPile', label: '桩基', detail: `Φ${params.pileDiameter}mm × ${params.pileLength}mm · ${params.pileCount}根` };
+  const pileInfo: RebarMeshInfo = { type: 'pcPile', label: '桩基', detail: `Φ${params.pileDiameter}mm × ${params.pileLength}mm · ${params.pileCount}根 · 桩顶嵌入承台${getPileEmbedDepth(params.pileDiameter)}mm` };
 
   const barXSelected = selected?.type === 'pcBottomX';
   const barYSelected = selected?.type === 'pcBottomY';
@@ -114,6 +128,9 @@ function PileCapScene({ params, selected, onSelect, concreteOpacity, visibleGrou
   const hM = params.h * S;
   const pileLenVis = Math.min(params.pileLength * S, hM * 3);
   const pileDiaVis = params.pileDiameter * S;
+  const pileEmbedDepthM = getPileEmbedDepth(params.pileDiameter) * S;
+  const pileCenterY = pileEmbedDepthM - pileLenVis / 2;
+  const columnStubH = Math.max(700, Math.max(params.colBx, params.colBy) * 1.4) * S;
   const barXLevel = cover;
   const barYLevel = cover + barX.diameter * S;
   const zStart = -byM / 2 + cover;
@@ -126,17 +143,36 @@ function PileCapScene({ params, selected, onSelect, concreteOpacity, visibleGrou
   const pilePositions = useMemo(() => computePilePositions(params), [params]);
 
   // Bottom bar matrices
-  const xBotMatrices = useMemo(() => {
+  const { matrices: xBotMatrices, positions: xBotPositions } = useMemo(() => {
     const count = Math.floor((params.bx - 2 * params.cover) / barX.spacing) + 1;
     const positions = Array.from({ length: count }, (_, i) => -bxM / 2 + cover + i * barX.spacing * S);
-    return buildZBarMatrices(positions, barXLevel, zStart, zEnd);
+    return { positions, matrices: buildZBarMatrices(positions, barXLevel, zStart, zEnd) };
   }, [params.bx, params.cover, barX.spacing, bxM, cover, barXLevel, zStart, zEnd]);
 
-  const yBotMatrices = useMemo(() => {
+  const { matrices: yBotMatrices, positions: yBotPositions } = useMemo(() => {
     const count = Math.floor((params.by - 2 * params.cover) / barY.spacing) + 1;
     const positions = Array.from({ length: count }, (_, i) => -byM / 2 + cover + i * barY.spacing * S);
-    return buildXBarMatrices(positions, barYLevel, xStart, xEnd);
+    return { positions, matrices: buildXBarMatrices(positions, barYLevel, xStart, xEnd) };
   }, [params.by, params.cover, barY.spacing, byM, cover, barYLevel, xStart, xEnd]);
+
+  const hookLenXM = rebarEndX.needBend ? rebarEndX.bendLen * S : 0;
+  const hookLenYM = rebarEndY.needBend ? rebarEndY.bendLen * S : 0;
+  const xHookPositions = useMemo(
+    () => xBotPositions.flatMap(x => [{ x, z: zStart }, { x, z: zEnd }]),
+    [xBotPositions, zStart, zEnd],
+  );
+  const yHookPositions = useMemo(
+    () => yBotPositions.flatMap(z => [{ x: xStart, z }, { x: xEnd, z }]),
+    [yBotPositions, xStart, xEnd],
+  );
+  const xHookMatrices = useMemo(
+    () => rebarEndX.needBend ? buildVertBarMatrices(xHookPositions, cover + hookLenXM / 2) : [],
+    [rebarEndX.needBend, xHookPositions, cover, hookLenXM],
+  );
+  const yHookMatrices = useMemo(
+    () => rebarEndY.needBend ? buildVertBarMatrices(yHookPositions, cover + hookLenYM / 2) : [],
+    [rebarEndY.needBend, yHookPositions, cover, hookLenYM],
+  );
 
   // Column insert bar data
   const colInsertH = hM + 0.5;
@@ -169,7 +205,7 @@ function PileCapScene({ params, selected, onSelect, concreteOpacity, visibleGrou
 
       {visibleGroups.has('pile') && pilePositions.map((p, i) => (
         <PileCylinder key={`pile${i}`}
-          position={[p.x, -pileLenVis / 2, p.z]}
+          position={[p.x, pileCenterY, p.z]}
           height={pileLenVis} diameter={pileDiaVis}
           color={COLOR_PC_PILE} hiColor={COLOR_PC_PILE_HI}
           info={pileInfo} selected={pileSelected} onSelect={onSelect} />
@@ -189,10 +225,16 @@ function PileCapScene({ params, selected, onSelect, concreteOpacity, visibleGrou
       )}
 
       {visibleGroups.has('concrete') && (
-        <lineSegments position={[0, hM, 0]} rotation={[Math.PI / 2, 0, 0]}>
-          <edgesGeometry args={[new THREE.PlaneGeometry(params.colBx * S, params.colBy * S)]} />
-          <lineBasicMaterial color="#64748B" linewidth={2} />
-        </lineSegments>
+        <group>
+          <mesh position={[0, hM + columnStubH / 2, 0]}>
+            <boxGeometry args={[params.colBx * S, columnStubH, params.colBy * S]} />
+            <meshPhysicalMaterial color="#7F8C8D" transparent opacity={0.14} side={THREE.DoubleSide} depthWrite={false} roughness={0.8} />
+          </mesh>
+          <lineSegments position={[0, hM + columnStubH / 2, 0]}>
+            <edgesGeometry args={[new THREE.BoxGeometry(params.colBx * S, columnStubH, params.colBy * S)]} />
+            <lineBasicMaterial color="#64748B" transparent opacity={0.65} />
+          </lineSegments>
+        </group>
       )}
 
       <InstancedRebarGroup matrices={xBotMatrices} radius={barX.diameter * S / 2} length={barLenZ}
@@ -200,6 +242,14 @@ function PileCapScene({ params, selected, onSelect, concreteOpacity, visibleGrou
         info={barXInfo} selected={barXSelected} onSelect={onSelect} visible={visibleGroups.has('bottomX')} />
 
       <InstancedRebarGroup matrices={yBotMatrices} radius={barY.diameter * S / 2} length={barLenX}
+        color={COLOR_PC_BOTTOM_Y} hiColor={COLOR_PC_BOTTOM_Y_HI}
+        info={barYInfo} selected={barYSelected} onSelect={onSelect} visible={visibleGroups.has('bottomY')} />
+
+      <InstancedRebarGroup matrices={xHookMatrices} radius={barX.diameter * S / 2} length={hookLenXM}
+        color={COLOR_PC_BOTTOM_X} hiColor={COLOR_PC_BOTTOM_X_HI}
+        info={barXInfo} selected={barXSelected} onSelect={onSelect} visible={visibleGroups.has('bottomX')} />
+
+      <InstancedRebarGroup matrices={yHookMatrices} radius={barY.diameter * S / 2} length={hookLenYM}
         color={COLOR_PC_BOTTOM_Y} hiColor={COLOR_PC_BOTTOM_Y_HI}
         info={barYInfo} selected={barYSelected} onSelect={onSelect} visible={visibleGroups.has('bottomY')} />
 
@@ -216,17 +266,20 @@ function PileCapScene({ params, selected, onSelect, concreteOpacity, visibleGrou
 
 /* ─── Main Viewer ─── */
 export default function PileCapViewer({ params }: { params: PileCapParams }) {
-  const [selected, setSelected] = useState<RebarMeshInfo | null>(null);
+  const [selectionState, setSelectionState] = useState(() => ({
+    params,
+    selected: null as RebarMeshInfo | null,
+  }));
   const [concreteOpacity, setConcreteOpacity] = useState(0.25);
   const { containerRef: fsRef, isFullscreen: fsActive, toggle: fsToggle } = useFullscreen();
 
   const [stepIdx, setStepIdx] = useState(PILECAP_CONSTRUCTION_STEPS.length - 1);
   const visibleGroups = PILECAP_CONSTRUCTION_STEPS[stepIdx]?.groups ?? new Set<string>();
-  const [cameraTarget, setCameraTarget] = useState<[number, number, number] | null>(null);
+  const [cameraTarget] = useState<[number, number, number] | null>(null);
 
   const totalH = params.h * S;
-
-  useEffect(() => { setSelected(null); }, [params]);
+  const selected = selectionState.params === params ? selectionState.selected : null;
+  const setSelected = (next: RebarMeshInfo | null) => setSelectionState({ params, selected: next });
 
   return (
     <div ref={fsRef} className={`bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden ${fsActive ? 'fixed inset-0 z-50' : ''}`}>

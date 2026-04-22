@@ -15,6 +15,7 @@ const COMPONENT_LABELS: Record<ComponentType, string> = {
   shearwall: '剪力墙',
   stair: '楼梯',
   foundation: '独立基础',
+  stripfoundation: '条形基础',
   pilecap: '承台',
   raft: '筏板基础',
 };
@@ -128,6 +129,19 @@ const FOUNDATION_VISION = `
 
 **输出字段：** bx, by, totalHeight, bottomRebarX, bottomRebarY`;
 
+const STRIPFOUNDATION_VISION = `
+### 条形基础 (TJ/TJB) 识别要点
+
+**图纸特征：** 平面图中沿轴线连续布置的长条形底板，常与一条或两条基础梁/墙线组合出现
+
+**标注格式：**
+- 条形基础底板宽度与厚度
+- \`B: Φ14@150/Φ8@250\` → 底部横向受力筋 / 纵向分布筋
+- \`T: Φ12@150/Φ8@250\` → 顶部横向受力筋 / 分布筋（多见于双梁或双墙之间）
+- 单梁 / 双梁、单墙 / 双墙共底板时，顶部钢筋范围只在两梁(墙)之间
+
+**输出字段：** length, width, h, bottomBar, distBar, topBar, topDistBar, supportType, supportCount, supportWidth, supportSpacing`;
+
 const PILECAP_VISION = `
 ### 承台 (CT/ZJ) 识别要点
 
@@ -160,6 +174,7 @@ const COMPONENT_VISION_MAP: Partial<Record<ComponentType, string>> = {
   shearwall: SHEARWALL_VISION,
   stair: STAIR_VISION,
   foundation: FOUNDATION_VISION,
+  stripfoundation: STRIPFOUNDATION_VISION,
   pilecap: PILECAP_VISION,
   raft: RAFT_VISION,
 };
@@ -232,6 +247,7 @@ export function buildVisionSystemPrompt(componentType?: ComponentType): string {
 - **Q/YDZ/YAZ** → 剪力墙 (shearwall)
 - **AT/BT/CT** → 楼梯 (stair)
 - **DJ/JC** → 独立基础 (foundation)
+- **TJ/TJB** → 条形基础 (stripfoundation)
 - **CT/ZJ** → 承台 (pilecap)
 - **FB/PF** → 筏板 (raft)
 
@@ -250,7 +266,7 @@ export function buildScanSystemPrompt(): string {
 只输出一个 JSON 对象，不要包含任何 markdown 代码块、注释或其他文字：
 
 {
-  "detectedType": "beam" | "column" | "slab" | "shearwall" | "stair" | "foundation" | "pilecap" | "raft",
+  "detectedType": "beam" | "column" | "slab" | "shearwall" | "stair" | "foundation" | "stripfoundation" | "pilecap" | "raft",
   "confidence": 0.0到1.0之间的数值,
   "componentId": "KL1" 或 "KZ1" 等（如能识别，否则为null）,
   "params": {
@@ -260,6 +276,7 @@ export function buildScanSystemPrompt(): string {
     剪力墙(shearwall): thickness, verticalRebar{diameter,spacing}, horizontalRebar{diameter,spacing}
     楼梯(stair): slabThickness, stepWidth, stepHeight, stepCount, mainRebar{diameter,spacing}
     独立基础(foundation): bx, by, totalHeight, bottomRebarX{diameter,spacing}, bottomRebarY{diameter,spacing}
+    条形基础(stripfoundation): length, width, h, bottomBar, distBar, topBar, topDistBar, supportType, supportCount, supportWidth, supportSpacing
     承台(pilecap): bx, by, height, pileCount, bottomRebarX{diameter,spacing}, bottomRebarY{diameter,spacing}
     筏板(raft): thickness, bottomRebarX{diameter,spacing}, bottomRebarY{diameter,spacing}, topRebarX{diameter,spacing}, topRebarY{diameter,spacing}
   },

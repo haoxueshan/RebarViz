@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Grid } from '@react-three/drei';
 import { Maximize2, Minimize2 } from 'lucide-react';
@@ -47,6 +47,8 @@ function RaftSceneBeamSlab({ params, selected, onSelect, concreteOpacity, visibl
   const topX = params.topBarX ? parseSlabRebar(params.topBarX) : null;
   const topY = params.topBarY ? parseSlabRebar(params.topBarY) : null;
   const colR = parseRebar(params.colMain);
+  const bottomOrder = params.bottomCrossOrder ?? 'xBelowY';
+  const topOrder = params.topCrossOrder ?? 'xBelowY';
   const beamBotR = params.beamBottom ? parseRebar(params.beamBottom) : { count: 4, grade: 'C', diameter: 25 };
   const beamTopR = params.beamTop ? parseRebar(params.beamTop) : { count: 6, grade: 'C', diameter: 25 };
   const stirrupR = params.beamStirrup
@@ -61,6 +63,7 @@ function RaftSceneBeamSlab({ params, selected, onSelect, concreteOpacity, visibl
   const lxM = params.lx * S;
   const lyM = params.ly * S;
   const hM = params.h * S;
+  const columnStubH = Math.max(800, Math.max(params.colBx, params.colBy) * 1.5) * S;
   const beamBM = beamBVal * S;
   const beamHM = beamHVal * S;
 
@@ -81,9 +84,14 @@ function RaftSceneBeamSlab({ params, selected, onSelect, concreteOpacity, visibl
     [params.colCountY, halfGridZ, params.colSpacingY]);
 
   // LPB slab rebar levels
-  const barXLevel = cover;
-  const barYLevel = cover + botX.diameter * S;
-  const topXLevel = hM - cover;
+  const barXLevel = bottomOrder === 'xBelowY' ? cover : cover + botY.diameter * S;
+  const barYLevel = bottomOrder === 'xBelowY' ? cover + botX.diameter * S : cover;
+  const topXLevel = topOrder === 'xBelowY'
+    ? hM - cover - (topY?.diameter || 12) * S
+    : hM - cover;
+  const topYLevel = topOrder === 'xBelowY'
+    ? hM - cover
+    : hM - cover - (topX?.diameter || 12) * S;
   const sStartZ = -lyM / 2 + cover; const sEndZ = lyM / 2 - cover;
   const sStartX = -lxM / 2 + cover; const sEndX = lxM / 2 - cover;
 
@@ -120,9 +128,8 @@ function RaftSceneBeamSlab({ params, selected, onSelect, concreteOpacity, visibl
   const yTopMats = useMemo(() => {
     if (!topY) return [];
     const n = Math.min(Math.floor((params.ly - 2 * coverMm) / topY.spacing) + 1, MAX_BARS);
-    const yLevel = hM - cover - (topX?.diameter || 12) * S;
-    return buildXBarMatrices(Array.from({ length: n }, (_, i) => sStartZ + i * topY.spacing * S), yLevel, sStartX, sEndX);
-  }, [params.ly, coverMm, topY, topX, sStartZ, cover, hM, sStartX, sEndX]);
+    return buildXBarMatrices(Array.from({ length: n }, (_, i) => sStartZ + i * topY.spacing * S), topYLevel, sStartX, sEndX);
+  }, [params.ly, coverMm, topY, sStartZ, topYLevel, sStartX, sEndX]);
 
   // JL beam longitudinal bars — X-direction beams (run along X, separate length from Y-beams)
   const xBeamBotMats = useMemo(() =>
@@ -194,8 +201,8 @@ function RaftSceneBeamSlab({ params, selected, onSelect, concreteOpacity, visibl
   const anchorLabel = anchor.canStraight ? '直锚' : '弯锚';
   const botXInfo: RebarMeshInfo = { type: 'raftBottomX', label: 'LPB X向底筋', detail: `${params.bottomBarX} · ${gradeLabel(botX.grade)} Φ${botX.diameter}@${botX.spacing}` };
   const botYInfo: RebarMeshInfo = { type: 'raftBottomY', label: 'LPB Y向底筋', detail: `${params.bottomBarY} · ${gradeLabel(botY.grade)} Φ${botY.diameter}@${botY.spacing}` };
-  const topXInfo: RebarMeshInfo | null = topX ? { type: 'raftTopX', label: 'LPB X向面筋', detail: `${params.topBarX}` } : null;
-  const topYInfo: RebarMeshInfo | null = topY ? { type: 'raftTopY', label: 'LPB Y向面筋', detail: `${params.topBarY}` } : null;
+  const topXInfo: RebarMeshInfo | null = topX ? { type: 'raftTopX', label: 'LPB X向面筋', detail: `${params.topBarX} · ${topOrder === 'xBelowY' ? '位于下层' : '位于上层'}` } : null;
+  const topYInfo: RebarMeshInfo | null = topY ? { type: 'raftTopY', label: 'LPB Y向面筋', detail: `${params.topBarY} · ${topOrder === 'xBelowY' ? '位于上层' : '位于下层'}` } : null;
   const beamBotInfo: RebarMeshInfo = { type: 'raftBeamBottom', label: 'JL底部纵筋 (B)', detail: `${params.beamBottom ?? '4C25'} · 梁底部贯通纵筋` };
   const beamTopInfo: RebarMeshInfo = { type: 'raftBeamTop', label: 'JL顶部纵筋 (T)', detail: `${params.beamTop ?? '6C25'} · 梁顶部贯通纵筋` };
   const beamStirInfo: RebarMeshInfo = { type: 'raftBeamStirrup', label: 'JL箍筋', detail: `${params.beamStirrup ?? 'A10@150(4)'}` };
@@ -261,10 +268,16 @@ function RaftSceneBeamSlab({ params, selected, onSelect, concreteOpacity, visibl
           const cx = -halfGridX + ix * params.colSpacingX * S;
           const cz = -halfGridZ + iy * params.colSpacingY * S;
           return (
-            <lineSegments key={`col-${ix}-${iy}`} position={[cx, Math.max(hM, beamHighM), cz]} rotation={[Math.PI / 2, 0, 0]}>
-              <edgesGeometry args={[new THREE.PlaneGeometry(params.colBx * S, params.colBy * S)]} />
-              <lineBasicMaterial color="#64748B" linewidth={2} />
-            </lineSegments>
+            <group key={`col-${ix}-${iy}`}>
+              <mesh position={[cx, Math.max(hM, beamHighM) + columnStubH / 2, cz]}>
+                <boxGeometry args={[params.colBx * S, columnStubH, params.colBy * S]} />
+                <meshPhysicalMaterial color="#7F8C8D" transparent opacity={0.14} side={THREE.DoubleSide} depthWrite={false} roughness={0.8} />
+              </mesh>
+              <lineSegments position={[cx, Math.max(hM, beamHighM) + columnStubH / 2, cz]}>
+                <edgesGeometry args={[new THREE.BoxGeometry(params.colBx * S, columnStubH, params.colBy * S)]} />
+                <lineBasicMaterial color="#64748B" transparent opacity={0.65} />
+              </lineSegments>
+            </group>
           );
         })
       )}
@@ -313,15 +326,18 @@ function RaftSceneFlatBase({ params, selected, onSelect, concreteOpacity, visibl
   const topX = params.topBarX ? parseSlabRebar(params.topBarX) : null;
   const topY = params.topBarY ? parseSlabRebar(params.topBarY) : null;
   const colR = parseRebar(params.colMain);
+  const bottomOrder = params.bottomCrossOrder ?? 'xBelowY';
+  const topOrder = params.topCrossOrder ?? 'xBelowY';
 
   const lxM = params.lx * S;
   const lyM = params.ly * S;
   const hM = params.h * S;
+  const columnStubH = Math.max(800, Math.max(params.colBx, params.colBy) * 1.5) * S;
 
-  const botXInfo: RebarMeshInfo = { type: 'raftBottomX', label: 'X向底筋', detail: `${params.bottomBarX} · ${gradeLabel(botX.grade)} Φ${botX.diameter}@${botX.spacing}` };
-  const botYInfo: RebarMeshInfo = { type: 'raftBottomY', label: 'Y向底筋', detail: `${params.bottomBarY} · ${gradeLabel(botY.grade)} Φ${botY.diameter}@${botY.spacing}` };
-  const topXInfo: RebarMeshInfo | null = topX ? { type: 'raftTopX', label: 'X向面筋', detail: `${params.topBarX} · ${gradeLabel(topX.grade)} Φ${topX.diameter}@${topX.spacing}` } : null;
-  const topYInfo: RebarMeshInfo | null = topY ? { type: 'raftTopY', label: 'Y向面筋', detail: `${params.topBarY} · ${gradeLabel(topY.grade)} Φ${topY.diameter}@${topY.spacing}` } : null;
+  const botXInfo: RebarMeshInfo = { type: 'raftBottomX', label: 'X向底筋', detail: `${params.bottomBarX} · ${gradeLabel(botX.grade)} Φ${botX.diameter}@${botX.spacing} · ${bottomOrder === 'xBelowY' ? '位于下层' : '位于上层'}` };
+  const botYInfo: RebarMeshInfo = { type: 'raftBottomY', label: 'Y向底筋', detail: `${params.bottomBarY} · ${gradeLabel(botY.grade)} Φ${botY.diameter}@${botY.spacing} · ${bottomOrder === 'xBelowY' ? '位于上层' : '位于下层'}` };
+  const topXInfo: RebarMeshInfo | null = topX ? { type: 'raftTopX', label: 'X向面筋', detail: `${params.topBarX} · ${gradeLabel(topX.grade)} Φ${topX.diameter}@${topX.spacing} · ${topOrder === 'xBelowY' ? '位于下层' : '位于上层'}` } : null;
+  const topYInfo: RebarMeshInfo | null = topY ? { type: 'raftTopY', label: 'Y向面筋', detail: `${params.topBarY} · ${gradeLabel(topY.grade)} Φ${topY.diameter}@${topY.spacing} · ${topOrder === 'xBelowY' ? '位于上层' : '位于下层'}` } : null;
   const colTotal = params.colCountX * params.colCountY;
 
   // 22G101-3 柱插筋锚固
@@ -341,14 +357,21 @@ function RaftSceneFlatBase({ params, selected, onSelect, concreteOpacity, visibl
 
   const MAX_BARS = 200; // InstancedMesh can handle far more than individual meshes
 
-  const barXLevel = cover;
-  const barYLevel = cover + botX.diameter * S;
+  const barXLevel = bottomOrder === 'xBelowY' ? cover : cover + botY.diameter * S;
+  const barYLevel = bottomOrder === 'xBelowY' ? cover + botX.diameter * S : cover;
   const zStart = -lyM / 2 + cover;
   const zEnd = lyM / 2 - cover;
   const xStart = -lxM / 2 + cover;
   const xEnd = lxM / 2 - cover;
   const barLenZ = Math.abs(zEnd - zStart);
   const barLenX = Math.abs(xEnd - xStart);
+  const topXLevel = topOrder === 'xBelowY'
+    ? hM - cover - (topY?.diameter || 12) * S
+    : hM - cover;
+  const topYLevel = topOrder === 'xBelowY'
+    ? hM - cover
+    : hM - cover - (topX?.diameter || 12) * S;
+  const colStripLevel = Math.max(barXLevel + botX.diameter * S, barYLevel + botY.diameter * S);
 
   // X bottom bar positions & matrices
   const { matrices: xBotMatrices } = useMemo(() => {
@@ -375,8 +398,8 @@ function RaftSceneFlatBase({ params, selected, onSelect, concreteOpacity, visibl
     const startX = -lxM / 2 + cover;
     const step = topX.spacing * S;
     const positions = Array.from({ length: count }, (_, i) => startX + i * step);
-    return buildZBarMatrices(positions, hM - cover, zStart, zEnd);
-  }, [params.lx, params.cover, topX, lxM, cover, hM, zStart, zEnd]);
+    return buildZBarMatrices(positions, topXLevel, zStart, zEnd);
+  }, [params.lx, params.cover, topX, lxM, cover, topXLevel, zStart, zEnd]);
 
   // Y top bar matrices
   const yTopMatrices = useMemo(() => {
@@ -385,9 +408,8 @@ function RaftSceneFlatBase({ params, selected, onSelect, concreteOpacity, visibl
     const startZ = -lyM / 2 + cover;
     const step = topY.spacing * S;
     const positions = Array.from({ length: count }, (_, i) => startZ + i * step);
-    const yLevel = hM - cover - (topX?.diameter || 12) * S;
-    return buildXBarMatrices(positions, yLevel, xStart, xEnd);
-  }, [params.ly, params.cover, topY, topX, lyM, cover, hM, xStart, xEnd]);
+    return buildXBarMatrices(positions, topYLevel, xStart, xEnd);
+  }, [params.ly, params.cover, topY, lyM, cover, topYLevel, xStart, xEnd]);
 
   // Column positions on the raft
   const colPositionsAll = useMemo(() => {
@@ -440,9 +462,9 @@ function RaftSceneFlatBase({ params, selected, onSelect, concreteOpacity, visibl
     const n = Math.min(Math.floor((params.ly - 2 * (params.cover || 40)) / csX.spacing) + 1, MAX_BARS);
     const zPositions = Array.from({ length: n }, (_, i) => zStart + i * step)
       .filter(z => zColLines.some(zc => Math.abs(z - zc) <= halfStrip));
-    return buildXBarMatrices(zPositions, barXLevel + botX.diameter * S, xStart, xEnd);
+    return buildXBarMatrices(zPositions, colStripLevel, xStart, xEnd);
   }, [params.raftType, params.colStripBarX, params.colStripWidth, params.colCountY, params.colSpacingY,
-      params.ly, params.cover, botX.diameter, zStart, barXLevel, xStart, xEnd]);
+      params.ly, params.cover, zStart, colStripLevel, xStart, xEnd]);
 
   const colStripYMatrices = useMemo(() => {
     if (params.raftType !== 'flatPlate' || !params.colStripBarY || !params.colStripWidth) return [];
@@ -454,9 +476,9 @@ function RaftSceneFlatBase({ params, selected, onSelect, concreteOpacity, visibl
     const n = Math.min(Math.floor((params.lx - 2 * (params.cover || 40)) / csY.spacing) + 1, MAX_BARS);
     const xPositions = Array.from({ length: n }, (_, i) => xStart + i * step)
       .filter(x => xColLines.some(xc => Math.abs(x - xc) <= halfStrip));
-    return buildZBarMatrices(xPositions, barXLevel + botX.diameter * S, zStart, zEnd);
+    return buildZBarMatrices(xPositions, colStripLevel, zStart, zEnd);
   }, [params.raftType, params.colStripBarY, params.colStripWidth, params.colCountX, params.colSpacingX,
-      params.lx, params.cover, botX.diameter, xStart, barXLevel, zStart, zEnd]);
+      params.lx, params.cover, xStart, colStripLevel, zStart, zEnd]);
 
   const colStripXInfo: RebarMeshInfo = { type: 'raftColStrip', label: 'ZXB X向附加底筋', detail: `${params.colStripBarX ?? ''} · 柱下板带附加底筋 (22G101-3 §5)` };
   const colStripYInfo: RebarMeshInfo = { type: 'raftColStrip', label: 'ZXB Y向附加底筋', detail: `${params.colStripBarY ?? ''} · 柱下板带附加底筋 (22G101-3 §5)` };
@@ -486,10 +508,16 @@ function RaftSceneFlatBase({ params, selected, onSelect, concreteOpacity, visibl
 
       {/* Column outlines on top */}
       {visibleGroups.has('concrete') && colPositionsAll.map((c, ci) => (
-        <lineSegments key={`col-outline-${ci}`} position={[c.cx, hM, c.cz]} rotation={[Math.PI / 2, 0, 0]}>
-          <edgesGeometry args={[new THREE.PlaneGeometry(params.colBx * S, params.colBy * S)]} />
-          <lineBasicMaterial color="#64748B" linewidth={2} />
-        </lineSegments>
+        <group key={`col-outline-${ci}`}>
+          <mesh position={[c.cx, hM + columnStubH / 2, c.cz]}>
+            <boxGeometry args={[params.colBx * S, columnStubH, params.colBy * S]} />
+            <meshPhysicalMaterial color="#7F8C8D" transparent opacity={0.14} side={THREE.DoubleSide} depthWrite={false} roughness={0.8} />
+          </mesh>
+          <lineSegments position={[c.cx, hM + columnStubH / 2, c.cz]}>
+            <edgesGeometry args={[new THREE.BoxGeometry(params.colBx * S, columnStubH, params.colBy * S)]} />
+            <lineBasicMaterial color="#64748B" transparent opacity={0.65} />
+          </lineSegments>
+        </group>
       ))}
 
       {/* X-direction bottom rebars — 1 draw call */}
@@ -594,10 +622,11 @@ export default function RaftViewer({ params }: { params: RaftFoundationParams })
     : params.raftType === 'flatPlate'
       ? RAFT_FLAT_PLATE_STEPS
       : RAFT_CONSTRUCTION_STEPS;
-  const [stepIndex, setStepIndex] = useState(steps.length - 1);
-
-  // Reset step index when raft type changes
-  useEffect(() => { setStepIndex(steps.length - 1); }, [params.raftType, steps.length]);
+  const [stepState, setStepState] = useState(() => ({
+    raftType: params.raftType,
+    index: steps.length - 1,
+  }));
+  const stepIndex = stepState.raftType === params.raftType ? stepState.index : steps.length - 1;
 
   const hM = params.raftType === 'beamSlab'
     ? Math.max(params.h, params.beamH ?? 900) * S
@@ -615,7 +644,7 @@ export default function RaftViewer({ params }: { params: RaftFoundationParams })
       <div className="flex items-center gap-2 flex-wrap">
         <div className="flex items-center gap-1 bg-gray-100/80 rounded-lg p-0.5">
           {steps.map((s, i) => (
-            <button key={i} onClick={() => setStepIndex(i)}
+            <button key={i} onClick={() => setStepState({ raftType: params.raftType, index: i })}
               className={`px-3 py-1.5 rounded-md text-xs font-medium cursor-pointer transition-all ${stepIndex === i ? 'bg-white text-accent shadow-sm' : 'text-muted hover:text-primary'}`}>
               {s.label}
             </button>

@@ -438,6 +438,11 @@ export const AGENT_SYSTEM_SUFFIX = `
 - \`bottomWidth\`, \`bottomLength\`, \`topWidth\`, \`topLength\`, \`height\`
 - \`bottomRebarX\`, \`bottomRebarY\` → \`{ diameter, spacing, grade }\`
 
+**条形基础 stripFoundation:**
+- \`length\`, \`width\`, \`thickness\`
+- \`bottomBar\`, \`distBar\`, \`topBar\`, \`topDistBar\`
+- \`supportType\`, \`supportCount\`, \`supportWidth\`, \`supportSpacing\`
+
 **承台 pileCapFoundation:**
 - \`pileCount\`, \`pileDiameter\`, \`pileSpacing\`
 - \`bottomRebar\` → \`{ diameter, spacing, grade }\`

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import type { ShearWallParams, ComponentType } from '@/lib/types';
@@ -17,7 +17,7 @@ import { Field, NumField, Legend, ResetButton, SelectField, Section } from '@/co
 import { ViewerSkeleton } from '@/components/ViewerSkeleton';
 import { CONCRETE_GRADES, SEISMIC_GRADES } from '@/lib/anchor';
 import type { ConcreteGrade, SeismicGrade } from '@/lib/anchor';
-import { AISidebar } from '@/components/AISidebar';
+import { LazyAISidebar as AISidebar } from '@/components/LazyAISidebar';
 import { buildShearWallContext } from '@/lib/ai-context';
 import { decodeSharedParam } from '@/lib/share-params';
 import { Sparkles } from 'lucide-react';

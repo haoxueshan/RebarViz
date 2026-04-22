@@ -169,6 +169,8 @@ export interface StairParams {
 
 /** 独立基础形状 */
 export type FoundationShape = 'stepped' | 'tapered';
+export type FoundationBeamEndType = 'none' | 'oneSide' | 'bothSides';
+export type FoundationBeamOverhangSide = 'left' | 'right';
 
 /** 阶形基础每阶尺寸 */
 export interface FoundationStepDim {
@@ -191,6 +193,8 @@ export interface FoundationParams {
   // 底部配筋
   bottomBarX: string;            // X 向底筋 e.g. C12@150
   bottomBarY: string;            // Y 向底筋 e.g. C12@150
+  shortenBottomBarX?: boolean;   // 大尺寸基础隔一布一减短 10%（X向底筋）
+  shortenBottomBarY?: boolean;   // 大尺寸基础隔一布一减短 10%（Y向底筋）
   // 柱
   colBx: number;                 // 柱截面 X 向 (mm)
   colBy: number;                 // 柱截面 Y 向 (mm)
@@ -199,7 +203,18 @@ export interface FoundationParams {
   columnCount?: 1 | 2;           // 柱数 (默认1)
   colSpacing?: number;           // 双柱中心距 (mm), 仅 columnCount=2 时有效
   topBarX?: string;              // 顶部柱间纵向受力钢筋 e.g. C14@150
+  topBarXCount?: number;         // 顶部纵向受力筋总根数（非满布时）
   topBarY?: string;              // 顶部柱间分布钢筋 e.g. C10@200
+  topBandWidth?: number;         // 双柱基础顶部钢筋带宽（沿 Y 向）
+  hasFoundationBeam?: boolean;   // 双柱基础是否设置基础梁
+  foundationBeamB?: number;      // 基础梁宽度
+  foundationBeamH?: number;      // 基础梁高度
+  foundationBeamStirrup?: string; // 基础梁箍筋
+  foundationBeamBottom?: string; // 基础梁底部纵筋
+  foundationBeamTop?: string;    // 基础梁顶部纵筋
+  foundationBeamEndType?: FoundationBeamEndType;      // 基础梁端部外伸类型
+  foundationBeamOverhangSide?: FoundationBeamOverhangSide; // 单端外伸方向
+  foundationBeamOverhang?: number;                    // 外伸长度
   // 材料
   concreteGrade: import('./anchor').ConcreteGrade;
   seismicGrade?: import('./anchor').SeismicGrade;
@@ -241,6 +256,52 @@ export interface PileCapParams {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// 条形基础参数 (22G101-3)
+// ═══════════════════════════════════════════════════════════════════
+
+export type StripFoundationKind = 'beamPlate' | 'slab';
+export type StripSupportType = 'beam' | 'wall';
+
+export interface StripFoundationParams {
+  id: string;
+  stripKind: StripFoundationKind;   // 梁板式 / 板式条基
+  length: number;                   // 条形基础沿轴线长度 (mm)
+  width: number;                    // 底板总宽度 (mm)
+  h: number;                        // 底板厚度 (mm)
+  bottomBar: string;                // 横向受力钢筋（底部） e.g. C14@150
+  distBar: string;                  // 纵向分布钢筋（底部） e.g. A8@250
+  topBar?: string;                  // 顶部横向受力钢筋（双梁/双墙之间）
+  topDistBar?: string;              // 顶部分布钢筋
+  supportType: StripSupportType;    // 上部支承类型：梁 / 墙
+  supportCount: 1 | 2;              // 单梁(墙) / 双梁(墙)
+  supportWidth: number;             // 梁宽或墙厚 (mm)
+  supportHeight: number;            // 梁高或墙高（仅用于 3D/算量示意）(mm)
+  supportSpacing?: number;          // 双梁(墙)中心距 (mm)
+  // JL 主梁细部筋
+  jlBottom?: string;                // JL底部贯通纵筋
+  jlTop?: string;                   // JL顶部贯通纵筋
+  jlStirrup?: string;               // JL箍筋
+  // JCL 次梁（可选）
+  hasJcl?: boolean;                 // 是否设置基础次梁
+  jclCount?: number;                // 次梁道数
+  jclSpacing?: number;              // 次梁中心距（沿条基长度方向）
+  jclB?: number;                    // 次梁宽度 (mm)
+  jclH?: number;                    // 次梁高度 (mm)
+  jclBottom?: string;               // 次梁底部纵筋
+  jclTop?: string;                  // 次梁顶部纵筋
+  jclStirrup?: string;              // 次梁箍筋
+  // 原位修正（示意）
+  hasLocalOverride?: boolean;       // 是否设置原位修正段
+  localOverrideStart?: number;      // 原位修正段起点（距左端 mm）
+  localOverrideLength?: number;     // 原位修正段长度 (mm)
+  localBottomBar?: string;          // 原位修正底部横向筋
+  localTopBar?: string;             // 原位修正顶部横向筋
+  localOverrideNote?: string;       // 文字说明
+  concreteGrade: import('./anchor').ConcreteGrade;
+  cover: number;                    // 保护层 (mm)
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // 筏板基础参数
 // ═══════════════════════════════════════════════════════════════════
 
@@ -259,6 +320,7 @@ export type RaftType = 'flat' | 'beamSlab' | 'flatPlate';
  * mid  — 中板位：板在梁的中部
  */
 export type RaftBeamPosition = 'high' | 'low' | 'mid';
+export type RebarCrossOrder = 'xBelowY' | 'yBelowX';
 
 /** 筏板基础参数 */
 export interface RaftFoundationParams {
@@ -274,6 +336,8 @@ export interface RaftFoundationParams {
   // 顶部配筋
   topBarX: string;               // X 向面筋 e.g. C12@200
   topBarY: string;               // Y 向面筋 e.g. C12@200
+  bottomCrossOrder?: RebarCrossOrder; // 同层底筋交叉上下关系
+  topCrossOrder?: RebarCrossOrder;    // 同层面筋交叉上下关系
   // 柱网 (矩形柱网)
   colBx: number;                 // 柱截面 X 向 (mm)
   colBy: number;                 // 柱截面 Y 向 (mm)
@@ -299,7 +363,7 @@ export interface RaftFoundationParams {
   cover: number;                 // 保护层 (mm)
 }
 
-export type ComponentType = 'beam' | 'column' | 'slab' | 'joint' | 'shearwall' | 'stair' | 'foundation' | 'pilecap' | 'raft';
+export type ComponentType = 'beam' | 'column' | 'slab' | 'joint' | 'shearwall' | 'stair' | 'foundation' | 'stripfoundation' | 'pilecap' | 'raft';
 
 export interface RebarMeshInfo {
   type: 'top' | 'bottom' | 'stirrup' | 'leftSupport' | 'rightSupport' | 'leftSupport2' | 'rightSupport2' | 'main'
@@ -310,6 +374,11 @@ export interface RebarMeshInfo {
     | 'sideBar' | 'erection' | 'tieBar' | 'innerSupport'
     | 'stairTop' | 'stairBottom' | 'stairDist' | 'stairPlatform'
     | 'foundBottomX' | 'foundBottomY' | 'foundColMain' | 'foundTopX' | 'foundTopY'
+    | 'foundBeamBottom' | 'foundBeamTop' | 'foundBeamStirrup'
+    | 'stripBottom' | 'stripDist' | 'stripTop' | 'stripTopDist'
+    | 'stripJlBottom' | 'stripJlTop' | 'stripJlStirrup'
+    | 'stripJclBottom' | 'stripJclTop' | 'stripJclStirrup'
+    | 'stripOverride'
     | 'pcBottomX' | 'pcBottomY' | 'pcColMain' | 'pcPile'
     | 'raftBottomX' | 'raftBottomY' | 'raftTopX' | 'raftTopY' | 'raftColMain'
     | 'raftBeamBottom' | 'raftBeamTop' | 'raftBeamStirrup' | 'raftColStrip';

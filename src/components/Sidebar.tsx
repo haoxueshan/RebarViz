@@ -14,6 +14,7 @@ const NAV = [
   { href: '/joint', label: '节点', desc: '梁柱节点', icon: GitMerge },
   { href: '/stair', label: '楼梯 LT', desc: 'AT型楼梯', icon: Footprints },
   { href: '/foundation', label: '基础 DJ', desc: '独立基础', icon: Landmark },
+  { href: '/stripfoundation', label: '条基 TJ', desc: '条形基础', icon: Landmark },
   { href: '/pilecap', label: '承台 CT', desc: '桩基承台', icon: Layers },
   { href: '/raft', label: '筏板 FB', desc: '筏板基础', icon: Landmark },
 ];

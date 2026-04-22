@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useCallback } from 'react';
 import { Box, ChevronDown, Copy, Check } from 'lucide-react';
-import type { ConcreteCalcResult, ConcreteCalcItem } from '@/lib/calc-concrete';
+import type { ConcreteCalcResult } from '@/lib/calc-concrete';
 import type { FormulaStep } from '@/lib/calc';
 
 function FormulaBlock({ steps }: { steps: FormulaStep[] }) {

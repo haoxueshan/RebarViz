@@ -319,8 +319,6 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
 
   const supportLenMm = calcSupportRebarLength(spanLengthsMm[0]);
   const supportLen = supportLenMm * S;
-  const supportLenMm2 = calcSupportRebarLength(spanLengthsMm[0], 2);
-  const supportLen2 = supportLenMm2 * S;
   const leftBars = useMemo(() => {
     if (!leftR) return [];
     const range = stirCenterW - STIR_D - leftR.diameter * S;

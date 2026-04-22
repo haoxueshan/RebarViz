@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import type { BeamParams, HaunchType } from '@/lib/types';
@@ -18,7 +18,7 @@ import { Field, NumField, Legend, ResetButton, SelectField, Section } from '@/co
 import { ViewerSkeleton } from '@/components/ViewerSkeleton';
 import { CONCRETE_GRADES, SEISMIC_GRADES } from '@/lib/anchor';
 import type { ConcreteGrade, SeismicGrade } from '@/lib/anchor';
-import { AISidebar } from '@/components/AISidebar';
+import { LazyAISidebar as AISidebar } from '@/components/LazyAISidebar';
 import { RebarRatioCard } from '@/components/RebarRatioCard';
 import { buildBeamContext } from '@/lib/ai-context';
 import { decodeSharedParam } from '@/lib/share-params';
@@ -147,7 +147,6 @@ export function BeamPageClient() {
   const aiMessage = searchParams.get('ai') || undefined;
   const [showAI, setShowAI] = useState(!!aiMessage);
   const [showTutorial, setShowTutorial] = useState(false);
-  const [highlightedElement, setHighlightedElement] = useState<string | null>(null);
 
   // 历史记录
   const {
@@ -483,7 +482,7 @@ export function BeamPageClient() {
               notationSlot={<BeamExplain params={params} />}
               initialMessage={aiMessage}
               onSwitchTab={(tab) => setDataTab(tab as typeof dataTab)}
-              onHighlightElement={(el) => { setHighlightedElement(el); setTimeout(() => setHighlightedElement(null), 3000); }}
+              onHighlightElement={() => {}}
               onNavigateComponent={(type: ComponentType, message?: string) => {
                 const encoded = message ? `?ai=${encodeURIComponent(message)}` : '';
                 router.push(`/${type}${encoded}`);

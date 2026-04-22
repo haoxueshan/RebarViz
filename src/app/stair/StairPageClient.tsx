@@ -17,7 +17,7 @@ import { RebarRatioCard } from '@/components/RebarRatioCard';
 import { CompliancePanel, ComplianceBadge } from '@/components/CompliancePanel';
 import { StairBarBendingSchedule } from '@/components/StairBarBendingSchedule';
 import { ShareButton } from '@/components/ShareButton';
-import { AISidebar } from '@/components/AISidebar';
+import { LazyAISidebar as AISidebar } from '@/components/LazyAISidebar';
 import { Field, NumField, Legend, ResetButton, SelectField, Section } from '@/components/FormControls';
 import { ViewerSkeleton } from '@/components/ViewerSkeleton';
 import { CONCRETE_GRADES } from '@/lib/anchor';

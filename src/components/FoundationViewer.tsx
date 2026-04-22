@@ -1,16 +1,17 @@
 'use client';
 
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Grid } from '@react-three/drei';
 import { Maximize2, Minimize2 } from 'lucide-react';
 import { useFullscreen } from '@/lib/useFullscreen';
 import * as THREE from 'three';
 import type { FoundationParams, RebarMeshInfo } from '@/lib/types';
-import { parseSlabRebar, parseRebar, gradeLabel } from '@/lib/rebar';
-import { calcLaE } from '@/lib/anchor';
-import { determineColFoundAnchor } from '@/lib/construction-rules';
+import { parseSlabRebar, parseRebar, parseStirrup, gradeLabel } from '@/lib/rebar';
+import { calcLaE, calcLaTable } from '@/lib/anchor';
+import { determineColFoundAnchor, determineJLEndAnchor } from '@/lib/construction-rules';
 import { CameraController, InstancedRebarGroup, buildZBarMatrices, buildXBarMatrices, buildVertBarMatrices, buildColBendMatrices } from '@/components/InstancedRebar';
+import { BentRebarEnd, StirrupRing } from '@/components/three';
 import {
   S,
   COLOR_FOUND_BOTTOM_X, COLOR_FOUND_BOTTOM_X_HI,
@@ -18,6 +19,9 @@ import {
   COLOR_FOUND_COL, COLOR_FOUND_COL_HI,
   COLOR_FOUND_TOP_X, COLOR_FOUND_TOP_X_HI,
   COLOR_FOUND_TOP_Y, COLOR_FOUND_TOP_Y_HI,
+  COLOR_FOUND_BEAM_STIRRUP, COLOR_FOUND_BEAM_STIRRUP_HI,
+  COLOR_FOUND_BEAM_BOTTOM, COLOR_FOUND_BEAM_BOTTOM_HI,
+  COLOR_FOUND_BEAM_TOP, COLOR_FOUND_BEAM_TOP_HI,
   FOUNDATION_CONSTRUCTION_STEPS,
   FOUNDATION_DUAL_COL_STEPS,
 } from '@/lib/constants';
@@ -37,6 +41,20 @@ function FoundationScene({ params, selected, onSelect, concreteOpacity, visibleG
   const isDual = (params.columnCount || 1) === 2;
   const topBarX = isDual && params.topBarX ? parseSlabRebar(params.topBarX) : null;
   const topBarY = isDual && params.topBarY ? parseSlabRebar(params.topBarY) : null;
+  const hasFoundationBeam = isDual && !!params.hasFoundationBeam;
+  const foundBeamStirrup = hasFoundationBeam ? parseStirrup(params.foundationBeamStirrup || 'A10@150(4)') : null;
+  const foundBeamBottom = hasFoundationBeam ? parseRebar(params.foundationBeamBottom || '4C22') : null;
+  const foundBeamTop = hasFoundationBeam ? parseRebar(params.foundationBeamTop || '4C20') : null;
+  const beamEndType = params.foundationBeamEndType || 'none';
+  const beamOverhangMm = params.foundationBeamOverhang || 300;
+  const beamOverhangSide = params.foundationBeamOverhangSide || 'right';
+  const topBandWidthMm = Math.min(params.topBandWidth || Math.max(params.colBy * 2, 1200), params.by - 2 * coverMm);
+  const useShortX = !!params.shortenBottomBarX && params.by >= 2500;
+  const useShortY = !!params.shortenBottomBarY && params.bx >= 2500;
+  const laX = calcLaTable(barX.grade, barX.diameter, params.concreteGrade);
+  const laY = calcLaTable(barY.grade, barY.diameter, params.concreteGrade);
+  const needHookX = (params.by - params.colBy) / 2 < laX;
+  const needHookY = (params.bx - params.colBx) / 2 < laY;
 
   // 22G101-3 column anchor
   const seismicGrade = params.seismicGrade || '三级';
@@ -45,17 +63,24 @@ function FoundationScene({ params, selected, onSelect, concreteOpacity, visibleG
   const bendLenM = anchor.bendLength * S;
   const anchorLabel = anchor.canStraight ? '直锚' : '弯锚';
 
-  const barXInfo: RebarMeshInfo = { type: 'foundBottomX', label: 'X向底筋', detail: `${params.bottomBarX} · ${gradeLabel(barX.grade)} Φ${barX.diameter}@${barX.spacing}` };
-  const barYInfo: RebarMeshInfo = { type: 'foundBottomY', label: 'Y向底筋', detail: `${params.bottomBarY} · ${gradeLabel(barY.grade)} Φ${barY.diameter}@${barY.spacing}` };
+  const barXInfo: RebarMeshInfo = { type: 'foundBottomX', label: 'X向底筋', detail: `${params.bottomBarX} · ${gradeLabel(barX.grade)} Φ${barX.diameter}@${barX.spacing}${useShortX ? ' · 隔一减短10%' : ''}` };
+  const barYInfo: RebarMeshInfo = { type: 'foundBottomY', label: 'Y向底筋', detail: `${params.bottomBarY} · ${gradeLabel(barY.grade)} Φ${barY.diameter}@${barY.spacing}${useShortY ? ' · 隔一减短10%' : ''}` };
   const colInfo: RebarMeshInfo = { type: 'foundColMain', label: '柱插筋', detail: `${params.colMain} · ${colR.count}根 ${gradeLabel(colR.grade)} Φ${colR.diameter}${isDual ? ' ×2柱' : ''} · ${anchorLabel} 底弯${anchor.bendLength}mm` };
-  const topXInfo: RebarMeshInfo | null = topBarX ? { type: 'foundTopX', label: '顶部纵向筋', detail: `${params.topBarX} · ${gradeLabel(topBarX.grade)} Φ${topBarX.diameter}@${topBarX.spacing}` } : null;
-  const topYInfo: RebarMeshInfo | null = topBarY ? { type: 'foundTopY', label: '顶部分布筋', detail: `${params.topBarY} · ${gradeLabel(topBarY.grade)} Φ${topBarY.diameter}@${topBarY.spacing}` } : null;
+  const topXInfo: RebarMeshInfo | null = topBarX ? { type: 'foundTopX', label: '顶部纵向筋', detail: `${params.topBarX}${params.topBarXCount ? ` · ${params.topBarXCount}根` : ''} · ${gradeLabel(topBarX.grade)} Φ${topBarX.diameter}@${topBarX.spacing}` } : null;
+  const topYInfo: RebarMeshInfo | null = topBarY ? { type: 'foundTopY', label: '顶部分布筋', detail: `${params.topBarY} · ${gradeLabel(topBarY.grade)} Φ${topBarY.diameter}@${topBarY.spacing} · 带宽${topBandWidthMm}mm` } : null;
+  const beamTypeLabel = beamEndType === 'bothSides' ? 'JL(1B)' : beamEndType === 'oneSide' ? 'JL(1A)' : 'JL(1)';
+  const beamStirrupInfo: RebarMeshInfo | null = foundBeamStirrup ? { type: 'foundBeamStirrup', label: '基础梁箍筋', detail: `${params.foundationBeamStirrup} · ${gradeLabel(foundBeamStirrup.grade)} Φ${foundBeamStirrup.diameter}` } : null;
+  const beamBottomInfo: RebarMeshInfo | null = foundBeamBottom ? { type: 'foundBeamBottom', label: '基础梁底筋', detail: `${beamTypeLabel} · ${params.foundationBeamBottom} · ${gradeLabel(foundBeamBottom.grade)} Φ${foundBeamBottom.diameter}` } : null;
+  const beamTopInfo: RebarMeshInfo | null = foundBeamTop ? { type: 'foundBeamTop', label: '基础梁顶筋', detail: `${beamTypeLabel} · ${params.foundationBeamTop} · ${gradeLabel(foundBeamTop.grade)} Φ${foundBeamTop.diameter}` } : null;
 
   const barXSelected = selected?.type === 'foundBottomX';
   const barYSelected = selected?.type === 'foundBottomY';
   const colSelected = selected?.type === 'foundColMain';
   const topXSelected = selected?.type === 'foundTopX';
   const topYSelected = selected?.type === 'foundTopY';
+  const beamStirrupSelected = selected?.type === 'foundBeamStirrup';
+  const beamBottomSelected = selected?.type === 'foundBeamBottom';
+  const beamTopSelected = selected?.type === 'foundBeamTop';
 
   const concreteBlocks = useMemo(() => {
     if (params.shape === 'stepped') {
@@ -81,19 +106,80 @@ function FoundationScene({ params, selected, onSelect, concreteOpacity, visibleG
   const xEnd = bxM / 2 - cover;
   const barLenZ = Math.abs(zEnd - zStart);
   const barLenX = Math.abs(xEnd - xStart);
+  const shortBarLenZ = barLenZ * 0.9;
+  const shortBarLenX = barLenX * 0.9;
+  const shortZStart = -shortBarLenZ / 2;
+  const shortZEnd = shortBarLenZ / 2;
+  const shortXStart = -shortBarLenX / 2;
+  const shortXEnd = shortBarLenX / 2;
+  const topBandStartZ = -(topBandWidthMm * S) / 2;
+  const topBandEndZ = (topBandWidthMm * S) / 2;
+  const topForceStartX = isDual && params.colSpacing
+    ? -(params.colSpacing * S + params.colBx * S) / 2
+    : xStart;
+  const topForceEndX = isDual && params.colSpacing
+    ? (params.colSpacing * S + params.colBx * S) / 2
+    : xEnd;
+  const topForceLenX = Math.abs(topForceEndX - topForceStartX);
+  const foundationBeamBM = (params.foundationBeamB || 600) * S;
+  const foundationBeamHM = (params.foundationBeamH || 700) * S;
+  const foundationBeamCenterY = totalH + foundationBeamHM / 2;
+  const foundationBeamBaseLength = isDual && params.colSpacing
+    ? params.colSpacing * S + params.colBx * S
+    : Math.max((params.stepDims[params.stepDims.length - 1]?.bx || params.bx) * S, foundationBeamBM);
+  const leftOverhangM = beamEndType === 'bothSides'
+    ? beamOverhangMm * S
+    : beamEndType === 'oneSide' && beamOverhangSide === 'left'
+      ? beamOverhangMm * S
+      : 0;
+  const rightOverhangM = beamEndType === 'bothSides'
+    ? beamOverhangMm * S
+    : beamEndType === 'oneSide' && beamOverhangSide === 'right'
+      ? beamOverhangMm * S
+      : 0;
+  const foundationBeamLength = foundationBeamBaseLength + leftOverhangM + rightOverhangM;
+  const foundationBeamCenterX = (rightOverhangM - leftOverhangM) / 2;
+  const foundationBeamStartX = foundationBeamCenterX - foundationBeamLength / 2;
+  const foundationBeamEndX = foundationBeamCenterX + foundationBeamLength / 2;
+  const leftOverhangMm = Math.round(leftOverhangM / S);
+  const rightOverhangMm = Math.round(rightOverhangM / S);
+  const foundationBeamStirrupDia = (foundBeamStirrup?.diameter || 10) * S;
+  const foundationBeamStirrupWidth = Math.max(foundationBeamBM - 2 * cover - foundationBeamStirrupDia, foundationBeamBM * 0.2);
+  const foundationBeamStirrupHeight = Math.max(foundationBeamHM - 2 * cover - foundationBeamStirrupDia, foundationBeamHM * 0.2);
+  const columnStubH = Math.max(600, Math.max(params.colBx, params.colBy) * 1.2) * S;
+  const beamBottomLab = foundBeamBottom ? calcLaTable(foundBeamBottom.grade, foundBeamBottom.diameter, params.concreteGrade) : 0;
+  const beamTopLab = foundBeamTop ? calcLaTable(foundBeamTop.grade, foundBeamTop.diameter, params.concreteGrade) : 0;
+  const beamBottomAnchorLeft = foundBeamBottom ? determineJLEndAnchor(leftOverhangMm, beamBottomLab, foundBeamBottom.diameter) : null;
+  const beamBottomAnchorRight = foundBeamBottom ? determineJLEndAnchor(rightOverhangMm, beamBottomLab, foundBeamBottom.diameter) : null;
+  const beamTopAnchorLeft = foundBeamTop ? determineJLEndAnchor(leftOverhangMm, beamTopLab, foundBeamTop.diameter) : null;
+  const beamTopAnchorRight = foundBeamTop ? determineJLEndAnchor(rightOverhangMm, beamTopLab, foundBeamTop.diameter) : null;
 
   // Bottom bar matrices
-  const xBotMatrices = useMemo(() => {
+  const { full: xBotFullMatrices, short: xBotShortMatrices, fullPositions: xBotFullPositions, shortPositions: xBotShortPositions } = useMemo(() => {
     const count = Math.floor((params.bx - 2 * params.cover) / barX.spacing) + 1;
     const positions = Array.from({ length: count }, (_, i) => -bxM / 2 + cover + i * barX.spacing * S);
-    return buildZBarMatrices(positions, barXLevel, zStart, zEnd);
-  }, [params.bx, params.cover, barX.spacing, bxM, cover, barXLevel, zStart, zEnd]);
+    const fullPositions = useShortX ? positions.filter((_, i) => i % 2 === 0) : positions;
+    const shortPositions = useShortX ? positions.filter((_, i) => i % 2 === 1) : [];
+    return {
+      fullPositions,
+      shortPositions,
+      full: buildZBarMatrices(fullPositions, barXLevel, zStart, zEnd),
+      short: buildZBarMatrices(shortPositions, barXLevel, shortZStart, shortZEnd),
+    };
+  }, [params.bx, params.cover, barX.spacing, bxM, cover, barXLevel, zStart, zEnd, useShortX, shortZStart, shortZEnd]);
 
-  const yBotMatrices = useMemo(() => {
+  const { full: yBotFullMatrices, short: yBotShortMatrices, fullPositions: yBotFullPositions, shortPositions: yBotShortPositions } = useMemo(() => {
     const count = Math.floor((params.by - 2 * params.cover) / barY.spacing) + 1;
     const positions = Array.from({ length: count }, (_, i) => -byM / 2 + cover + i * barY.spacing * S);
-    return buildXBarMatrices(positions, barYLevel, xStart, xEnd);
-  }, [params.by, params.cover, barY.spacing, byM, cover, barYLevel, xStart, xEnd]);
+    const fullPositions = useShortY ? positions.filter((_, i) => i % 2 === 0) : positions;
+    const shortPositions = useShortY ? positions.filter((_, i) => i % 2 === 1) : [];
+    return {
+      fullPositions,
+      shortPositions,
+      full: buildXBarMatrices(fullPositions, barYLevel, xStart, xEnd),
+      short: buildXBarMatrices(shortPositions, barYLevel, shortXStart, shortXEnd),
+    };
+  }, [params.by, params.cover, barY.spacing, byM, cover, barYLevel, xStart, xEnd, useShortY, shortXStart, shortXEnd]);
 
   // Column centers
   const colCenters = useMemo(() => {
@@ -129,10 +215,11 @@ function FoundationScene({ params, selected, onSelect, concreteOpacity, visibleG
   // Top bar matrices (dual-column)
   const topXMatrices = useMemo(() => {
     if (!isDual || !topBarX || !params.colSpacing) return [];
-    const count = Math.floor((params.by - 2 * params.cover) / topBarX.spacing) + 1;
-    const positions = Array.from({ length: count }, (_, i) => -byM / 2 + cover + i * topBarX.spacing * S);
-    return buildXBarMatrices(positions, totalH - cover, xStart, xEnd);
-  }, [isDual, topBarX, params.colSpacing, params.by, params.cover, byM, cover, totalH, xStart, xEnd]);
+    const positions = params.topBarXCount && params.topBarXCount > 1
+      ? Array.from({ length: params.topBarXCount }, (_, i) => topBandStartZ + (topBandEndZ - topBandStartZ) * i / (params.topBarXCount! - 1))
+      : Array.from({ length: Math.floor(topBandWidthMm / topBarX.spacing) + 1 }, (_, i) => topBandStartZ + i * topBarX.spacing * S);
+    return buildXBarMatrices(positions, totalH - cover, topForceStartX, topForceEndX);
+  }, [isDual, topBarX, params.colSpacing, params.topBarXCount, topBandWidthMm, topBandStartZ, topBandEndZ, totalH, cover, topForceStartX, topForceEndX]);
 
   const topYMatrices = useMemo(() => {
     if (!isDual || !topBarY || !params.colSpacing) return [];
@@ -141,8 +228,67 @@ function FoundationScene({ params, selected, onSelect, concreteOpacity, visibleG
     const startX = -(regionW * S) / 2;
     const positions = Array.from({ length: count }, (_, i) => startX + i * topBarY.spacing * S);
     const yLevel = totalH - cover - (topBarX?.diameter || 12) * S;
-    return buildZBarMatrices(positions, yLevel, zStart, zEnd);
-  }, [isDual, topBarY, params.colSpacing, params.colBx, topBarX, totalH, cover, zStart, zEnd]);
+    return buildZBarMatrices(positions, yLevel, topBandStartZ, topBandEndZ);
+  }, [isDual, topBarY, params.colSpacing, params.colBx, topBarX, totalH, cover, topBandStartZ, topBandEndZ]);
+
+  const hookLenXM = needHookX ? 12 * barX.diameter * S : 0;
+  const hookLenYM = needHookY ? 12 * barY.diameter * S : 0;
+  const xHookPositions = useMemo(
+    () => [...xBotFullPositions, ...xBotShortPositions].flatMap(x => [{ x, z: zStart }, { x, z: zEnd }]),
+    [xBotFullPositions, xBotShortPositions, zStart, zEnd],
+  );
+  const yHookPositions = useMemo(
+    () => [...yBotFullPositions, ...yBotShortPositions].flatMap(z => [{ x: xStart, z }, { x: xEnd, z }]),
+    [yBotFullPositions, yBotShortPositions, xStart, xEnd],
+  );
+  const xHookMatrices = useMemo(
+    () => needHookX ? buildVertBarMatrices(xHookPositions, cover + hookLenXM / 2) : [],
+    [needHookX, xHookPositions, cover, hookLenXM],
+  );
+  const yHookMatrices = useMemo(
+    () => needHookY ? buildVertBarMatrices(yHookPositions, cover + hookLenYM / 2) : [],
+    [needHookY, yHookPositions, cover, hookLenYM],
+  );
+
+  const beamBottomMatrices = useMemo(() => {
+    if (!hasFoundationBeam || !foundBeamBottom) return [];
+    const offsets = foundBeamBottom.count <= 1
+      ? [0]
+      : Array.from({ length: foundBeamBottom.count }, (_, i) => -((params.foundationBeamB || 600) * S - 2 * cover) / 2 + (((params.foundationBeamB || 600) * S - 2 * cover) * i) / (foundBeamBottom.count - 1));
+    const yLevel = totalH + cover + foundBeamBottom.diameter * S;
+    return buildXBarMatrices(offsets, yLevel, foundationBeamStartX, foundationBeamEndX);
+  }, [hasFoundationBeam, foundBeamBottom, params.foundationBeamB, cover, totalH, foundationBeamStartX, foundationBeamEndX]);
+
+  const beamBottomOffsets = useMemo(() => {
+    if (!hasFoundationBeam || !foundBeamBottom) return [];
+    return foundBeamBottom.count <= 1
+      ? [0]
+      : Array.from({ length: foundBeamBottom.count }, (_, i) => -((params.foundationBeamB || 600) * S - 2 * cover) / 2 + (((params.foundationBeamB || 600) * S - 2 * cover) * i) / (foundBeamBottom.count - 1));
+  }, [hasFoundationBeam, foundBeamBottom, params.foundationBeamB, cover]);
+
+  const beamStirrupPositions = useMemo(() => {
+    if (!hasFoundationBeam || !foundBeamStirrup) return [];
+    const spacingM = Math.min(foundBeamStirrup.spacingDense, foundBeamStirrup.spacingNormal) * S;
+    const count = Math.max(Math.floor(foundationBeamLength / spacingM) + 1, 2);
+    return Array.from({ length: count }, (_, i) => foundationBeamStartX + i * spacingM)
+      .filter(x => x <= foundationBeamEndX + 1e-6);
+  }, [hasFoundationBeam, foundBeamStirrup, foundationBeamLength, foundationBeamStartX, foundationBeamEndX]);
+
+  const beamTopMatrices = useMemo(() => {
+    if (!hasFoundationBeam || !foundBeamTop) return [];
+    const offsets = foundBeamTop.count <= 1
+      ? [0]
+      : Array.from({ length: foundBeamTop.count }, (_, i) => -((params.foundationBeamB || 600) * S - 2 * cover) / 2 + (((params.foundationBeamB || 600) * S - 2 * cover) * i) / (foundBeamTop.count - 1));
+    const yLevel = totalH + foundationBeamHM - cover - foundBeamTop.diameter * S;
+    return buildXBarMatrices(offsets, yLevel, foundationBeamStartX, foundationBeamEndX);
+  }, [hasFoundationBeam, foundBeamTop, params.foundationBeamB, cover, totalH, foundationBeamHM, foundationBeamStartX, foundationBeamEndX]);
+
+  const beamTopOffsets = useMemo(() => {
+    if (!hasFoundationBeam || !foundBeamTop) return [];
+    return foundBeamTop.count <= 1
+      ? [0]
+      : Array.from({ length: foundBeamTop.count }, (_, i) => -((params.foundationBeamB || 600) * S - 2 * cover) / 2 + (((params.foundationBeamB || 600) * S - 2 * cover) * i) / (foundBeamTop.count - 1));
+  }, [hasFoundationBeam, foundBeamTop, params.foundationBeamB, cover]);
 
   return (
     <>
@@ -165,19 +311,155 @@ function FoundationScene({ params, selected, onSelect, concreteOpacity, visibleG
       ))}
 
       {visibleGroups.has('concrete') && colCenters.map((c, ci) => (
-        <lineSegments key={`col-outline-${ci}`} position={[c.cx, totalH, c.cz]} rotation={[Math.PI / 2, 0, 0]}>
-          <edgesGeometry args={[new THREE.PlaneGeometry(params.colBx * S, params.colBy * S)]} />
-          <lineBasicMaterial color="#64748B" linewidth={2} />
-        </lineSegments>
+        <group key={`col-outline-${ci}`}>
+          <mesh position={[c.cx, totalH + columnStubH / 2, c.cz]}>
+            <boxGeometry args={[params.colBx * S, columnStubH, params.colBy * S]} />
+            <meshPhysicalMaterial color="#7F8C8D" transparent opacity={0.14} side={THREE.DoubleSide} depthWrite={false} roughness={0.8} />
+          </mesh>
+          <lineSegments position={[c.cx, totalH + columnStubH / 2, c.cz]}>
+            <edgesGeometry args={[new THREE.BoxGeometry(params.colBx * S, columnStubH, params.colBy * S)]} />
+            <lineBasicMaterial color="#64748B" transparent opacity={0.65} />
+          </lineSegments>
+        </group>
       ))}
 
-      <InstancedRebarGroup matrices={xBotMatrices} radius={barX.diameter * S / 2} length={barLenZ}
+      {visibleGroups.has('concrete') && hasFoundationBeam && (
+        <group>
+          <mesh position={[foundationBeamCenterX, foundationBeamCenterY, 0]}>
+            <boxGeometry args={[foundationBeamLength, foundationBeamHM, foundationBeamBM]} />
+            <meshPhysicalMaterial color="#9EB6C8" transparent opacity={Math.min(concreteOpacity + 0.12, 0.55)} side={THREE.DoubleSide} depthWrite={false} roughness={0.75} />
+          </mesh>
+          <lineSegments position={[foundationBeamCenterX, foundationBeamCenterY, 0]}>
+            <edgesGeometry args={[new THREE.BoxGeometry(foundationBeamLength, foundationBeamHM, foundationBeamBM)]} />
+            <lineBasicMaterial color="#607D8B" />
+          </lineSegments>
+        </group>
+      )}
+
+      <InstancedRebarGroup matrices={xBotFullMatrices} radius={barX.diameter * S / 2} length={barLenZ}
         color={COLOR_FOUND_BOTTOM_X} hiColor={COLOR_FOUND_BOTTOM_X_HI}
         info={barXInfo} selected={barXSelected} onSelect={onSelect} visible={visibleGroups.has('bottomX')} />
 
-      <InstancedRebarGroup matrices={yBotMatrices} radius={barY.diameter * S / 2} length={barLenX}
+      <InstancedRebarGroup matrices={xBotShortMatrices} radius={barX.diameter * S / 2} length={shortBarLenZ}
+        color={COLOR_FOUND_BOTTOM_X} hiColor={COLOR_FOUND_BOTTOM_X_HI}
+        info={barXInfo} selected={barXSelected} onSelect={onSelect} visible={visibleGroups.has('bottomX')} />
+
+      <InstancedRebarGroup matrices={yBotFullMatrices} radius={barY.diameter * S / 2} length={barLenX}
         color={COLOR_FOUND_BOTTOM_Y} hiColor={COLOR_FOUND_BOTTOM_Y_HI}
         info={barYInfo} selected={barYSelected} onSelect={onSelect} visible={visibleGroups.has('bottomY')} />
+
+      <InstancedRebarGroup matrices={yBotShortMatrices} radius={barY.diameter * S / 2} length={shortBarLenX}
+        color={COLOR_FOUND_BOTTOM_Y} hiColor={COLOR_FOUND_BOTTOM_Y_HI}
+        info={barYInfo} selected={barYSelected} onSelect={onSelect} visible={visibleGroups.has('bottomY')} />
+
+      <InstancedRebarGroup matrices={xHookMatrices} radius={barX.diameter * S / 2} length={hookLenXM}
+        color={COLOR_FOUND_BOTTOM_X} hiColor={COLOR_FOUND_BOTTOM_X_HI}
+        info={barXInfo} selected={barXSelected} onSelect={onSelect} visible={visibleGroups.has('bottomX')} />
+
+      <InstancedRebarGroup matrices={yHookMatrices} radius={barY.diameter * S / 2} length={hookLenYM}
+        color={COLOR_FOUND_BOTTOM_Y} hiColor={COLOR_FOUND_BOTTOM_Y_HI}
+        info={barYInfo} selected={barYSelected} onSelect={onSelect} visible={visibleGroups.has('bottomY')} />
+
+      {beamStirrupInfo && visibleGroups.has('beamStirrup') && (
+        <group position={[0, totalH, 0]}>
+          {beamStirrupPositions.map((x, i) => (
+            <StirrupRing
+              key={`found-beam-stirrup-${i}`}
+              x={x}
+              width={foundationBeamStirrupWidth}
+              height={foundationBeamStirrupHeight}
+              diameter={foundBeamStirrup!.diameter}
+              color={COLOR_FOUND_BEAM_STIRRUP}
+              hiColor={COLOR_FOUND_BEAM_STIRRUP_HI}
+              info={beamStirrupInfo}
+              selected={beamStirrupSelected}
+              onSelect={onSelect}
+              cover={cover + foundationBeamStirrupDia / 2}
+              legs={foundBeamStirrup!.legs}
+            />
+          ))}
+        </group>
+      )}
+
+      {beamBottomInfo && (
+        <InstancedRebarGroup matrices={beamBottomMatrices} radius={foundBeamBottom!.diameter * S / 2} length={foundationBeamLength}
+          color={COLOR_FOUND_BEAM_BOTTOM} hiColor={COLOR_FOUND_BEAM_BOTTOM_HI}
+          info={beamBottomInfo} selected={beamBottomSelected} onSelect={onSelect} visible={visibleGroups.has('beamBottom')} />
+      )}
+
+      {beamTopInfo && (
+        <InstancedRebarGroup matrices={beamTopMatrices} radius={foundBeamTop!.diameter * S / 2} length={foundationBeamLength}
+          color={COLOR_FOUND_BEAM_TOP} hiColor={COLOR_FOUND_BEAM_TOP_HI}
+          info={beamTopInfo} selected={beamTopSelected} onSelect={onSelect} visible={visibleGroups.has('beamTop')} />
+      )}
+
+      {beamBottomInfo && beamBottomAnchorLeft && !beamBottomAnchorLeft.canStraight && visibleGroups.has('beamBottom') && beamBottomOffsets.map((z, i) => (
+        <BentRebarEnd
+          key={`found-beam-bottom-left-hook-${i}`}
+          position={[foundationBeamStartX, totalH + cover + foundBeamBottom!.diameter * S, z]}
+          straightLen={beamBottomAnchorLeft.straightPart * S}
+          bendLen={beamBottomAnchorLeft.bendPart * S}
+          diameter={foundBeamBottom!.diameter}
+          direction="down"
+          color={COLOR_FOUND_BEAM_BOTTOM}
+          hiColor={COLOR_FOUND_BEAM_BOTTOM_HI}
+          info={beamBottomInfo}
+          selected={beamBottomSelected}
+          onSelect={onSelect}
+          xDir={1}
+        />
+      ))}
+
+      {beamBottomInfo && beamBottomAnchorRight && !beamBottomAnchorRight.canStraight && visibleGroups.has('beamBottom') && beamBottomOffsets.map((z, i) => (
+        <BentRebarEnd
+          key={`found-beam-bottom-right-hook-${i}`}
+          position={[foundationBeamEndX, totalH + cover + foundBeamBottom!.diameter * S, z]}
+          straightLen={beamBottomAnchorRight.straightPart * S}
+          bendLen={beamBottomAnchorRight.bendPart * S}
+          diameter={foundBeamBottom!.diameter}
+          direction="down"
+          color={COLOR_FOUND_BEAM_BOTTOM}
+          hiColor={COLOR_FOUND_BEAM_BOTTOM_HI}
+          info={beamBottomInfo}
+          selected={beamBottomSelected}
+          onSelect={onSelect}
+          xDir={-1}
+        />
+      ))}
+
+      {beamTopInfo && beamTopAnchorLeft && !beamTopAnchorLeft.canStraight && visibleGroups.has('beamTop') && beamTopOffsets.map((z, i) => (
+        <BentRebarEnd
+          key={`found-beam-top-left-hook-${i}`}
+          position={[foundationBeamStartX, totalH + foundationBeamHM - cover - foundBeamTop!.diameter * S, z]}
+          straightLen={beamTopAnchorLeft.straightPart * S}
+          bendLen={beamTopAnchorLeft.bendPart * S}
+          diameter={foundBeamTop!.diameter}
+          direction="up"
+          color={COLOR_FOUND_BEAM_TOP}
+          hiColor={COLOR_FOUND_BEAM_TOP_HI}
+          info={beamTopInfo}
+          selected={beamTopSelected}
+          onSelect={onSelect}
+          xDir={1}
+        />
+      ))}
+
+      {beamTopInfo && beamTopAnchorRight && !beamTopAnchorRight.canStraight && visibleGroups.has('beamTop') && beamTopOffsets.map((z, i) => (
+        <BentRebarEnd
+          key={`found-beam-top-right-hook-${i}`}
+          position={[foundationBeamEndX, totalH + foundationBeamHM - cover - foundBeamTop!.diameter * S, z]}
+          straightLen={beamTopAnchorRight.straightPart * S}
+          bendLen={beamTopAnchorRight.bendPart * S}
+          diameter={foundBeamTop!.diameter}
+          direction="up"
+          color={COLOR_FOUND_BEAM_TOP}
+          hiColor={COLOR_FOUND_BEAM_TOP_HI}
+          info={beamTopInfo}
+          selected={beamTopSelected}
+          onSelect={onSelect}
+          xDir={-1}
+        />
+      ))}
 
       <InstancedRebarGroup matrices={colBarData.matrices} radius={colR.diameter * S / 2} length={colInsertH}
         color={COLOR_FOUND_COL} hiColor={COLOR_FOUND_COL_HI}
@@ -188,13 +470,13 @@ function FoundationScene({ params, selected, onSelect, concreteOpacity, visibleG
         info={colInfo} selected={colSelected} onSelect={onSelect} visible={visibleGroups.has('colMain')} />
 
       {topXInfo && (
-        <InstancedRebarGroup matrices={topXMatrices} radius={topBarX!.diameter * S / 2} length={barLenX}
+        <InstancedRebarGroup matrices={topXMatrices} radius={topBarX!.diameter * S / 2} length={topForceLenX}
           color={COLOR_FOUND_TOP_X} hiColor={COLOR_FOUND_TOP_X_HI}
           info={topXInfo} selected={topXSelected} onSelect={onSelect} visible={visibleGroups.has('topX')} />
       )}
 
       {topYInfo && (
-        <InstancedRebarGroup matrices={topYMatrices} radius={topBarY!.diameter * S / 2} length={barLenZ}
+        <InstancedRebarGroup matrices={topYMatrices} radius={topBarY!.diameter * S / 2} length={topBandWidthMm * S}
           color={COLOR_FOUND_TOP_Y} hiColor={COLOR_FOUND_TOP_Y_HI}
           info={topYInfo} selected={topYSelected} onSelect={onSelect} visible={visibleGroups.has('topY')} />
       )}
@@ -209,6 +491,9 @@ function InfoTooltip({ info }: { info: RebarMeshInfo }) {
     foundColMain: 'bg-purple-50 border-purple-200 text-purple-800',
     foundTopX: 'bg-orange-50 border-orange-200 text-orange-800',
     foundTopY: 'bg-green-50 border-green-200 text-green-800',
+    foundBeamStirrup: 'bg-emerald-50 border-emerald-200 text-emerald-800',
+    foundBeamBottom: 'bg-amber-50 border-amber-200 text-amber-900',
+    foundBeamTop: 'bg-orange-50 border-orange-200 text-orange-800',
   };
   const cls = colorMap[info.type] || 'bg-gray-50 border-gray-200 text-gray-800';
   return (
@@ -227,21 +512,23 @@ export default function FoundationViewer({ params }: {
   const [cameraTarget, setCameraTarget] = useState<[number, number, number] | null>(null);
   const { isFullscreen: fsActive, toggle: fsToggle, containerRef: fsContainerRef, containerClass: fsClass } = useFullscreen();
   const isDual = (params.columnCount || 1) === 2;
+  const viewerMode = isDual ? 'dual' : 'single';
   const steps = isDual ? FOUNDATION_DUAL_COL_STEPS : FOUNDATION_CONSTRUCTION_STEPS;
-  const [stepIndex, setStepIndex] = useState(steps.length - 1);
+  const [stepState, setStepState] = useState<{ mode: 'single' | 'dual'; index: number }>(() => ({
+    mode: viewerMode,
+    index: steps.length - 1,
+  }));
+  const stepIndex = stepState.mode === viewerMode ? stepState.index : steps.length - 1;
 
   const totalH = params.h * S;
   const visibleGroups = steps[Math.min(stepIndex, steps.length - 1)].groups;
-
-  // Reset step index when switching between single/dual
-  useEffect(() => { setStepIndex(steps.length - 1); }, [isDual, steps.length]);
 
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2 flex-wrap">
         <div className="flex items-center gap-1 bg-gray-100/80 rounded-lg p-0.5">
           {steps.map((s, i) => (
-            <button key={i} onClick={() => setStepIndex(i)}
+            <button key={i} onClick={() => setStepState({ mode: viewerMode, index: i })}
               className={`px-3 py-1.5 rounded-md text-xs font-medium cursor-pointer transition-all ${stepIndex === i ? 'bg-white text-accent shadow-sm' : 'text-muted hover:text-primary'}`}>
               {s.label}
             </button>

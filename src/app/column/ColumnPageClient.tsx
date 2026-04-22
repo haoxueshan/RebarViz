@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import type { ColumnParams, ComponentType } from '@/lib/types';
@@ -17,7 +17,7 @@ import { Field, NumField, Legend, ResetButton, SelectField, Section } from '@/co
 import { ViewerSkeleton } from '@/components/ViewerSkeleton';
 import { CONCRETE_GRADES, SEISMIC_GRADES } from '@/lib/anchor';
 import type { ConcreteGrade, SeismicGrade } from '@/lib/anchor';
-import { AISidebar } from '@/components/AISidebar';
+import { LazyAISidebar as AISidebar } from '@/components/LazyAISidebar';
 import { buildColumnContext } from '@/lib/ai-context';
 import { decodeSharedParam } from '@/lib/share-params';
 import { Sparkles } from 'lucide-react';
@@ -59,35 +59,32 @@ export function ColumnPageClient() {
 
   const update = (patch: Partial<ColumnParams>) => setParams(p => ({ ...p, ...patch }));
 
-  // Auto-sync: when detailed fields change, auto-compute main for backward compat
-  useEffect(() => {
-    if (!params.cornerMain) return;
+  const effectiveParams = useMemo(() => {
+    if (!params.cornerMain) return params;
     const corner = parseRebar(params.cornerMain);
-    if (!corner.count) return;
+    if (!corner.count) return params;
     const bMid = params.bMiddleMain ? parseRebar(params.bMiddleMain) : null;
     const hMid = params.hMiddleMain ? parseRebar(params.hMiddleMain) : null;
     const total = corner.count + (bMid ? bMid.count * 2 : 0) + (hMid ? hMid.count * 2 : 0);
     const maxDia = Math.max(corner.diameter, bMid?.diameter ?? 0, hMid?.diameter ?? 0);
     const grade = corner.grade;
     const synced = `${total}${grade}${maxDia}`;
-    if (synced !== params.main) {
-      setParams(p => ({ ...p, main: synced }));
-    }
-  }, [params.cornerMain, params.bMiddleMain, params.hMiddleMain]);
+    return synced === params.main ? params : { ...params, main: synced };
+  }, [params]);
 
-  const calcResult = useMemo(() => calcColumn(params), [params]);
-  const concreteResult = useMemo(() => calcColumnConcrete(params), [params]);
-  const aiContext = useMemo(() => buildColumnContext(params), [params]);
+  const calcResult = useMemo(() => calcColumn(effectiveParams), [effectiveParams]);
+  const concreteResult = useMemo(() => calcColumnConcrete(effectiveParams), [effectiveParams]);
+  const aiContext = useMemo(() => buildColumnContext(effectiveParams), [effectiveParams]);
 
   const errors = useMemo(() => ({
-    b: validateDimension(params.b, 'b', 200, 1200),
-    h: validateDimension(params.h, 'h', 200, 1200),
-    main: validateRebar(params.main, 'main'),
+    b: validateDimension(effectiveParams.b, 'b', 200, 1200),
+    h: validateDimension(effectiveParams.h, 'h', 200, 1200),
+    main: validateRebar(effectiveParams.main, 'main'),
     cornerMain: params.cornerMain ? validateRebar(params.cornerMain, 'cornerMain') : null,
     bMiddleMain: params.bMiddleMain ? validateRebar(params.bMiddleMain, 'bMiddleMain') : null,
     hMiddleMain: params.hMiddleMain ? validateRebar(params.hMiddleMain, 'hMiddleMain') : null,
     stirrup: validateStirrup(params.stirrup, 'stirrup'),
-  }), [params]);
+  }), [effectiveParams, params.cornerMain, params.bMiddleMain, params.hMiddleMain, params.stirrup]);
 
   return (
     <main className="px-4 py-4">
@@ -99,7 +96,7 @@ export function ColumnPageClient() {
               <h2 className="text-sm font-semibold text-primary">参数输入</h2>
               <div className="flex items-center gap-2">
                 <ResetButton onClick={() => setParams(DEFAULT)} />
-                <ShareButton params={params} />
+                <ShareButton params={effectiveParams} />
               </div>
             </div>
 
@@ -120,7 +117,7 @@ export function ColumnPageClient() {
               <Field label="柱编号" value={params.id} onChange={v => update({ id: v })} />
               <NumField label="截面宽 b (mm)" value={params.b} onChange={v => update({ b: v })} error={errors.b?.message} min={200} max={1200} />
               <NumField label="截面高 h (mm)" value={params.h} onChange={v => update({ h: v })} error={errors.h?.message} min={200} max={1200} />
-              <Field label="全部纵筋" value={params.main} onChange={v => update({ main: v })} placeholder="如: 12C25" error={errors.main?.message} />
+              <Field label="全部纵筋" value={effectiveParams.main} onChange={v => update({ main: v })} placeholder="如: 12C25" error={errors.main?.message} />
 
               <div className="pt-1 border-t border-gray-100">
                 <p className="text-[11px] text-muted mb-1.5">22G101-1 分项标注（可选）</p>
@@ -164,7 +161,7 @@ export function ColumnPageClient() {
 
         {/* 中栏：3D模型 + 数据 tab */}
         <div className={`${showAI ? 'lg:col-span-6' : 'lg:col-span-9'} space-y-4 min-w-0 transition-all`}>
-          <ColumnViewer params={params} cutPosition={cutPosition} showCut={showCut}
+          <ColumnViewer params={effectiveParams} cutPosition={cutPosition} showCut={showCut}
             onCutPositionChange={setCutPosition} onShowCutChange={setShowCut} />
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
             <div className="flex items-center gap-1 px-3 py-2 border-b border-gray-100">
@@ -190,7 +187,7 @@ export function ColumnPageClient() {
                     {showCut && <span className="text-xs font-normal text-muted ml-2">· 跟随剖切位置</span>}
                   </h2>
                   <div className="flex justify-center">
-                    <ColumnCrossSection params={params} cutPosition={showCut ? cutPosition : undefined} />
+                    <ColumnCrossSection params={effectiveParams} cutPosition={showCut ? cutPosition : undefined} />
                   </div>
                 </>
               )}
@@ -205,10 +202,10 @@ export function ColumnPageClient() {
           <div className="lg:col-span-3">
             <AISidebar
               componentType="column"
-              currentParams={params}
+              currentParams={effectiveParams}
               onApplyParams={(p) => update(p as Partial<ColumnParams>)}
               context={aiContext}
-              notationSlot={<ColumnExplain params={params} />}
+              notationSlot={<ColumnExplain params={effectiveParams} />}
               initialMessage={aiMessage}
               onSwitchTab={(tab) => setDataTab(tab as typeof dataTab)}
               onNavigateComponent={(type: ComponentType, message?: string) => {

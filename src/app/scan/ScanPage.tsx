@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -16,20 +17,20 @@ import type { ComponentType } from '@/lib/types';
 
 const COMPONENT_LABELS: Record<ComponentType, string> = {
   beam: '框架梁', column: '框架柱', slab: '楼板', joint: '梁柱节点',
-  shearwall: '剪力墙', stair: '楼梯', foundation: '独立基础',
+  shearwall: '剪力墙', stair: '楼梯', foundation: '独立基础', stripfoundation: '条形基础',
   pilecap: '承台', raft: '筏板基础',
 };
 
 const COMPONENT_ROUTES: Record<ComponentType, string> = {
   beam: '/beam', column: '/column', slab: '/slab', joint: '/joint',
-  shearwall: '/shearwall', stair: '/stair', foundation: '/foundation',
+  shearwall: '/shearwall', stair: '/stair', foundation: '/foundation', stripfoundation: '/stripfoundation',
   pilecap: '/pilecap', raft: '/raft',
 };
 
 const COMPONENT_COLORS: Record<ComponentType, string> = {
   beam: 'bg-blue-500', column: 'bg-violet-500', slab: 'bg-emerald-500',
   joint: 'bg-orange-500', shearwall: 'bg-rose-500', stair: 'bg-cyan-500',
-  foundation: 'bg-teal-500', pilecap: 'bg-sky-500', raft: 'bg-indigo-500',
+  foundation: 'bg-teal-500', stripfoundation: 'bg-cyan-500', pilecap: 'bg-sky-500', raft: 'bg-indigo-500',
 };
 
 const PARAM_LABELS: Record<string, string> = {
@@ -41,11 +42,13 @@ const PARAM_LABELS: Record<string, string> = {
   horizontalRebar: '水平分布筋', pileCount: '桩数', stepCount: '踏步数',
   stepWidth: '踏步宽 (mm)', stepHeight: '踏步高 (mm)', slabThickness: '梯板厚 (mm)',
   bx: 'X向尺寸 (mm)', by: 'Y向尺寸 (mm)', totalHeight: '总高 (mm)', height: '高度 (mm)',
+  length: '长度 (mm)', width: '宽度 (mm)', bottomBar: '底部横向筋', distBar: '分布筋',
+  topBar: '顶部横向筋', topDistBar: '顶部分布筋', supportWidth: '支承宽度 (mm)', supportSpacing: '双梁(墙)中心距 (mm)',
 };
 
 async function compressImage(dataUrl: string, maxSize = 1200): Promise<string> {
   return new Promise((resolve) => {
-    const img = new Image();
+    const img = new window.Image();
     img.onload = () => {
       let { width, height } = img;
       if (width > maxSize || height > maxSize) {
@@ -278,10 +281,13 @@ export function ScanPage() {
             <div className="flex flex-wrap gap-3">
               {images.map((img, i) => (
                 <div key={i} className="relative group">
-                  <img
+                  <Image
                     src={img}
                     alt={`图纸 ${i + 1}`}
-                    className="w-36 h-36 object-cover rounded-xl border border-white/[0.1] shadow-lg"
+                    width={144}
+                    height={144}
+                    unoptimized
+                    className="h-36 w-36 rounded-xl border border-white/[0.1] object-cover shadow-lg"
                   />
                   {!scanResult && (
                     <button

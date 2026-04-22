@@ -223,6 +223,12 @@ const COMPONENTS = [
     gradient: 'from-teal-600 to-cyan-500', light: 'bg-teal-50 border-teal-100',
   },
   {
+    href: '/stripfoundation', icon: Landmark, title: '条基', code: 'TJ',
+    desc: '条形基础底板 B/T 配筋、分布筋、单梁/双梁或单墙/双墙条基构造',
+    tags: ['B/T配筋', '分布筋', '双梁条基', '双墙条基'],
+    gradient: 'from-cyan-700 to-sky-500', light: 'bg-cyan-50 border-cyan-100',
+  },
+  {
     href: '/pilecap', icon: Layers, title: '承台', code: 'CT',
     desc: '桩基承台双向配筋、柱插筋、3D桩位排布可视化',
     tags: ['桩基排布', 'X/Y向底筋', '柱插筋', '桩径/桩距'],
@@ -237,7 +243,7 @@ const COMPONENTS = [
 ];
 
 const STATS = [
-  { value: 8, suffix: '种', label: '构件类型' },
+  { value: 10, suffix: '种', label: '构件类型' },
   { value: 22, suffix: 'G101', label: '图集标准' },
   { value: 3, suffix: '个', label: 'AI 模型接入' },
   { value: 100, suffix: '%', label: '免费开源' },

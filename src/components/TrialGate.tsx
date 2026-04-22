@@ -14,21 +14,25 @@ function formatCode(raw: string): string {
 }
 
 export function TrialGate({ children }: { children: React.ReactNode }) {
-  const [unlocked, setUnlocked] = useState(true);
+  const [storedCode, setStoredCode] = useState(() => {
+    if (typeof window === 'undefined') return '';
+    try {
+      return window.localStorage.getItem(TRIAL_STORAGE_KEY) ?? '';
+    } catch {
+      return '';
+    }
+  });
   const [code, setCode] = useState('');
   const [shake, setShake] = useState(false);
   const [wrong, setWrong] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const unlocked = TRIAL_CODES.includes(storedCode);
 
   useEffect(() => {
-    const saved = localStorage.getItem(TRIAL_STORAGE_KEY);
-    if (saved && TRIAL_CODES.includes(saved)) {
-      setUnlocked(true);
-    } else {
-      setUnlocked(false);
-      setTimeout(() => inputRef.current?.focus(), 150);
-    }
-  }, []);
+    if (unlocked) return;
+    const timer = window.setTimeout(() => inputRef.current?.focus(), 150);
+    return () => window.clearTimeout(timer);
+  }, [unlocked]);
 
   const handleInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     setWrong(false);
@@ -38,7 +42,7 @@ export function TrialGate({ children }: { children: React.ReactNode }) {
   const handleSubmit = () => {
     if (TRIAL_CODES.includes(code)) {
       localStorage.setItem(TRIAL_STORAGE_KEY, code);
-      setUnlocked(true);
+      setStoredCode(code);
     } else {
       setWrong(true);
       setShake(true);

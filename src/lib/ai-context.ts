@@ -1,7 +1,7 @@
 /**
  * Build context strings from component params for AI assistant
  */
-import type { BeamParams, ColumnParams, SlabParams, JointParams, ShearWallParams, StairParams, FoundationParams, PileCapParams, RaftFoundationParams } from './types';
+import type { BeamParams, ColumnParams, SlabParams, JointParams, ShearWallParams, StairParams, FoundationParams, StripFoundationParams, PileCapParams, RaftFoundationParams } from './types';
 import { parseRebar, parseStirrup, parseSlabRebar, gradeLabel, resolveColumnBars } from './rebar';
 import { calcLaE, calcLaTable, calcLabTable, FT, FY, getPileEmbedDepth, determinePileCapRebarEnd, determineJLEndAnchor, determineLPBEdgeAnchor, determineBPBEdgeAnchor, checkJLLDirectAnchor } from './anchor';
 import type { ConcreteGrade, SeismicGrade } from './anchor';
@@ -192,17 +192,78 @@ export function buildFoundationContext(p: FoundationParams): string {
     ? p.stepDims.map((s, i) => `第${i+1}阶: ${s.bx}×${s.by}×${s.h}mm`).join('，')
     : `锥形: 底${p.bx}×${p.by} → 顶${p.colBx}×${p.colBy}mm`;
   const isDual = (p.columnCount || 1) === 2;
+  const shortenInfo = [
+    p.shortenBottomBarX ? 'X向底筋隔一减短10%' : null,
+    p.shortenBottomBarY ? 'Y向底筋隔一减短10%' : null,
+  ].filter(Boolean).join('，');
+  const beamInfo = p.hasFoundationBeam
+    ? `\n基础梁 JL: ${p.foundationBeamB || '未设置'}×${p.foundationBeamH || '未设置'}mm
+基础梁箍筋: ${p.foundationBeamStirrup || '未设置'}
+基础梁底筋: ${p.foundationBeamBottom || '未设置'}
+基础梁顶筋: ${p.foundationBeamTop || '未设置'}
+基础梁端部: ${p.foundationBeamEndType === 'bothSides' ? '双端外伸' : p.foundationBeamEndType === 'oneSide' ? `单端外伸(${p.foundationBeamOverhangSide === 'left' ? '左' : '右'})` : '无外伸'}${p.foundationBeamOverhang ? `，外伸${p.foundationBeamOverhang}mm` : ''}`
+    : '';
   const dualInfo = isDual ? `\n柱数: 双柱，柱中心距: ${p.colSpacing}mm
-顶部纵向筋: ${p.topBarX || '未设置'} (柱间受力钢筋)
-顶部分布筋: ${p.topBarY || '未设置'} (柱间分布钢筋)` : '';
+顶部纵向筋: ${p.topBarX || '未设置'}${p.topBarXCount ? `，总根数: ${p.topBarXCount}根` : ''} (柱间受力钢筋)
+顶部分布筋: ${p.topBarY || '未设置'} (柱间分布钢筋)
+顶部钢筋带宽: ${p.topBandWidth || '未设置'}mm${beamInfo}` : '';
 
   return `构件类型: ${isDual ? '双柱' : ''}独立基础 ${p.id}
 形状: ${p.shape === 'stepped' ? '阶形' : '锥形'}，${stepDesc}
 底面尺寸: ${p.bx}×${p.by}mm，基础总高: ${p.h}mm
 X向底筋: ${p.bottomBarX} (${gradeLabel(barX.grade)} Φ${barX.diameter}@${barX.spacing}，As=${AsX.toFixed(0)}mm²/m，ρ=${rhoX}%)
 Y向底筋: ${p.bottomBarY} (${gradeLabel(barY.grade)} Φ${barY.diameter}@${barY.spacing}，As=${AsY.toFixed(0)}mm²/m，ρ=${rhoY}%)
+底筋减短: ${shortenInfo || '未采用'}
 柱截面: ${p.colBx}×${p.colBy}mm${isDual ? ' ×2' : ''}
 柱插筋: ${p.colMain} (${colR.count}根 ${gradeLabel(colR.grade)} Φ${colR.diameter}，总As=${AsBoundary.toFixed(0)}mm²${isDual ? '，×2柱' : ''})${dualInfo}
+混凝土等级: ${p.concreteGrade}，保护层: ${cover}mm`;
+}
+
+export function buildStripFoundationContext(p: StripFoundationParams): string {
+  const bottom = parseSlabRebar(p.bottomBar);
+  const dist = parseSlabRebar(p.distBar);
+  const top = p.topBar ? parseSlabRebar(p.topBar) : null;
+  const topDist = p.topDistBar ? parseSlabRebar(p.topDistBar) : null;
+  const jlBottom = p.jlBottom ? parseRebar(p.jlBottom) : null;
+  const jlTop = p.jlTop ? parseRebar(p.jlTop) : null;
+  const jclBottom = p.jclBottom ? parseRebar(p.jclBottom) : null;
+  const jclTop = p.jclTop ? parseRebar(p.jclTop) : null;
+  const cover = p.cover || 40;
+  const AsBottom = rebarArea(bottom.diameter) * 1000 / bottom.spacing;
+  const AsDist = rebarArea(dist.diameter) * 1000 / dist.spacing;
+  const h0 = p.h - cover - bottom.diameter / 2;
+  const rhoBottom = (AsBottom / (1000 * h0) * 100).toFixed(3);
+  const clearGap = p.supportCount === 2 && p.supportSpacing
+    ? Math.max(p.supportSpacing - p.supportWidth, 0)
+    : 0;
+  const jlInfo = p.supportType === 'beam'
+    ? `\nJL主梁底筋: ${p.jlBottom || '未设置'}${jlBottom ? ` (${jlBottom.count}根 ${gradeLabel(jlBottom.grade)} Φ${jlBottom.diameter})` : ''}
+JL主梁顶筋: ${p.jlTop || '未设置'}${jlTop ? ` (${jlTop.count}根 ${gradeLabel(jlTop.grade)} Φ${jlTop.diameter})` : ''}
+JL主梁箍筋: ${p.jlStirrup || '未设置'}`
+    : '';
+  const jclInfo = p.hasJcl
+    ? `\nJCL次梁: ${p.jclCount || 1}道，间距 ${p.jclSpacing || '未设置'}mm，截面 ${p.jclB || '未设置'}×${p.jclH || '未设置'}mm
+JCL底筋: ${p.jclBottom || '未设置'}${jclBottom ? ` (${jclBottom.count}根 ${gradeLabel(jclBottom.grade)} Φ${jclBottom.diameter})` : ''}
+JCL顶筋: ${p.jclTop || '未设置'}${jclTop ? ` (${jclTop.count}根 ${gradeLabel(jclTop.grade)} Φ${jclTop.diameter})` : ''}
+JCL箍筋: ${p.jclStirrup || '未设置'}`
+    : '';
+  const overrideInfo = p.hasLocalOverride
+    ? `\n原位修正: 起点 ${p.localOverrideStart || 0}mm，长度 ${p.localOverrideLength || 0}mm
+修正底筋: ${p.localBottomBar || '未设置'}
+修正顶筋: ${p.localTopBar || '未设置'}
+说明: ${p.localOverrideNote || '无'}`
+    : '';
+
+  return `构件类型: 条形基础 ${p.id}
+条基类型: ${p.stripKind === 'beamPlate' ? '梁板式条形基础' : '板式条形基础'}
+底板尺寸: 长${p.length}mm × 宽${p.width}mm × 厚${p.h}mm
+底部横向受力筋: ${p.bottomBar} (${gradeLabel(bottom.grade)} Φ${bottom.diameter}@${bottom.spacing}，As=${AsBottom.toFixed(0)}mm²/m，ρ=${rhoBottom}%)
+底部分布筋: ${p.distBar} (${gradeLabel(dist.grade)} Φ${dist.diameter}@${dist.spacing}，As=${AsDist.toFixed(0)}mm²/m)
+顶部横向受力筋: ${p.topBar || '未设置'}${top ? ` (${gradeLabel(top.grade)} Φ${top.diameter}@${top.spacing})` : ''}
+顶部分布筋: ${p.topDistBar || '未设置'}${topDist ? ` (${gradeLabel(topDist.grade)} Φ${topDist.diameter}@${topDist.spacing})` : ''}
+支承形式: ${p.supportCount === 2 ? '双' : '单'}${p.supportType === 'beam' ? '梁' : '墙'}，支承宽度 ${p.supportWidth}mm，支承高度 ${p.supportHeight}mm${p.supportSpacing ? `，中心距 ${p.supportSpacing}mm` : ''}
+两梁(墙)内边净距: ${clearGap || '—'}mm
+${jlInfo}${jclInfo}${overrideInfo}
 混凝土等级: ${p.concreteGrade}，保护层: ${cover}mm`;
 }
 
@@ -265,6 +326,8 @@ JL底部纵筋: ${p.beamBottom ?? '未设置'}，顶部纵筋: ${p.beamTop ?? '�
   const stripInfo = p.raftType === 'flatPlate' && p.colStripWidth
     ? `\nZXB柱下板带宽: ${p.colStripWidth}mm，X向附加筋: ${p.colStripBarX ?? '未设置'}，Y向附加筋: ${p.colStripBarY ?? '未设置'}`
     : '';
+  const crossOrderInfo = `\n底筋交叉上下关系: ${p.bottomCrossOrder === 'yBelowX' ? 'Y向在下，X向在上' : 'X向在下，Y向在上'}
+面筋交叉上下关系: ${p.topCrossOrder === 'yBelowX' ? 'Y向在下，X向在上' : 'X向在下，Y向在上'}`;
 
   const la = calcLaTable(botX.grade, botX.diameter, p.concreteGrade as ConcreteGrade);
   const largeDiaNote = botX.diameter > ANCHOR_LARGE_DIA_THRESHOLD
@@ -288,6 +351,7 @@ JL底部纵筋: ${p.beamBottom ?? '未设置'}，顶部纵筋: ${p.beamTop ?? '�
 筏板尺寸: ${p.lx}×${p.ly}×${p.h}mm (${(p.lx / 1000).toFixed(1)}×${(p.ly / 1000).toFixed(1)}m)
 X向底筋: ${p.bottomBarX} (${gradeLabel(botX.grade)} Φ${botX.diameter}@${botX.spacing}，As=${AsBotX.toFixed(0)}mm²/m，ρ=${rhoBotX}%)${largeDiaNote}
 Y向底筋: ${p.bottomBarY} (${gradeLabel(botY.grade)} Φ${botY.diameter}@${botY.spacing}，As=${AsBotY.toFixed(0)}mm²/m，ρ=${rhoBotY}%)${topInfo}${beamInfo}${stripInfo}
+${crossOrderInfo}
 柱网: ${p.colCountX}×${p.colCountY} (共${colTotal}根柱)，柱距 ${p.colSpacingX}×${p.colSpacingY}mm
 柱截面: ${p.colBx}×${p.colBy}mm
 柱插筋: ${p.colMain} (每柱${colR.count}根 ${gradeLabel(colR.grade)} Φ${colR.diameter}，As=${AsCol.toFixed(0)}mm²)

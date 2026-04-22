@@ -3,9 +3,10 @@
  */
 import type { ComponentType } from './types';
 import { JSON_SCHEMAS } from './nl-rebar-schema';
+import { buildFoundationKnowledgePrompt } from './foundation-knowledge';
 
 const COMPONENT_NAMES: Record<ComponentType, string> = {
-  beam: '框架梁', column: '框架柱', shearwall: '剪力墙', slab: '楼板', joint: '梁柱节点', stair: '楼梯', foundation: '独立基础', pilecap: '承台', raft: '筏板基础',
+  beam: '框架梁', column: '框架柱', shearwall: '剪力墙', slab: '楼板', joint: '梁柱节点', stair: '楼梯', foundation: '独立基础', stripfoundation: '条形基础', pilecap: '承台', raft: '筏板基础',
 };
 
 const SIDEBAR_SYSTEM_BASE = `你是一位资深结构工程师和22G101图集专家。你同时具备两项能力：
@@ -43,6 +44,10 @@ const SIDEBAR_SYSTEM_BASE = `你是一位资深结构工程师和22G101图集专
    - 墙：竖向/水平配筋率、边缘构件校核
    - 节点：核心区箍筋校核、梁筋锚固长度、柱截面校核
    - 楼梯：梯板配筋率、锚固长度、挠度估算
+   - 独立基础：底筋锚固、柱插筋锚固、双柱基础顶部筋、底筋减短构造
+   - 条形基础：B/T 配筋读取、分布筋、双梁(墙)之间顶部筋、相关 JL/JCL 页码
+   - 承台：桩顶嵌入承台、底筋端部直段、柱插筋锚固
+   - 筏板：边支座锚固、板带区分、交叉纵筋上下关系、柱插筋锚固
 
 你的专业领域：
 - 22G101-1/2/3 系列图集
@@ -229,6 +234,19 @@ const COMPONENT_EXAMPLES: Record<ComponentType, string> = {
 {"componentType":"foundation","bx":4200,"by":2000,"h":800,"columnCount":2,"colSpacing":2400,"topBarX":"C14@150","topBarY":"C10@200"}
 \`\`\`
 已设置为双柱独立基础。`,
+  stripfoundation: `示例1:
+用户: 条形基础底板长9000，宽1800，厚350，底部横向筋C14@150，分布筋A8@250
+\`\`\`rebar-json
+{"componentType":"stripfoundation","length":9000,"width":1800,"h":350,"bottomBar":"C14@150","distBar":"A8@250"}
+\`\`\`
+已设置为条形基础底板，底部横向受力筋C14@150，分布筋A8@250。
+
+示例2:
+用户: 改成双梁条基，两梁中心距1400，JL底筋4C22，JL顶筋4C20，顶部横向筋C14@150
+\`\`\`rebar-json
+{"componentType":"stripfoundation","stripKind":"beamPlate","supportType":"beam","supportCount":2,"supportSpacing":1400,"jlBottom":"4C22","jlTop":"4C20","jlStirrup":"A10@150(4)","topBar":"C14@150","topDistBar":"A8@250"}
+\`\`\`
+已改为双梁条形基础，并补充 JL 主梁筋以及两梁之间的顶部横向筋和分布筋。`,
   raft: `示例1:
 用户: 18×12米筏板基础，板厚700，底筋C16@150
 \`\`\`rebar-json
@@ -258,6 +276,7 @@ export function buildSidebarSystemPrompt(
   const schema = JSON_SCHEMAS[componentType];
   const name = COMPONENT_NAMES[componentType];
   const examples = COMPONENT_EXAMPLES[componentType];
+  const foundationKnowledge = buildFoundationKnowledgePrompt(componentType);
 
   return `${SIDEBAR_SYSTEM_BASE}
 
@@ -269,7 +288,9 @@ ${schema}
 ## 输入输出示例
 ${examples}
 
-## 当前参数
+${foundationKnowledge ? `${foundationKnowledge}
+
+` : ''}## 当前参数
 ${currentParamsContext}`;
 }
 
@@ -312,16 +333,32 @@ export const PARAM_SUGGESTIONS: Record<ComponentType, string[]> = {
     '2400×2400独立基础，高800',
     '底筋改成C14@150',
     '改成双柱基础，柱距2400',
+    '改成锥形基础，底面3200×2800',
+    '双柱基础加顶部纵筋C14@150',
+  ],
+  stripfoundation: [
+    '条形基础长9000，宽1800，厚350',
+    '底部横向筋改成C16@150',
+    '分布筋改成A8@200',
+    '改成双梁条基，梁中心距1400',
+    '两梁之间加顶部横向筋C14@150',
+    'JL底筋4C22，JL顶筋4C20，JL箍筋A10@150(4)',
+    '加一条JCL次梁，中心距6000，截面350×650',
+    '跨中加原位修正段，长度1800，修正底筋C18@150',
   ],
   raft: [
     '18×12米筏板，板厚700',
     '底筋改成C16@150',
     '3×2柱网，柱距7500/9000',
+    '改成梁板式筏基，JL 600×1000',
+    '改成板带式筏基，ZXB宽度3000',
   ],
   pilecap: [
     '四桩承台，2000×2000，高1000',
     '桩径改成800',
     '底筋改成C16@150',
+    '改成双柱联合承台',
+    '改成三桩承台，桩距1800',
   ],
 };
 
@@ -360,18 +397,29 @@ export const ANALYSIS_SUGGESTIONS: Record<ComponentType, string[]> = {
     '梯板厚度和配筋经济性分析',
   ],
   foundation: [
-    '分析当前基础配筋方案的合理性',
-    '生成基础配筋计算书（含冲切验算）',
-    '基础尺寸和配筋经济性分析',
+    '按22G101-3第2-10/2-12检查当前独立基础构造是否完整',
+    '生成基础配筋计算书（含柱插筋锚固、底筋锚固、双柱基础顶部筋检查）',
+    '分析当前基础是否适合采用底板配筋减短10%构造',
+    '基础尺寸与配筋经济性分析',
+  ],
+  stripfoundation: [
+    '按22G101-3第2-20~2-31检查当前条形基础构造是否完整',
+    '生成条形基础计算书（含底板配筋、顶部筋和分布筋用量）',
+    '检查当前 JL/JCL 细部筋是否完整',
+    '分析原位修正段与集中标注的差异',
+    '检查当前条基是否缺少双梁/双墙之间顶部钢筋说明',
+    '分析底板宽度与配筋经济性',
   ],
   raft: [
-    '分析当前筏板基础配筋方案的合理性',
-    '生成筏板配筋计算书（含配筋率、冲切验算）',
+    '按22G101-3第2-24~2-37分类检查当前筏板构造',
+    '生成筏板配筋计算书（含边支座锚固、柱插筋锚固、板带构造）',
+    '检查当前筏板是否缺少交叉纵筋上下关系说明',
     '筏板板厚和配筋经济性分析',
   ],
   pilecap: [
-    '分析当前承台配筋方案的合理性',
-    '生成承台配筋计算书（含冲切验算）',
+    '按22G101-3第2-38~2-48检查当前承台构造是否完整',
+    '生成承台配筋计算书（含桩顶嵌入、底筋端部直段、柱插筋锚固）',
+    '检查当前承台是否适合三桩/双柱联合承台构造',
     '承台尺寸与桩位布置合理性分析',
   ],
 };
@@ -414,16 +462,27 @@ export const QA_SUGGESTIONS: Record<ComponentType, string[]> = {
   foundation: [
     '独立基础底筋锚固要求？',
     '柱插筋弯折长度怎么算？',
-    '阶形基础各阶高度要求？',
+    'DJj、DJz、BJj、BJz 有什么区别？',
+    '双柱基础顶部钢筋看哪几页？',
+    '底板配筋减短10%什么时候需要注明？',
+  ],
+  stripfoundation: [
+    'TJBj、TJBp 分别是什么意思？',
+    '条形基础底板为什么要分 B 和 T？',
+    '双梁条基顶部钢筋应该怎么看？',
+    'JL、JCL 与条形基础是什么关系？',
+    '原位修正和集中标注有什么区别？',
   ],
   raft: [
-    '筏板基础板厚怎么确定？',
-    '筏板配筋率最小要求？',
-    '柱插筋锥入筏板长度要求？',
+    'JL、LPB、ZXB、KZB、BPB 分别是什么意思？',
+    '筏板边支座锚固要看哪几页？',
+    '同层交叉纵筋上下关系怎么定？',
+    '柱下局部增加板厚 JBH 是什么？',
   ],
   pilecap: [
-    '承台高度怎么确定？',
-    '桩中心距要求是什么？',
-    '桩伸入承台长度要求？',
+    '圆桩承台底筋为什么要看25d+0.1D和35d+0.1D？',
+    '桩顶进入承台50mm/100mm怎么判？',
+    '灌注桩加劲箍未注明时取什么？',
+    '双柱联合承台和普通承台有什么区别？',
   ],
 };

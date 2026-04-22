@@ -183,6 +183,16 @@ export function validateRebarGenSchema(
       }
       break;
 
+    case 'foundation':
+      if (d.bx !== undefined && !numInRange(d.bx, 800, 8000)) errors.push('bx 应为 800-8000mm');
+      if (d.by !== undefined && !numInRange(d.by, 800, 4000)) errors.push('by 应为 800-4000mm');
+      if (d.h !== undefined && !numInRange(d.h, 300, 2000)) errors.push('h 应为 300-2000mm');
+      if (d.colBx !== undefined && !numInRange(d.colBx, 200, 1200)) errors.push('colBx 应为 200-1200mm');
+      if (d.colBy !== undefined && !numInRange(d.colBy, 200, 1200)) errors.push('colBy 应为 200-1200mm');
+      if (d.columnCount !== undefined && ![1, 2].includes(d.columnCount as number)) errors.push('columnCount 应为 1/2');
+      if (d.shape !== undefined && !['stepped', 'tapered'].includes(d.shape as string)) errors.push('shape 应为 stepped/tapered');
+      break;
+
     case 'pilecap':
       if (d.bx !== undefined && !numInRange(d.bx, 600, 6000)) errors.push('bx 应为 600-6000mm');
       if (d.by !== undefined && !numInRange(d.by, 600, 6000)) errors.push('by 应为 600-6000mm');
@@ -194,6 +204,24 @@ export function validateRebarGenSchema(
       if (d.pileLayout !== undefined && !['grid', 'circular'].includes(d.pileLayout as string)) {
         errors.push('pileLayout 应为 grid/circular');
       }
+      break;
+
+    case 'stripfoundation':
+      if (d.length !== undefined && !numInRange(d.length, 3000, 30000)) errors.push('length 应为 3000-30000mm');
+      if (d.width !== undefined && !numInRange(d.width, 600, 4000)) errors.push('width 应为 600-4000mm');
+      if (d.h !== undefined && !numInRange(d.h, 200, 1200)) errors.push('h 应为 200-1200mm');
+      if (d.supportWidth !== undefined && !numInRange(d.supportWidth, 150, 1200)) errors.push('supportWidth 应为 150-1200mm');
+      if (d.supportHeight !== undefined && !numInRange(d.supportHeight, 0, 1500)) errors.push('supportHeight 应为 0-1500mm');
+      if (d.supportSpacing !== undefined && !numInRange(d.supportSpacing, 400, 3000)) errors.push('supportSpacing 应为 400-3000mm');
+      if (d.jclCount !== undefined && !numInRange(d.jclCount, 1, 6)) errors.push('jclCount 应为 1-6');
+      if (d.jclSpacing !== undefined && !numInRange(d.jclSpacing, 800, 12000)) errors.push('jclSpacing 应为 800-12000mm');
+      if (d.jclB !== undefined && !numInRange(d.jclB, 200, 1200)) errors.push('jclB 应为 200-1200mm');
+      if (d.jclH !== undefined && !numInRange(d.jclH, 300, 1500)) errors.push('jclH 应为 300-1500mm');
+      if (d.localOverrideStart !== undefined && !numInRange(d.localOverrideStart, 0, 30000)) errors.push('localOverrideStart 应为 0-30000mm');
+      if (d.localOverrideLength !== undefined && !numInRange(d.localOverrideLength, 200, 12000)) errors.push('localOverrideLength 应为 200-12000mm');
+      if (d.stripKind !== undefined && !['beamPlate', 'slab'].includes(d.stripKind as string)) errors.push('stripKind 应为 beamPlate/slab');
+      if (d.supportType !== undefined && !['beam', 'wall'].includes(d.supportType as string)) errors.push('supportType 应为 beam/wall');
+      if (d.supportCount !== undefined && ![1, 2].includes(d.supportCount as number)) errors.push('supportCount 应为 1/2');
       break;
 
     case 'raft':

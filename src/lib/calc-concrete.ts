@@ -1,5 +1,5 @@
 import type { FormulaStep } from './calc';
-import type { BeamParams, ColumnParams, SlabParams, ShearWallParams, StairParams, FoundationParams, PileCapParams, RaftFoundationParams } from './types';
+import type { BeamParams, ColumnParams, SlabParams, ShearWallParams, StairParams, FoundationParams, StripFoundationParams, PileCapParams, RaftFoundationParams } from './types';
 
 // ═══════════════════════════════════════════════════════════════════
 // 混凝土工程量计算 — 按清单规范 GB50854 / GB50500
@@ -257,6 +257,55 @@ export function calcStairConcrete(p: StairParams): ConcreteCalcResult {
 
   const totalVolume = items.reduce((s, it) => s + it.volume, 0);
   return { items, totalVolume };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 条形基础 (TJ) — 混凝土工程量
+// ═══════════════════════════════════════════════════════════════════
+
+export function calcStripFoundationConcrete(p: StripFoundationParams): ConcreteCalcResult {
+  const items: ConcreteCalcItem[] = [];
+
+  const baseVol = (p.length / 1000) * (p.width / 1000) * (p.h / 1000);
+  const baseSteps: FormulaStep[] = [
+    { label: '底板体积', formula: 'V = l × b × h', substitution: `= ${p.length / 1000} × ${p.width / 1000} × ${p.h / 1000}`, result: `= ${baseVol.toFixed(4)} m³` },
+  ];
+  items.push({ name: '条形基础底板', volume: baseVol, description: `${p.length}×${p.width}×${p.h}mm`, formulaSteps: baseSteps, color: '#94A3B8' });
+
+  if (p.supportHeight > 0) {
+    const supportVol = p.supportCount * (p.length / 1000) * (p.supportWidth / 1000) * (p.supportHeight / 1000);
+    const supportSteps: FormulaStep[] = [
+      { label: '单道支承体积', formula: 'V1 = l × bw × hw', substitution: `= ${p.length / 1000} × ${p.supportWidth / 1000} × ${p.supportHeight / 1000}`, result: `= ${(supportVol / p.supportCount).toFixed(4)} m³` },
+      { label: '总支承体积', formula: 'V = n × V1', substitution: `= ${p.supportCount} × ${(supportVol / p.supportCount).toFixed(4)}`, result: `= ${supportVol.toFixed(4)} m³` },
+    ];
+    items.push({
+      name: p.supportType === 'beam' ? `基础梁 (${p.supportCount}道)` : `基础墙带 (${p.supportCount}道)`,
+      volume: supportVol,
+      description: `${p.supportCount}×${p.length}×${p.supportWidth}×${p.supportHeight}mm`,
+      formulaSteps: supportSteps,
+      color: p.supportType === 'beam' ? '#CBD5E1' : '#A5B4FC',
+    });
+  }
+
+  if (p.hasJcl && p.jclCount && p.jclB && p.jclH) {
+    const jclVol = p.jclCount * (p.width / 1000) * (p.jclB / 1000) * (p.jclH / 1000);
+    const jclSteps: FormulaStep[] = [
+      { label: '单道 JCL 体积', formula: 'V1 = b条基 × bw × hw', substitution: `= ${p.width / 1000} × ${p.jclB / 1000} × ${p.jclH / 1000}`, result: `= ${(jclVol / p.jclCount).toFixed(4)} m³` },
+      { label: 'JCL 总体积', formula: 'V = n × V1', substitution: `= ${p.jclCount} × ${(jclVol / p.jclCount).toFixed(4)}`, result: `= ${jclVol.toFixed(4)} m³` },
+    ];
+    items.push({
+      name: `基础次梁 JCL (${p.jclCount}道)`,
+      volume: jclVol,
+      description: `${p.jclCount}×${p.width}×${p.jclB}×${p.jclH}mm`,
+      formulaSteps: jclSteps,
+      color: '#9BC2D5',
+    });
+  }
+
+  return {
+    items,
+    totalVolume: items.reduce((sum, item) => sum + item.volume, 0),
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════

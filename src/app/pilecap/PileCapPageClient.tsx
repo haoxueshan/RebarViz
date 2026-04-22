@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import type { PileCapParams, ComponentType } from '@/lib/types';
@@ -16,19 +16,28 @@ import { Field, NumField, Legend, ResetButton, SelectField, Section } from '@/co
 import { ViewerSkeleton } from '@/components/ViewerSkeleton';
 import { CONCRETE_GRADES } from '@/lib/anchor';
 import type { ConcreteGrade } from '@/lib/anchor';
-import { AISidebar } from '@/components/AISidebar';
+import { LazyAISidebar as AISidebar } from '@/components/LazyAISidebar';
 import { buildPileCapContext } from '@/lib/ai-context';
 import { decodeSharedParam } from '@/lib/share-params';
 import { PileCapAnchorPanel } from '@/components/PileCapAnchorPanel';
 import { SEISMIC_GRADES } from '@/lib/anchor';
 import type { SeismicGrade } from '@/lib/anchor';
+import { CompliancePanel, ComplianceBadge } from '@/components/CompliancePanel';
+import { checkPileCapCompliance } from '@/lib/compliance';
+import { useHistory } from '@/lib/useHistory';
+import { HistoryPanel } from '@/components/HistoryPanel';
+import { MetricComparePanel } from '@/components/MetricComparePanel';
+import { metricFromNumber, metricFromText } from '@/lib/compare-utils';
 import { Sparkles } from 'lucide-react';
 
 const DATA_TABS = [
   { key: 'section', label: '截面图' },
+  { key: 'guide', label: '识图说明' },
+  { key: 'compliance', label: '规范校验' },
   { key: 'weight', label: '用量估算' },
   { key: 'concrete', label: '混凝土量' },
   { key: 'anchor', label: '锚固构造' },
+  { key: 'compare', label: '方案对比' },
 ] as const;
 
 const PileCapViewer = dynamic(() => import('@/components/PileCapViewer'), {
@@ -62,11 +71,65 @@ export function PileCapPageClient() {
   const update = (patch: Partial<PileCapParams>) => setParams(p => ({ ...p, ...patch }));
   const calcResult = useMemo(() => calcPileCap(params), [params]);
   const concreteResult = useMemo(() => calcPileCapConcrete(params), [params]);
+  const complianceResults = useMemo(() => checkPileCapCompliance(params), [params]);
   const aiContext = useMemo(() => buildPileCapContext(params), [params]);
+
+  const {
+    history,
+    favorites,
+    addToHistory,
+    addToFavorites,
+    removeFromFavorites,
+    removeFromHistory,
+    clearHistory,
+    isFavorite,
+  } = useHistory<PileCapParams>('pilecap');
+
+  useEffect(() => {
+    const timer = setTimeout(() => addToHistory(params, params.id), 2000);
+    return () => clearTimeout(timer);
+  }, [params, addToHistory]);
+
+  const [compareParams, setCompareParams] = useState<PileCapParams | null>(null);
+  const [compareLabel, setCompareLabel] = useState('历史方案');
 
   const applyPreset = (key: keyof typeof PILECAP_PRESETS) => {
     setParams({ ...PILECAP_PRESETS[key] });
   };
+
+  const handleSelectHistory = (id: string, fromFavorites: boolean) => {
+    const list = fromFavorites ? favorites : history;
+    const item = list.find(i => i.id === id);
+    if (item) setParams(item.params as PileCapParams);
+  };
+
+  const handleSelectForCompare = (id: string, fromFavorites: boolean) => {
+    const list = fromFavorites ? favorites : history;
+    const item = list.find(i => i.id === id);
+    if (item) {
+      setCompareParams(item.params as PileCapParams);
+      setCompareLabel(item.name);
+      setDataTab('compare');
+    }
+  };
+
+  const compareMetrics = useMemo(() => {
+    if (!compareParams) return [];
+    return [
+      metricFromNumber('承台 X 向宽', compareParams.bx, params.bx, 'mm'),
+      metricFromNumber('承台 Y 向宽', compareParams.by, params.by, 'mm'),
+      metricFromNumber('承台高度', compareParams.h, params.h, 'mm'),
+      metricFromNumber('桩径', compareParams.pileDiameter, params.pileDiameter, 'mm'),
+      metricFromNumber('桩数', compareParams.pileCount, params.pileCount),
+      metricFromNumber('X向桩距', compareParams.pileSpacingX, params.pileSpacingX, 'mm'),
+      metricFromNumber('Y向桩距', compareParams.pileSpacingY, params.pileSpacingY, 'mm'),
+      metricFromText('X向底筋', compareParams.bottomBarX, params.bottomBarX),
+      metricFromText('Y向底筋', compareParams.bottomBarY, params.bottomBarY),
+      metricFromText('柱插筋', compareParams.colMain, params.colMain),
+      metricFromNumber('钢筋总用量', Number(calcPileCap(compareParams).items.reduce((sum, item) => sum + item.weightKg, 0).toFixed(1)), Number(calcResult.items.reduce((sum, item) => sum + item.weightKg, 0).toFixed(1)), 'kg'),
+      metricFromNumber('混凝土总量', Number(calcPileCapConcrete(compareParams).totalVolume.toFixed(3)), Number(concreteResult.totalVolume.toFixed(3)), 'm³'),
+    ].filter((item): item is NonNullable<typeof item> => Boolean(item));
+  }, [compareParams, params, calcResult.items, concreteResult.totalVolume]);
 
   return (
     <main className="px-4 py-4">
@@ -139,6 +202,20 @@ export function PileCapPageClient() {
             { color: '#7F8C8D', label: '桩基' },
             { color: '#BDC3C7', label: '混凝土（半透明）', opacity: 0.6 },
           ]} />
+
+          <div className="bg-white rounded-xl p-4 border border-gray-100 shadow-sm">
+            <h3 className="text-sm font-semibold text-primary mb-3">历史记录</h3>
+            <HistoryPanel
+              history={history}
+              favorites={favorites}
+              isFavorite={isFavorite(params)}
+              onSelect={handleSelectHistory}
+              onAddFavorite={() => addToFavorites(params, params.id)}
+              onRemoveFavorite={removeFromFavorites}
+              onRemoveHistory={removeFromHistory}
+              onClearHistory={clearHistory}
+            />
+          </div>
         </div>
 
         {/* 中栏：3D模型 + 数据 tab */}
@@ -149,8 +226,9 @@ export function PileCapPageClient() {
               <div className="flex items-center gap-1 bg-gray-100/80 rounded-lg p-0.5">
                 {DATA_TABS.map(t => (
                   <button key={t.key} onClick={() => setDataTab(t.key)}
-                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all cursor-pointer ${dataTab === t.key ? 'bg-white text-accent shadow-sm' : 'text-muted hover:text-primary'}`}>
+                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all cursor-pointer flex items-center gap-1.5 ${dataTab === t.key ? 'bg-white text-accent shadow-sm' : 'text-muted hover:text-primary'}`}>
                     {t.label}
+                    {t.key === 'compliance' && <ComplianceBadge results={complianceResults} />}
                   </button>
                 ))}
               </div>
@@ -169,9 +247,53 @@ export function PileCapPageClient() {
                   </div>
                 </>
               )}
+              {dataTab === 'guide' && <PileCapExplain params={params} />}
+              {dataTab === 'compliance' && <CompliancePanel results={complianceResults} />}
               {dataTab === 'weight' && <WeightCalc result={calcResult} />}
               {dataTab === 'concrete' && <ConcreteCalc result={concreteResult} />}
               {dataTab === 'anchor' && <PileCapAnchorPanel params={params} />}
+              {dataTab === 'compare' && (
+                <div className="space-y-4">
+                  {compareParams ? (
+                    <MetricComparePanel
+                      metrics={compareMetrics}
+                      summary={{
+                        title: '钢筋用量变化',
+                        valueA: calcPileCap(compareParams).items.reduce((sum, item) => sum + item.weightKg, 0),
+                        valueB: calcResult.items.reduce((sum, item) => sum + item.weightKg, 0),
+                        unit: 'kg',
+                        labelA: compareLabel,
+                        labelB: '当前方案',
+                      }}
+                      labelA={compareLabel}
+                      labelB="当前方案"
+                    />
+                  ) : (
+                    <div className="text-center py-8">
+                      <p className="text-sm text-gray-500 mb-3">从历史记录或收藏中选择一个方案进行对比</p>
+                      <div className="flex flex-wrap justify-center gap-2">
+                        {[...favorites, ...history].slice(0, 6).map(item => (
+                          <button
+                            key={item.id}
+                            onClick={() => handleSelectForCompare(item.id, favorites.some(f => f.id === item.id))}
+                            className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs rounded-lg cursor-pointer transition-colors"
+                          >
+                            {item.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {compareParams && (
+                    <button
+                      onClick={() => setCompareParams(null)}
+                      className="text-xs text-gray-400 hover:text-gray-600 cursor-pointer"
+                    >
+                      清除对比方案
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -195,6 +317,11 @@ export function PileCapPageClient() {
                 if (preset in PILECAP_PRESETS) applyPreset(preset as keyof typeof PILECAP_PRESETS);
               }}
               onGetCurrentState={() => aiContext}
+              onRunComplianceCheck={() => ({
+                results: complianceResults,
+                summary: `校验完成: ${complianceResults.filter(r => r.status === 'pass').length}项通过, ${complianceResults.filter(r => r.status === 'fail').length}项不通过, ${complianceResults.filter(r => r.status === 'warn').length}项警告`,
+              })}
+              onSaveFavorite={(name, note) => addToFavorites(params, name, note)}
               onResetParams={() => setParams({ ...PILECAP_PRESETS.fourPile })}
             />
           </div>

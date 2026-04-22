@@ -26,6 +26,7 @@ const COMPONENT_META: Record<ComponentType, { label: string; route: string }> = 
   shearwall: { label: '剪力墙', route: '/shearwall' },
   stair:     { label: '楼梯',   route: '/stair' },
   foundation: { label: '独立基础', route: '/foundation' },
+  stripfoundation: { label: '条形基础', route: '/stripfoundation' },
   pilecap:    { label: '承台',   route: '/pilecap' },
   raft:       { label: '筏板基础', route: '/raft' },
 };
@@ -43,6 +44,7 @@ const RULES: Array<{ type: ComponentType; patterns: RegExp[]; confidence: 'high'
   { type: 'shearwall', patterns: [/\bQ\d+\b/, /剪力墙/, /约束边缘构件/, /\bYBZ\b/i, /\bGBZ\b/i], confidence: 'high' },
   { type: 'joint',     patterns: [/梁柱节点/, /节点核心区/, /节点区/, /弯锚.*节点|节点.*弯锚/, /直锚.*节点|节点.*直锚/], confidence: 'high' },
   { type: 'stair',     patterns: [/\bAT\d/i, /\bBT\d/i, /板式楼梯/, /梯板/, /踏步/, /梯段/], confidence: 'high' },
+  { type: 'stripfoundation', patterns: [/\bTJ[BJP]?\d/i, /条形基础/, /条基/, /双梁条形基础/, /基础梁.*条形基础|条形基础.*基础梁/], confidence: 'high' },
   { type: 'foundation', patterns: [/\bDJ\d/i, /独立基础/, /柱下基础/, /阶形基础/, /锥形基础/], confidence: 'high' },
   { type: 'pilecap',    patterns: [/\bCT\d/i, /承台/, /桩基承台/, /桩帽/], confidence: 'high' },
   { type: 'raft',       patterns: [/\bFB\d/i, /筏板基础/, /筏板/, /筏形基础/], confidence: 'high' },
@@ -54,6 +56,7 @@ const RULES: Array<{ type: ComponentType; patterns: RegExp[]; confidence: 'high'
   { type: 'shearwall', patterns: [/墙[厚长]/, /竖向.*水平|水平.*竖向/], confidence: 'medium' },
   { type: 'joint',     patterns: [/节点/, /锚固.*方式|弯锚|直锚/], confidence: 'medium' },
   { type: 'stair',     patterns: [/楼梯/, /梯[板梁]/, /踏步/], confidence: 'medium' },
+  { type: 'stripfoundation', patterns: [/基础梁/, /双墙/, /双梁/, /底板配筋.*分布筋|分布筋.*底板配筋/], confidence: 'medium' },
   { type: 'foundation', patterns: [/基础/, /基底/, /柱插筋/], confidence: 'medium' },
   { type: 'pilecap',    patterns: [/桩基/, /桩径/, /桩距/, /桩数/], confidence: 'medium' },
   { type: 'raft',       patterns: [/柱网/, /筏[板形]/, /板厚.*柱距|柱距.*板厚/], confidence: 'medium' },

@@ -1,13 +1,13 @@
 /**
  * NL Rebar Prompt 构造 — 为 AI 生成配筋解析请求
  */
-import type { ComponentType, BeamParams, ColumnParams, SlabParams, JointParams, ShearWallParams } from './types';
+import type { ComponentType, BeamParams, ColumnParams, SlabParams, JointParams, ShearWallParams, StripFoundationParams } from './types';
 import type { RebarGenSchema, RebarSpec, DistributedRebarSpec, StirrupSpec } from './nl-rebar-schema';
 import { JSON_SCHEMAS, LETTER_TO_GRADE } from './nl-rebar-schema';
 import { parseRebar, parseStirrup, parseSlabRebar } from './rebar';
 
 const COMPONENT_NAMES: Record<ComponentType, string> = {
-  beam: '框架梁', column: '框架柱', shearwall: '剪力墙', slab: '楼板', joint: '梁柱节点', stair: '楼梯', foundation: '独立基础', pilecap: '承台', raft: '筏板基础',
+  beam: '框架梁', column: '框架柱', shearwall: '剪力墙', slab: '楼板', joint: '梁柱节点', stair: '楼梯', foundation: '独立基础', stripfoundation: '条形基础', pilecap: '承台', raft: '筏板基础',
 };
 
 const NL_SYSTEM_BASE = `你是一位资深结构工程师，精通22G101图集和GB50010规范。
@@ -32,7 +32,7 @@ const NL_SYSTEM_BASE = `你是一位资深结构工程师，精通22G101图集�
 /** 构造 AI 解析请求 */
 export function buildNLPrompt(
   componentType: ComponentType,
-  currentParams: BeamParams | ColumnParams | SlabParams | JointParams | ShearWallParams,
+  currentParams: BeamParams | ColumnParams | SlabParams | JointParams | ShearWallParams | StripFoundationParams,
   userText: string
 ): { system: string; user: string } {
   const schema = JSON_SCHEMAS[componentType];
@@ -74,7 +74,7 @@ function fmtStirrup(notation: string): string {
 
 export function formatParams(
   componentType: ComponentType,
-  params: BeamParams | ColumnParams | SlabParams | JointParams | ShearWallParams
+  params: BeamParams | ColumnParams | SlabParams | JointParams | ShearWallParams | StripFoundationParams
 ): string {
   switch (componentType) {
     case 'beam': {
@@ -115,6 +115,10 @@ export function formatParams(
       const p = params as JointParams;
       const jt = { middle: '中间节点', side: '边节点', corner: '角节点' };
       return `柱截面: ${p.colB}×${p.colH}mm, 柱纵筋: ${p.colMain}, 梁截面: ${p.beamB}×${p.beamH}mm, 梁上部筋: ${p.beamTop}, 梁下部筋: ${p.beamBottom}, 节点类型: ${jt[p.jointType]}, 锚固: ${p.anchorType === 'bent' ? '弯锚' : '直锚'}, 混凝土: ${p.concreteGrade}, 抗震: ${p.seismicGrade}, 保护层: ${p.cover}mm`;
+    }
+    case 'stripfoundation': {
+      const p = params as StripFoundationParams;
+      return `条基底板: ${p.length}×${p.width}×${p.h}mm, 底部横向筋: ${p.bottomBar}(${fmtDistributed(p.bottomBar)}), 底部分布筋: ${p.distBar}(${fmtDistributed(p.distBar)}), 顶部横向筋: ${p.topBar || '无'}, 顶部分布筋: ${p.topDistBar || '无'}, 支承: ${p.supportCount}${p.supportType === 'beam' ? '梁' : '墙'}, 支承宽度: ${p.supportWidth}mm${p.supportSpacing ? `, 中心距: ${p.supportSpacing}mm` : ''}, 混凝土: ${p.concreteGrade}, 保护层: ${p.cover}mm`;
     }
     default: return '';
   }
@@ -207,6 +211,35 @@ export function formatSchemaPreview(schema: RebarGenSchema, componentType: Compo
       if (s.anchorType) lines.push(`锚固: ${s.anchorType === 'bent' ? '弯锚' : '直锚'}`);
       if (s.concreteGrade) lines.push(`混凝土: ${s.concreteGrade}`);
       if (s.seismicGrade) lines.push(`抗震: ${s.seismicGrade}`);
+      break;
+    }
+    case 'stripfoundation': {
+      const s = schema as import('./nl-rebar-schema').StripFoundationSchema;
+      if (s.length !== undefined || s.width !== undefined || s.h !== undefined) lines.push(`底板: ${s.length ?? '—'}×${s.width ?? '—'}×${s.h ?? '—'}mm`);
+      if (s.bottomBar) lines.push(`底部横向筋: ${s.bottomBar}`);
+      if (s.distBar) lines.push(`底部分布筋: ${s.distBar}`);
+      if (s.topBar) lines.push(`顶部横向筋: ${s.topBar}`);
+      if (s.topDistBar) lines.push(`顶部分布筋: ${s.topDistBar}`);
+      if (s.supportType) lines.push(`支承类型: ${s.supportType === 'beam' ? '梁' : '墙'}`);
+      if (s.supportCount !== undefined) lines.push(`支承道数: ${s.supportCount}`);
+      if (s.supportWidth !== undefined) lines.push(`支承宽度: ${s.supportWidth}mm`);
+      if (s.supportSpacing !== undefined) lines.push(`支承中心距: ${s.supportSpacing}mm`);
+      if (s.jlBottom) lines.push(`JL底筋: ${s.jlBottom}`);
+      if (s.jlTop) lines.push(`JL顶筋: ${s.jlTop}`);
+      if (s.jlStirrup) lines.push(`JL箍筋: ${s.jlStirrup}`);
+      if (s.hasJcl !== undefined) lines.push(`JCL: ${s.hasJcl ? '是' : '否'}`);
+      if (s.jclCount !== undefined) lines.push(`JCL道数: ${s.jclCount}`);
+      if (s.jclSpacing !== undefined) lines.push(`JCL中心距: ${s.jclSpacing}mm`);
+      if (s.jclB !== undefined || s.jclH !== undefined) lines.push(`JCL截面: ${s.jclB ?? '—'}×${s.jclH ?? '—'}mm`);
+      if (s.jclBottom) lines.push(`JCL底筋: ${s.jclBottom}`);
+      if (s.jclTop) lines.push(`JCL顶筋: ${s.jclTop}`);
+      if (s.jclStirrup) lines.push(`JCL箍筋: ${s.jclStirrup}`);
+      if (s.hasLocalOverride !== undefined) lines.push(`原位修正: ${s.hasLocalOverride ? '是' : '否'}`);
+      if (s.localOverrideStart !== undefined || s.localOverrideLength !== undefined) lines.push(`修正段: 起点${s.localOverrideStart ?? '—'}mm, 长度${s.localOverrideLength ?? '—'}mm`);
+      if (s.localBottomBar) lines.push(`修正底筋: ${s.localBottomBar}`);
+      if (s.localTopBar) lines.push(`修正顶筋: ${s.localTopBar}`);
+      if (s.concreteGrade) lines.push(`混凝土: ${s.concreteGrade}`);
+      if (s.cover !== undefined) lines.push(`保护层: ${s.cover}mm`);
       break;
     }
   }

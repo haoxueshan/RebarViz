@@ -1,11 +1,12 @@
 'use client';
 
+import NextImage from 'next/image';
 import { useState, useRef, useEffect, useCallback, memo, type ReactNode } from 'react';
-import { Send, Trash2, ChevronDown, ChevronRight, Loader2, AlertCircle, Sparkles, Settings, Check, BookOpen, ShieldCheck, ShieldAlert, TriangleAlert, Image, X, Zap, Eye } from 'lucide-react';
+import { Send, Trash2, ChevronDown, ChevronRight, Loader2, AlertCircle, Sparkles, Settings, Check, BookOpen, ShieldCheck, ShieldAlert, TriangleAlert, Image as ImageIcon, X, Zap, Eye } from 'lucide-react';
 import { AI_PROVIDERS, type AIProvider } from '@/lib/ai-providers';
 import type { ChatMessage } from '@/lib/ai-providers';
 import { getApiKey, getApiKeys } from '@/lib/api-keys';
-import type { ComponentType, BeamParams, ColumnParams, SlabParams, JointParams, ShearWallParams, StairParams, FoundationParams, PileCapParams, RaftFoundationParams } from '@/lib/types';
+import type { ComponentType, BeamParams, ColumnParams, SlabParams, JointParams, ShearWallParams, StairParams, FoundationParams, StripFoundationParams, PileCapParams, RaftFoundationParams } from '@/lib/types';
 import { parseAIResponse } from '@/lib/nl-rebar-parser';
 import { mapSchemaToParams } from '@/lib/nl-rebar-mapper';
 import { formatSchemaPreview } from '@/lib/nl-rebar-prompt';
@@ -20,9 +21,9 @@ import Link from 'next/link';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-type AnyParams = BeamParams | ColumnParams | SlabParams | JointParams | ShearWallParams | StairParams | FoundationParams | PileCapParams | RaftFoundationParams;
+type AnyParams = BeamParams | ColumnParams | SlabParams | JointParams | ShearWallParams | StairParams | FoundationParams | StripFoundationParams | PileCapParams | RaftFoundationParams;
 
-interface AISidebarProps {
+export interface AISidebarProps {
   componentType: ComponentType;
   currentParams: AnyParams;
   onApplyParams: (partial: Partial<AnyParams>) => void;
@@ -141,7 +142,6 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
   const [agentMode, setAgentMode] = useState(true); // Agent 模式默认开启
   // ─── Image upload state ───
   const [pendingImages, setPendingImages] = useState<string[]>([]); // base64 data URLs
-  const [showImagePreview, setShowImagePreview] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ─── Image compression helper ───
@@ -231,7 +231,7 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
       const preview = formatSchemaPreview(result.schema, componentType);
       onApplyParams(partial);
       // Run compliance check on the merged params
-      const merged = { ...currentParamsRef.current, ...partial };
+      const merged = { ...currentParamsRef.current, ...partial } as AnyParams;
       const compliance = runComplianceCheck(merged);
       setApplyResults(prev => ({ ...prev, [msgIndex]: { success: true, fields, preview, compliance } }));
       return null;
@@ -322,7 +322,7 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
         if (result.success) {
           const partial = mapSchemaToParams(result.schema, componentType);
           onApplyParams(partial);
-          const merged = { ...currentParamsRef.current, ...partial };
+          const merged = { ...currentParamsRef.current, ...partial } as AnyParams;
           const compliance = runComplianceCheck(merged);
           const hasIssues = compliance.some(c => c.status !== 'pass');
           return { success: true, message: `已更新 ${Object.keys(partial).join(', ')}${hasIssues ? '（规范校验发现问题）' : ''}` };
@@ -427,7 +427,7 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
 
       // Apply params directly
       onApplyParams(notationResult.params);
-      const merged = { ...currentParamsRef.current, ...notationResult.params };
+      const merged = { ...currentParamsRef.current, ...notationResult.params } as AnyParams;
       const compliance = runComplianceCheck(merged);
       const fields = Object.keys(notationResult.params);
       setApplyResults(prev => ({
@@ -449,7 +449,6 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
         })),
       ];
       setPendingImages([]);
-      setShowImagePreview(false);
     } else {
       userContent = trimmedText;
     }
@@ -821,11 +820,14 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
                   {Array.isArray(msg.content) && msg.content.some(p => p.type === 'image_url') && (
                     <div className="flex flex-wrap gap-1.5 justify-end">
                       {msg.content.filter(p => p.type === 'image_url').map((p, pi) => (
-                        <img
+                        <NextImage
                           key={pi}
                           src={(p as { type: 'image_url'; image_url: { url: string } }).image_url.url}
                           alt="上传图片"
-                          className="w-20 h-20 rounded-lg object-cover border border-white/20"
+                          width={80}
+                          height={80}
+                          unoptimized
+                          className="h-20 w-20 rounded-lg border border-white/20 object-cover"
                         />
                       ))}
                     </div>
@@ -960,7 +962,14 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
           <div className="flex flex-wrap gap-2 mb-2">
             {pendingImages.map((img, idx) => (
               <div key={idx} className="relative group">
-                <img src={img} alt="上传图片" className="w-16 h-16 rounded-lg object-cover border border-gray-200" />
+                <NextImage
+                  src={img}
+                  alt="上传图片"
+                  width={64}
+                  height={64}
+                  unoptimized
+                  className="h-16 w-16 rounded-lg border border-gray-200 object-cover"
+                />
                 <button
                   onClick={() => setPendingImages(prev => prev.filter((_, i) => i !== idx))}
                   className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
@@ -1003,7 +1012,7 @@ export function AISidebar({ componentType, currentParams, onApplyParams, context
             className="p-2.5 rounded-xl transition-colors cursor-pointer shrink-0 text-gray-400 hover:text-accent hover:bg-accent/5"
             title={provider.visionModel ? '上传图纸/图片（支持 Vision）' : `上传图片（发送时将自动切换到支持 Vision 的模型）`}
           >
-            <Image className="w-4 h-4" />
+            <ImageIcon className="w-4 h-4" />
           </button>
           <textarea
             ref={inputRef}

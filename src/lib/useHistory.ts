@@ -1,10 +1,31 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import type { BeamParams, ColumnParams, SlabParams, JointParams, ShearWallParams } from './types';
+import type {
+  BeamParams,
+  ColumnParams,
+  SlabParams,
+  JointParams,
+  ShearWallParams,
+  StairParams,
+  FoundationParams,
+  StripFoundationParams,
+  PileCapParams,
+  RaftFoundationParams,
+  ComponentType,
+} from './types';
 
-type ComponentType = 'beam' | 'column' | 'slab' | 'joint' | 'shearwall';
-type AnyParams = BeamParams | ColumnParams | SlabParams | JointParams | ShearWallParams;
+type AnyParams =
+  | BeamParams
+  | ColumnParams
+  | SlabParams
+  | JointParams
+  | ShearWallParams
+  | StairParams
+  | FoundationParams
+  | StripFoundationParams
+  | PileCapParams
+  | RaftFoundationParams;
 
 interface HistoryItem<T = AnyParams> {
   id: string;

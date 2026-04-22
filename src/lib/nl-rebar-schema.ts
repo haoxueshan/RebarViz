@@ -135,6 +135,26 @@ export interface JointSchema {
   cover?: number;
 }
 
+export interface FoundationSchema {
+  componentType: 'foundation';
+  shape?: 'stepped' | 'tapered';
+  bx?: number;
+  by?: number;
+  h?: number;
+  bottomBarX?: string;
+  bottomBarY?: string;
+  colBx?: number;
+  colBy?: number;
+  colMain?: string;
+  columnCount?: 1 | 2;
+  colSpacing?: number;
+  topBarX?: string;
+  topBarY?: string;
+  concreteGrade?: ConcreteGrade;
+  seismicGrade?: SeismicGrade;
+  cover?: number;
+}
+
 export interface PileCapSchema {
   componentType: 'pilecap';
   bx?: number;
@@ -153,6 +173,42 @@ export interface PileCapSchema {
   pileLayout?: 'grid' | 'circular';
   concreteGrade?: ConcreteGrade;
   seismicGrade?: SeismicGrade;
+  cover?: number;
+}
+
+export interface StripFoundationSchema {
+  componentType: 'stripfoundation';
+  stripKind?: 'beamPlate' | 'slab';
+  length?: number;
+  width?: number;
+  h?: number;
+  bottomBar?: string;
+  distBar?: string;
+  topBar?: string;
+  topDistBar?: string;
+  supportType?: 'beam' | 'wall';
+  supportCount?: 1 | 2;
+  supportWidth?: number;
+  supportHeight?: number;
+  supportSpacing?: number;
+  jlBottom?: string;
+  jlTop?: string;
+  jlStirrup?: string;
+  hasJcl?: boolean;
+  jclCount?: number;
+  jclSpacing?: number;
+  jclB?: number;
+  jclH?: number;
+  jclBottom?: string;
+  jclTop?: string;
+  jclStirrup?: string;
+  hasLocalOverride?: boolean;
+  localOverrideStart?: number;
+  localOverrideLength?: number;
+  localBottomBar?: string;
+  localTopBar?: string;
+  localOverrideNote?: string;
+  concreteGrade?: ConcreteGrade;
   cover?: number;
 }
 
@@ -183,7 +239,7 @@ export interface RaftSchema {
   cover?: number;
 }
 
-export type RebarGenSchema = BeamSchema | ColumnSchema | ShearWallSchema | SlabSchema | JointSchema | PileCapSchema | RaftSchema;
+export type RebarGenSchema = BeamSchema | ColumnSchema | ShearWallSchema | SlabSchema | JointSchema | FoundationSchema | PileCapSchema | StripFoundationSchema | RaftSchema;
 
 // ─── JSON Schema 字符串（嵌入 prompt） ───
 
@@ -332,6 +388,42 @@ const PILECAP_JSON_SCHEMA = `{
   "cover": number (mm, 可选)
 }`;
 
+const STRIPFOUNDATION_JSON_SCHEMA = `{
+  "componentType": "stripfoundation",
+  "stripKind": "beamPlate" | "slab" (可选，默认beamPlate),
+  "length": number (条基长度mm, 3000-30000),
+  "width": number (底板总宽mm, 600-4000),
+  "h": number (底板厚mm, 200-1200),
+  "bottomBar": "等级+直径@间距" (底部横向受力筋，如C14@150),
+  "distBar": "等级+直径@间距" (底部分布筋，如A8@250),
+  "topBar": "等级+直径@间距" (双梁/双墙之间顶部横向受力筋，可选),
+  "topDistBar": "等级+直径@间距" (顶部分布筋，可选),
+  "supportType": "beam" | "wall" (上部支承形式，可选),
+  "supportCount": 1 | 2 (单梁/双梁或单墙/双墙，可选),
+  "supportWidth": number (梁宽或墙厚mm, 可选),
+  "supportHeight": number (梁高或墙高mm, 可选),
+  "supportSpacing": number (双梁/双墙中心距mm, 仅supportCount=2时, 可选),
+  "jlBottom": "数量+等级+直径" (JL底筋，如4C22，可选),
+  "jlTop": "数量+等级+直径" (JL顶筋，如4C20，可选),
+  "jlStirrup": "等级+直径@间距(肢数)" (JL箍筋，可选),
+  "hasJcl": boolean (是否设置JCL，可选),
+  "jclCount": number (JCL道数，可选),
+  "jclSpacing": number (JCL中心距mm，可选),
+  "jclB": number (JCL宽度mm，可选),
+  "jclH": number (JCL高度mm，可选),
+  "jclBottom": "数量+等级+直径" (JCL底筋，可选),
+  "jclTop": "数量+等级+直径" (JCL顶筋，可选),
+  "jclStirrup": "等级+直径@间距(肢数)" (JCL箍筋，可选),
+  "hasLocalOverride": boolean (是否设置原位修正段，可选),
+  "localOverrideStart": number (原位修正起点mm，可选),
+  "localOverrideLength": number (原位修正长度mm，可选),
+  "localBottomBar": "等级+直径@间距" (原位修正底筋，可选),
+  "localTopBar": "等级+直径@间距" (原位修正顶筋，可选),
+  "localOverrideNote": string (原位修正说明，可选),
+  "concreteGrade": "C20"-"C80" (可选),
+  "cover": number (mm, 可选)
+}`;
+
 const RAFT_JSON_SCHEMA = `{
   "componentType": "raft",
   "lx": number (X向长度mm, 6000-60000),
@@ -361,6 +453,7 @@ export const JSON_SCHEMAS: Record<string, string> = {
   joint: JOINT_JSON_SCHEMA,
   stair: STAIR_JSON_SCHEMA,
   foundation: FOUNDATION_JSON_SCHEMA,
+  stripfoundation: STRIPFOUNDATION_JSON_SCHEMA,
   pilecap: PILECAP_JSON_SCHEMA,
   raft: RAFT_JSON_SCHEMA,
 };

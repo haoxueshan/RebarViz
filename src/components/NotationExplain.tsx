@@ -1,10 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import type { BeamParams, ColumnParams, SlabParams, ShearWallParams, StairParams, FoundationParams, PileCapParams, RaftFoundationParams } from '@/lib/types';
+import type { BeamParams, ColumnParams, SlabParams, ShearWallParams, StairParams, FoundationParams, StripFoundationParams, PileCapParams, RaftFoundationParams } from '@/lib/types';
 import { parseRebar, parseStirrup, parseSlabRebar, parseSideBar, gradeLabel, resolveColumnBars } from '@/lib/rebar';
 import { calcAnchorAll, calcSupportRebarLength, calcSlabBottomAnchor, calcColumnLapZone, calcLaE, calcLlE, calcBendLength, calcBeamEndAnchor, calcBottomBarLapAtMiddleJoint } from '@/lib/anchor';
 import { determineColFoundAnchor, slabBottomAnchorDetail, slabNegBarExtend, slabNegBarBend, slabNegBarAnchorAtSupport, cantileverSlabTopBar, SLAB_DIST_LAP_LENGTH, rebarArea } from '@/lib/construction-rules';
+import { getFoundationKnowledge } from '@/lib/foundation-knowledge';
 import { calcLa } from '@/lib/anchor';
 
 function ExplainSection({ title, defaultOpen = false, children }: {
@@ -28,6 +29,132 @@ function ExplainSection({ title, defaultOpen = false, children }: {
       </button>
       {open && <div className="space-y-2 pt-1 pb-1">{children}</div>}
     </div>
+  );
+}
+
+function PageBadge({ page }: { page: string }) {
+  return (
+    <span className="shrink-0 rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-slate-500">
+      {page}
+    </span>
+  );
+}
+
+function FoundationPageIndexSection({ componentType }: { componentType: 'foundation' | 'stripfoundation' | 'pilecap' | 'raft' }) {
+  const knowledge = getFoundationKnowledge(componentType);
+  if (!knowledge) return null;
+
+  return (
+    <ExplainSection title="22G101-3 页码速查">
+      <div className="space-y-2">
+        {knowledge.pageIndex.map(item => (
+          <div key={`${item.title}-${item.page}`} className="rounded-lg bg-slate-50 p-2.5">
+            <div className="flex items-start justify-between gap-3">
+              <p className="text-xs font-medium text-slate-700">{item.title}</p>
+              <PageBadge page={item.page} />
+            </div>
+            <p className="mt-1 text-[11px] leading-relaxed text-slate-600">{item.note}</p>
+          </div>
+        ))}
+      </div>
+    </ExplainSection>
+  );
+}
+
+function FoundationNotationGuideSection({ componentType }: { componentType: 'foundation' | 'stripfoundation' | 'pilecap' | 'raft' }) {
+  const knowledge = getFoundationKnowledge(componentType);
+  if (!knowledge?.notationGuides?.length) return null;
+
+  return (
+    <ExplainSection title="图纸表达与识图">
+      <div className="space-y-2">
+        {knowledge.notationGuides.map(item => (
+          <div key={`${item.text}-${item.page}`} className="rounded-lg bg-emerald-50 p-2.5">
+            <div className="flex items-start justify-between gap-3">
+              <p className="text-xs leading-relaxed text-emerald-800">{item.text}</p>
+              <PageBadge page={item.page} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </ExplainSection>
+  );
+}
+
+function FoundationDrawingChecklistSection({ componentType }: { componentType: 'foundation' | 'stripfoundation' | 'pilecap' | 'raft' }) {
+  const knowledge = getFoundationKnowledge(componentType);
+  if (!knowledge?.drawingChecklist?.length) return null;
+
+  return (
+    <ExplainSection title="出图检查">
+      <div className="rounded-lg bg-slate-50 p-3">
+        <ul className="space-y-2 text-xs text-slate-700">
+          {knowledge.drawingChecklist.map(item => (
+            <li key={`${item.text}-${item.page}`} className="flex items-start justify-between gap-3">
+              <span className="leading-relaxed">{item.text}</span>
+              <PageBadge page={item.page} />
+            </li>
+          ))}
+        </ul>
+      </div>
+    </ExplainSection>
+  );
+}
+
+function FoundationDesignNotesSection({ componentType }: { componentType: 'foundation' | 'stripfoundation' | 'pilecap' | 'raft' }) {
+  const knowledge = getFoundationKnowledge(componentType);
+  if (!knowledge) return null;
+
+  return (
+    <ExplainSection title="设计提示">
+      <div className="space-y-2">
+        <div className="rounded-lg bg-amber-50 p-3">
+          <p className="text-xs font-medium text-amber-800">设计需写明</p>
+          <ul className="mt-1.5 space-y-1 text-xs text-amber-700 list-disc list-inside">
+            {knowledge.mustSpecify.map(item => (
+              <li key={`${item.text}-${item.page}`}>
+                {item.text}
+                <span className="text-amber-600">（{item.page}）</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+        {!!knowledge.defaultsWhenOmitted?.length && (
+          <div className="rounded-lg bg-sky-50 p-3">
+            <p className="text-xs font-medium text-sky-800">未注明时的默认 / 可选做法</p>
+            <ul className="mt-1.5 space-y-1 text-xs text-sky-700 list-disc list-inside">
+              {knowledge.defaultsWhenOmitted.map(item => (
+                <li key={`${item.text}-${item.page}`}>
+                  {item.text}
+                  <span className="text-sky-600">（{item.page}）</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </ExplainSection>
+  );
+}
+
+function FoundationRelatedDetailSection({ componentType }: { componentType: 'foundation' | 'stripfoundation' | 'pilecap' | 'raft' }) {
+  const knowledge = getFoundationKnowledge(componentType);
+  if (!knowledge?.relatedDetails?.length) return null;
+
+  return (
+    <ExplainSection title="相关扩展构造">
+      <div className="space-y-2">
+        {knowledge.relatedDetails.map(item => (
+          <div key={`${item.title}-${item.page}`} className="rounded-lg bg-violet-50 p-2.5">
+            <div className="flex items-start justify-between gap-3">
+              <p className="text-xs font-medium text-violet-800">{item.title}</p>
+              <PageBadge page={item.page} />
+            </div>
+            <p className="mt-1 text-[11px] leading-relaxed text-violet-700">{item.note}</p>
+          </div>
+        ))}
+      </div>
+    </ExplainSection>
   );
 }
 
@@ -77,7 +204,7 @@ export function BeamExplain({ params }: { params: BeamParams }) {
               ? botR.segments.map((seg, i) => `${i === 0 ? '外排' : `第${i+1}排`}: ${seg.count}根 ${gradeLabel(seg.grade)} Φ${seg.diameter}`).join('，')
               : `${botR.count} 根 ${gradeLabel(botR.grade)} Φ${botR.diameter}`}
           </p>
-          {botR.segments && <p className="text-xs text-red-500 mt-0.5">22G101: 不同直径钢筋以"+"连接，如 2C25+2C22</p>}
+          {botR.segments && <p className="text-xs text-red-500 mt-0.5">22G101: 不同直径钢筋以&quot;+&quot;连接，如 2C25+2C22</p>}
         </div>
         <div className="p-3 bg-green-50 rounded-lg">
           <p className="font-medium text-green-800">箍筋: {params.stirrup}</p>
@@ -361,8 +488,8 @@ export function ColumnExplain({ params }: { params: ColumnParams }) {
           <ul className="mt-1.5 space-y-1 text-xs text-amber-700 list-disc list-inside">
             <li>柱纵筋分角筋、b边中部筋、h边中部筋三项分别注写</li>
             <li>对称配筋的矩形截面柱，可仅注写一侧中部筋</li>
-            <li>箍筋用"/"区分加密区与非加密区间距</li>
-            <li>全高等间距箍筋不使用"/"</li>
+            <li>箍筋用&quot;/&quot;区分加密区与非加密区间距</li>
+            <li>全高等间距箍筋不使用&quot;/&quot;</li>
             <li>加密区长度 = max(Hn/6, hc, 500mm) = {denseZoneLen}mm</li>
             <li>ρmin({params.seismicGrade}) = {(rhoMin * 100).toFixed(1)}%，ρmax = 5%</li>
             <li>角筋必须有箍筋弯钩固定，箍筋肢距 ≤ 200mm</li>
@@ -767,6 +894,7 @@ export function FoundationExplain({ params }: { params: FoundationParams }) {
   const isDual = (params.columnCount || 1) === 2;
   const topX = isDual && params.topBarX ? parseSlabRebar(params.topBarX) : null;
   const topY = isDual && params.topBarY ? parseSlabRebar(params.topBarY) : null;
+  const knowledge = getFoundationKnowledge('foundation');
 
   return (
     <div className="space-y-1">
@@ -781,6 +909,12 @@ export function FoundationExplain({ params }: { params: FoundationParams }) {
           {isDual && params.colSpacing && (
             <div><span className="text-gray-400">柱距</span> <span className="font-medium">{params.colSpacing}mm</span></div>
           )}
+          {isDual && params.topBandWidth && (
+            <div><span className="text-gray-400">顶部钢筋带宽</span> <span className="font-medium">{params.topBandWidth}mm</span></div>
+          )}
+          {isDual && params.hasFoundationBeam && (
+            <div><span className="text-gray-400">基础梁</span> <span className="font-medium">{params.foundationBeamB}×{params.foundationBeamH}mm</span></div>
+          )}
         </div>
       </ExplainSection>
 
@@ -790,12 +924,14 @@ export function FoundationExplain({ params }: { params: FoundationParams }) {
             <p className="text-xs font-medium text-red-700">X向底筋: {params.bottomBarX}</p>
             <p className="text-[11px] text-red-600 mt-0.5">
               {gradeLabel(barX.grade)} Φ{barX.diameter}@{barX.spacing} · 单根长 {params.by - 2 * (params.cover || 40)}mm
+              {params.shortenBottomBarX ? ' · 隔一减短 10%' : ''}
             </p>
           </div>
           <div className="p-2 bg-blue-50 rounded-lg">
             <p className="text-xs font-medium text-blue-700">Y向底筋: {params.bottomBarY}</p>
             <p className="text-[11px] text-blue-600 mt-0.5">
               {gradeLabel(barY.grade)} Φ{barY.diameter}@{barY.spacing} · 单根长 {params.bx - 2 * (params.cover || 40)}mm
+              {params.shortenBottomBarY ? ' · 隔一减短 10%' : ''}
             </p>
           </div>
           <div className="p-2 bg-purple-50 rounded-lg">
@@ -809,6 +945,7 @@ export function FoundationExplain({ params }: { params: FoundationParams }) {
               <p className="text-xs font-medium text-orange-700">顶部纵向筋: {params.topBarX}</p>
               <p className="text-[11px] text-orange-600 mt-0.5">
                 {gradeLabel(topX.grade)} Φ{topX.diameter}@{topX.spacing} · 柱间顶面受力钢筋
+                {params.topBarXCount ? ` · 共 ${params.topBarXCount} 根` : ''}
               </p>
             </div>
           )}
@@ -817,8 +954,33 @@ export function FoundationExplain({ params }: { params: FoundationParams }) {
               <p className="text-xs font-medium text-green-700">顶部分布筋: {params.topBarY}</p>
               <p className="text-[11px] text-green-600 mt-0.5">
                 {gradeLabel(topY.grade)} Φ{topY.diameter}@{topY.spacing} · 柱间顶面分布钢筋
+                {params.topBandWidth ? ` · 带宽 ${params.topBandWidth}mm` : ''}
               </p>
             </div>
+          )}
+          {isDual && params.hasFoundationBeam && (
+            <>
+              <div className="p-2 bg-amber-50 rounded-lg">
+                <p className="text-xs font-medium text-emerald-700">基础梁箍筋: {params.foundationBeamStirrup || 'A10@150(4)'}</p>
+                <p className="text-[11px] text-emerald-600 mt-0.5">
+                  基础梁 JL 箍筋 · 沿梁长方向布置
+                </p>
+              </div>
+              <div className="p-2 bg-amber-50 rounded-lg">
+                <p className="text-xs font-medium text-amber-700">基础梁底筋: {params.foundationBeamBottom || '4C22'}</p>
+                <p className="text-[11px] text-amber-600 mt-0.5">
+                  基础梁 JL 底部贯通纵筋 · 梁宽 {params.foundationBeamB}mm
+                  {params.foundationBeamEndType ? ` · ${params.foundationBeamEndType === 'bothSides' ? '双端外伸' : params.foundationBeamEndType === 'oneSide' ? `单端外伸(${params.foundationBeamOverhangSide === 'left' ? '左' : '右'})` : '无外伸'}` : ''}
+                </p>
+              </div>
+              <div className="p-2 bg-orange-50 rounded-lg">
+                <p className="text-xs font-medium text-orange-700">基础梁顶筋: {params.foundationBeamTop || '4C20'}</p>
+                <p className="text-[11px] text-orange-600 mt-0.5">
+                  基础梁 JL 顶部贯通纵筋 · 梁高 {params.foundationBeamH}mm
+                  {params.foundationBeamOverhang ? ` · 外伸 ${params.foundationBeamOverhang}mm` : ''}
+                </p>
+              </div>
+            </>
           )}
         </div>
       </ExplainSection>
@@ -827,22 +989,128 @@ export function FoundationExplain({ params }: { params: FoundationParams }) {
         <div className="p-3 bg-amber-50 rounded-lg">
           <p className="font-medium text-amber-800">22G101-3 独立基础构造要点</p>
           <ul className="mt-1.5 space-y-1 text-xs text-amber-700 list-disc list-inside">
-            <li>基础高度 h ≥ 300mm</li>
-            <li>底部钢筋保护层厚度：有垫层 40mm，无垫层 70mm</li>
-            <li>底板受力钢筋最小直径 ≥ 10mm，间距 100~200mm</li>
-            <li>柱插筋伸入基础内，弯折段 ≥ 200mm 且 ≥ 12d</li>
-            <li>阶形基础各阶高度宜相等，每阶高度 ≥ 300mm</li>
-            <li>锥形基础边缘高度 ≥ 200mm</li>
-            {isDual && (
-              <>
-                <li>双柱基础底部双向交叉钢筋，ex较大方向在下</li>
-                <li>顶部柱间纵向受力钢筋伸至柱纵筋内侧</li>
-                <li>顶部柱间分布钢筋间距 ≤ s&quot;（纵筋间距）</li>
-              </>
-            )}
+            {knowledge?.keyRules.map(rule => <li key={rule}>{rule}</li>)}
+            {(params.shortenBottomBarX || params.shortenBottomBarY) && <li>当前 3D 模型已按“隔一布一”表达底筋减短 10% 的布置效果。</li>}
+            {params.hasFoundationBeam && <li>当前 3D 模型已表达设置基础梁的双柱普通独立基础做法，可同步观察梁体与梁筋。</li>}
+            {isDual && <li>双柱基础宜结合第 2-12、2-13 页同步核对顶部柱间钢筋和基础梁做法。</li>}
           </ul>
         </div>
       </ExplainSection>
+
+      <FoundationPageIndexSection componentType="foundation" />
+      <FoundationNotationGuideSection componentType="foundation" />
+      <FoundationDrawingChecklistSection componentType="foundation" />
+      <FoundationDesignNotesSection componentType="foundation" />
+      <FoundationRelatedDetailSection componentType="foundation" />
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// STRIP FOUNDATION 条形基础标注解读
+// ═══════════════════════════════════════════════════════════════════
+export function StripFoundationExplain({ params }: { params: StripFoundationParams }) {
+  const bottom = parseSlabRebar(params.bottomBar);
+  const dist = parseSlabRebar(params.distBar);
+  const top = params.topBar ? parseSlabRebar(params.topBar) : null;
+  const topDist = params.topDistBar ? parseSlabRebar(params.topDistBar) : null;
+  const jlBottom = params.jlBottom ? parseRebar(params.jlBottom) : null;
+  const jlTop = params.jlTop ? parseRebar(params.jlTop) : null;
+  const jclBottom = params.jclBottom ? parseRebar(params.jclBottom) : null;
+  const jclTop = params.jclTop ? parseRebar(params.jclTop) : null;
+  const knowledge = getFoundationKnowledge('stripfoundation');
+  const clearGap = params.supportCount === 2 && params.supportSpacing
+    ? Math.max(params.supportSpacing - params.supportWidth, 0)
+    : 0;
+
+  return (
+    <div className="space-y-1">
+      <ExplainSection title="条基参数" defaultOpen>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs p-2 bg-gray-50 rounded-lg">
+          <div><span className="text-gray-400">编号</span> <span className="font-medium">{params.id}</span></div>
+          <div><span className="text-gray-400">类型</span> <span className="font-medium">{params.stripKind === 'beamPlate' ? '梁板式' : '板式'}</span></div>
+          <div><span className="text-gray-400">底板尺寸</span> <span className="font-medium">{params.length}×{params.width}×{params.h}mm</span></div>
+          <div><span className="text-gray-400">保护层</span> <span className="font-medium">{params.cover}mm</span></div>
+          <div><span className="text-gray-400">支承形式</span> <span className="font-medium">{params.supportCount === 2 ? '双' : '单'}{params.supportType === 'beam' ? '梁' : '墙'}</span></div>
+          <div><span className="text-gray-400">支承宽度</span> <span className="font-medium">{params.supportWidth}mm</span></div>
+          <div><span className="text-gray-400">支承高度</span> <span className="font-medium">{params.supportHeight}mm</span></div>
+          <div><span className="text-gray-400">中心距</span> <span className="font-medium">{params.supportSpacing ? `${params.supportSpacing}mm` : '—'}</span></div>
+        </div>
+      </ExplainSection>
+
+      <ExplainSection title="配筋解读" defaultOpen>
+        <div className="space-y-2">
+          <div className="p-2 bg-red-50 rounded-lg">
+            <p className="text-xs font-medium text-red-700">底部横向受力筋 B: {params.bottomBar}</p>
+            <p className="text-[11px] text-red-600 mt-0.5">
+              {gradeLabel(bottom.grade)} Φ{bottom.diameter}@{bottom.spacing} · 横向受力钢筋，沿条基长度方向重复布置
+            </p>
+          </div>
+          <div className="p-2 bg-blue-50 rounded-lg">
+            <p className="text-xs font-medium text-blue-700">底部分布筋: {params.distBar}</p>
+            <p className="text-[11px] text-blue-600 mt-0.5">
+              {gradeLabel(dist.grade)} Φ{dist.diameter}@{dist.spacing} · 沿条基轴线方向通长布置
+            </p>
+          </div>
+          {top && (
+            <div className="p-2 bg-orange-50 rounded-lg">
+              <p className="text-xs font-medium text-orange-700">顶部横向受力筋 T: {params.topBar}</p>
+              <p className="text-[11px] text-orange-600 mt-0.5">
+                {gradeLabel(top.grade)} Φ{top.diameter}@{top.spacing} · 一般位于两梁(墙)之间净距 {clearGap || '—'}mm 范围内
+              </p>
+            </div>
+          )}
+          {topDist && (
+            <div className="p-2 bg-green-50 rounded-lg">
+              <p className="text-xs font-medium text-green-700">顶部分布筋: {params.topDistBar}</p>
+              <p className="text-[11px] text-green-600 mt-0.5">
+                {gradeLabel(topDist.grade)} Φ{topDist.diameter}@{topDist.spacing} · 与顶部横向筋配套
+              </p>
+            </div>
+          )}
+          {params.supportType === 'beam' && (params.jlBottom || params.jlTop || params.jlStirrup) && (
+            <div className="p-2 bg-amber-50 rounded-lg">
+              <p className="text-xs font-medium text-amber-700">JL 主梁细部筋</p>
+              <p className="text-[11px] text-amber-600 mt-0.5">
+                底筋 {params.jlBottom || '未设置'}{jlBottom ? `（${jlBottom.count}根 Φ${jlBottom.diameter}）` : ''}，顶筋 {params.jlTop || '未设置'}{jlTop ? `（${jlTop.count}根 Φ${jlTop.diameter}）` : ''}，箍筋 {params.jlStirrup || '未设置'}
+              </p>
+            </div>
+          )}
+          {params.hasJcl && (
+            <div className="p-2 bg-violet-50 rounded-lg">
+              <p className="text-xs font-medium text-violet-700">JCL 次梁细部筋</p>
+              <p className="text-[11px] text-violet-600 mt-0.5">
+                {params.jclCount || 1}道，截面 {params.jclB || '—'}×{params.jclH || '—'}mm，底筋 {params.jclBottom || '未设置'}{jclBottom ? `（${jclBottom.count}根 Φ${jclBottom.diameter}）` : ''}，顶筋 {params.jclTop || '未设置'}{jclTop ? `（${jclTop.count}根 Φ${jclTop.diameter}）` : ''}，箍筋 {params.jclStirrup || '未设置'}
+              </p>
+            </div>
+          )}
+          {params.hasLocalOverride && (
+            <div className="p-2 bg-rose-50 rounded-lg">
+              <p className="text-xs font-medium text-rose-700">原位修正段</p>
+              <p className="text-[11px] text-rose-600 mt-0.5">
+                起点 {params.localOverrideStart || 0}mm，长度 {params.localOverrideLength || 0}mm，底筋 {params.localBottomBar || '未设置'}，顶筋 {params.localTopBar || '未设置'}{params.localOverrideNote ? ` · ${params.localOverrideNote}` : ''}
+              </p>
+            </div>
+          )}
+        </div>
+      </ExplainSection>
+
+      <ExplainSection title="构造要求">
+        <div className="p-3 bg-amber-50 rounded-lg">
+          <p className="font-medium text-amber-800">22G101-3 条形基础构造要点</p>
+          <ul className="mt-1.5 space-y-1 text-xs text-amber-700 list-disc list-inside">
+            {knowledge?.keyRules.map(rule => <li key={rule}>{rule}</li>)}
+            {params.supportCount === 2 && <li>当前参数为双梁/双墙条基，识图时应单独核对两支承之间的顶部钢筋与锚固做法。</li>}
+            {params.stripKind === 'beamPlate' && <li>当前为梁板式条基，宜同时对照 JL / JCL 相关详图核对基础梁构造。</li>}
+          </ul>
+        </div>
+      </ExplainSection>
+
+      <FoundationPageIndexSection componentType="stripfoundation" />
+      <FoundationNotationGuideSection componentType="stripfoundation" />
+      <FoundationDrawingChecklistSection componentType="stripfoundation" />
+      <FoundationDesignNotesSection componentType="stripfoundation" />
+      <FoundationRelatedDetailSection componentType="stripfoundation" />
     </div>
   );
 }
@@ -854,6 +1122,7 @@ export function PileCapExplain({ params }: { params: PileCapParams }) {
   const barX = parseSlabRebar(params.bottomBarX);
   const barY = parseSlabRebar(params.bottomBarY);
   const colR = parseRebar(params.colMain);
+  const knowledge = getFoundationKnowledge('pilecap');
 
   return (
     <div className="space-y-1">
@@ -904,15 +1173,17 @@ export function PileCapExplain({ params }: { params: PileCapParams }) {
         <div className="p-3 bg-amber-50 rounded-lg">
           <p className="font-medium text-amber-800">22G101-3 承台构造要点</p>
           <ul className="mt-1.5 space-y-1 text-xs text-amber-700 list-disc list-inside">
-            <li>承台高度 h ≥ 桩径 d 且 ≥ 500mm</li>
-            <li>桩伸入承台内长度 ≥ 50mm</li>
-            <li>桩中心距宜为 3d~6d（d为桩径）</li>
-            <li>桩边至承台边缘距离 ≥ d/2 且 ≥ 150mm</li>
-            <li>承台底筋保护层 ≥ 50mm（有埫层）或 ≥ 70mm（无埫层）</li>
-            <li>柱插筋伸入承台内弯折段 ≥ 200mm 且 ≥ 12d</li>
+            {knowledge?.keyRules.map(rule => <li key={rule}>{rule}</li>)}
+            <li>当前项目承台锚固面板已结合第 2-38~2-48 页，对桩顶嵌入高度和底筋端部直段做了数值化检查。</li>
           </ul>
         </div>
       </ExplainSection>
+
+      <FoundationPageIndexSection componentType="pilecap" />
+      <FoundationNotationGuideSection componentType="pilecap" />
+      <FoundationDrawingChecklistSection componentType="pilecap" />
+      <FoundationDesignNotesSection componentType="pilecap" />
+      <FoundationRelatedDetailSection componentType="pilecap" />
     </div>
   );
 }
@@ -927,6 +1198,9 @@ export function RaftExplain({ params }: { params: RaftFoundationParams }) {
   const topY = params.topBarY ? parseSlabRebar(params.topBarY) : null;
   const colR = parseRebar(params.colMain);
   const colTotal = params.colCountX * params.colCountY;
+  const knowledge = getFoundationKnowledge('raft');
+  const bottomOrder = params.bottomCrossOrder ?? 'xBelowY';
+  const topOrder = params.topCrossOrder ?? 'xBelowY';
 
   // 22G101-3 柱插筋锚固计算
   const cover = params.cover || 40;
@@ -958,20 +1232,20 @@ export function RaftExplain({ params }: { params: RaftFoundationParams }) {
           <div className="p-2 bg-red-50 rounded-lg">
             <p className="text-xs font-medium text-red-700">X向底筋: {params.bottomBarX}</p>
             <p className="text-[11px] text-red-600 mt-0.5">
-              {gradeLabel(botX.grade)} Φ{botX.diameter}@{botX.spacing} · 单根长 {params.ly - 2 * (params.cover || 40)}mm
+              {gradeLabel(botX.grade)} Φ{botX.diameter}@{botX.spacing} · 单根长 {params.ly - 2 * (params.cover || 40)}mm · {bottomOrder === 'xBelowY' ? '位于下层' : '位于上层'}
             </p>
           </div>
           <div className="p-2 bg-blue-50 rounded-lg">
             <p className="text-xs font-medium text-blue-700">Y向底筋: {params.bottomBarY}</p>
             <p className="text-[11px] text-blue-600 mt-0.5">
-              {gradeLabel(botY.grade)} Φ{botY.diameter}@{botY.spacing} · 单根长 {params.lx - 2 * (params.cover || 40)}mm
+              {gradeLabel(botY.grade)} Φ{botY.diameter}@{botY.spacing} · 单根长 {params.lx - 2 * (params.cover || 40)}mm · {bottomOrder === 'xBelowY' ? '位于上层' : '位于下层'}
             </p>
           </div>
           {topX && (
             <div className="p-2 bg-orange-50 rounded-lg">
               <p className="text-xs font-medium text-orange-700">X向面筋: {params.topBarX}</p>
               <p className="text-[11px] text-orange-600 mt-0.5">
-                {gradeLabel(topX.grade)} Φ{topX.diameter}@{topX.spacing}
+                {gradeLabel(topX.grade)} Φ{topX.diameter}@{topX.spacing} · {topOrder === 'xBelowY' ? '位于下层' : '位于上层'}
               </p>
             </div>
           )}
@@ -979,7 +1253,7 @@ export function RaftExplain({ params }: { params: RaftFoundationParams }) {
             <div className="p-2 bg-green-50 rounded-lg">
               <p className="text-xs font-medium text-green-700">Y向面筋: {params.topBarY}</p>
               <p className="text-[11px] text-green-600 mt-0.5">
-                {gradeLabel(topY.grade)} Φ{topY.diameter}@{topY.spacing}
+                {gradeLabel(topY.grade)} Φ{topY.diameter}@{topY.spacing} · {topOrder === 'xBelowY' ? '位于上层' : '位于下层'}
               </p>
             </div>
           )}
@@ -1011,8 +1285,8 @@ export function RaftExplain({ params }: { params: RaftFoundationParams }) {
               )}
             </div>
           </div>
-          <div className="p-2 bg-slate-50 rounded-lg">
-            <p className="text-xs font-medium text-slate-700">锚固区箍筋要求</p>
+            <div className="p-2 bg-slate-50 rounded-lg">
+              <p className="text-xs font-medium text-slate-700">锚固区箍筋要求</p>
             <div className="text-[11px] text-slate-600 mt-0.5 space-y-0.5">
               <p>≥ 2道矩形封闭箍（非复合箍），间距 ≤ 500mm</p>
               <p>箍筋直径 ≥ d/4 = {colR.diameter}/4 = Φ{anchor.stirrupMinDia}</p>
@@ -1030,19 +1304,30 @@ export function RaftExplain({ params }: { params: RaftFoundationParams }) {
         </div>
       </ExplainSection>
 
+      <ExplainSection title="交叉钢筋上下关系" defaultOpen>
+        <div className="space-y-2">
+          <div className="p-2 bg-slate-50 rounded-lg text-[11px] text-slate-700">
+            <p>底筋同层交叉：{bottomOrder === 'xBelowY' ? 'X向在下，Y向在上' : 'Y向在下，X向在上'}</p>
+            <p className="mt-1">面筋同层交叉：{topOrder === 'xBelowY' ? 'X向在下，Y向在上' : 'Y向在下，X向在上'}</p>
+          </div>
+        </div>
+      </ExplainSection>
+
       <ExplainSection title="构造要求">
         <div className="p-3 bg-amber-50 rounded-lg">
           <p className="font-medium text-amber-800">GB50007 / 22G101-3 筏板基础构造要点</p>
           <ul className="mt-1.5 space-y-1 text-xs text-amber-700 list-disc list-inside">
-            <li>筏板厚度一般 ≥ 跨度的 1/12~1/8（板式）或 1/8~1/5（梁式）</li>
-            <li>板底受力钢筋最小直径 ≥ 10mm，最大间距 200mm</li>
-            <li>配筋率不小于 0.15%（板底/板面均需满足）</li>
-            <li>底部保护层厚度：有垫层 40mm，无垫层 70mm</li>
-            <li>受力钢筋搭接区域接头面积百分率 ≤ 50%</li>
-            <li>h ≥ 1200mm（轴心/小偏心）时，可仅角筋伸至底板网片，其余锚固在基础顶面下 laE（注4）</li>
+            {knowledge?.keyRules.map(rule => <li key={rule}>{rule}</li>)}
+            <li>当前页面若选择梁板式或板带式，应分别对照 JL / LPB 或 ZXB / KZB / BPB 的页码，不宜混用。</li>
           </ul>
         </div>
       </ExplainSection>
+
+      <FoundationPageIndexSection componentType="raft" />
+      <FoundationNotationGuideSection componentType="raft" />
+      <FoundationDrawingChecklistSection componentType="raft" />
+      <FoundationDesignNotesSection componentType="raft" />
+      <FoundationRelatedDetailSection componentType="raft" />
     </div>
   );
 }

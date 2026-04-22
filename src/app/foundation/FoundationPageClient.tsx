@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
-import type { FoundationParams, FoundationStepDim, ComponentType } from '@/lib/types';
+import type { FoundationParams, FoundationStepDim, ComponentType, FoundationBeamEndType, FoundationBeamOverhangSide } from '@/lib/types';
 import { FOUNDATION_PRESETS } from '@/lib/rebar';
 import { calcFoundation } from '@/lib/calc';
 import { FoundationCrossSection } from '@/components/CrossSection';
@@ -16,17 +16,26 @@ import { Field, NumField, Legend, ResetButton, SelectField, Section } from '@/co
 import { ViewerSkeleton } from '@/components/ViewerSkeleton';
 import { CONCRETE_GRADES, SEISMIC_GRADES } from '@/lib/anchor';
 import type { ConcreteGrade, SeismicGrade } from '@/lib/anchor';
-import { AISidebar } from '@/components/AISidebar';
+import { LazyAISidebar as AISidebar } from '@/components/LazyAISidebar';
 import { buildFoundationContext } from '@/lib/ai-context';
 import { decodeSharedParam } from '@/lib/share-params';
 import { FoundationAnchorPanel } from '@/components/FoundationAnchorPanel';
+import { CompliancePanel, ComplianceBadge } from '@/components/CompliancePanel';
+import { checkFoundationCompliance } from '@/lib/compliance';
+import { useHistory } from '@/lib/useHistory';
+import { HistoryPanel } from '@/components/HistoryPanel';
+import { MetricComparePanel } from '@/components/MetricComparePanel';
+import { metricFromNumber, metricFromText } from '@/lib/compare-utils';
 import { Sparkles } from 'lucide-react';
 
 const DATA_TABS = [
   { key: 'section', label: '截面图' },
+  { key: 'guide', label: '识图说明' },
+  { key: 'compliance', label: '规范校验' },
   { key: 'weight', label: '用量估算' },
   { key: 'concrete', label: '混凝土量' },
   { key: 'anchor', label: '锚固构造' },
+  { key: 'compare', label: '方案对比' },
 ] as const;
 
 const FoundationViewer = dynamic(() => import('@/components/FoundationViewer'), {
@@ -68,7 +77,29 @@ export function FoundationPageClient() {
   const update = (patch: Partial<FoundationParams>) => setParams(p => ({ ...p, ...patch }));
   const calcResult = useMemo(() => calcFoundation(params), [params]);
   const concreteResult = useMemo(() => calcFoundationConcrete(params), [params]);
+  const complianceResults = useMemo(() => checkFoundationCompliance(params), [params]);
   const aiContext = useMemo(() => buildFoundationContext(params), [params]);
+
+  const {
+    history,
+    favorites,
+    addToHistory,
+    addToFavorites,
+    removeFromFavorites,
+    removeFromHistory,
+    clearHistory,
+    isFavorite,
+  } = useHistory<FoundationParams>('foundation');
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      addToHistory(params, params.id);
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [params, addToHistory]);
+
+  const [compareParams, setCompareParams] = useState<FoundationParams | null>(null);
+  const [compareLabel, setCompareLabel] = useState('历史方案');
 
   const applyPreset = (key: keyof typeof FOUNDATION_PRESETS) => {
     const preset = FOUNDATION_PRESETS[key];
@@ -83,6 +114,48 @@ export function FoundationPageClient() {
     newDims[index] = { ...newDims[index], ...patch };
     setParams(p => ({ ...p, stepDims: newDims }));
   };
+
+  const handleSelectHistory = (id: string, fromFavorites: boolean) => {
+    const list = fromFavorites ? favorites : history;
+    const item = list.find(i => i.id === id);
+    if (item) setParams(item.params as FoundationParams);
+  };
+
+  const handleSelectForCompare = (id: string, fromFavorites: boolean) => {
+    const list = fromFavorites ? favorites : history;
+    const item = list.find(i => i.id === id);
+    if (item) {
+      setCompareParams(item.params as FoundationParams);
+      setCompareLabel(item.name);
+      setDataTab('compare');
+    }
+  };
+
+  const compareMetrics = useMemo(() => {
+    if (!compareParams) return [];
+    const metrics = [
+      metricFromText('基础形状', compareParams.shape === 'stepped' ? '阶形' : '锥形', params.shape === 'stepped' ? '阶形' : '锥形'),
+      metricFromNumber('底面 X 向宽', compareParams.bx, params.bx, 'mm'),
+      metricFromNumber('底面 Y 向宽', compareParams.by, params.by, 'mm'),
+      metricFromNumber('基础总高', compareParams.h, params.h, 'mm'),
+      metricFromText('X向底筋', compareParams.bottomBarX, params.bottomBarX),
+      metricFromText('Y向底筋', compareParams.bottomBarY, params.bottomBarY),
+      metricFromText('柱插筋', compareParams.colMain, params.colMain),
+      metricFromNumber('柱数', compareParams.columnCount || 1, params.columnCount || 1),
+      metricFromNumber('双柱中心距', compareParams.colSpacing || 0, params.colSpacing || 0, 'mm'),
+    ].filter((item): item is NonNullable<typeof item> => Boolean(item));
+
+    const weightA = calcFoundation(compareParams).items.reduce((sum, item) => sum + item.weightKg, 0);
+    const weightB = calcResult.items.reduce((sum, item) => sum + item.weightKg, 0);
+    const concreteA = calcFoundationConcrete(compareParams).totalVolume;
+    const concreteB = concreteResult.totalVolume;
+    const totals = [
+      metricFromNumber('钢筋总用量', Number(weightA.toFixed(1)), Number(weightB.toFixed(1)), 'kg'),
+      metricFromNumber('混凝土总量', Number(concreteA.toFixed(3)), Number(concreteB.toFixed(3)), 'm³'),
+    ].filter((item): item is NonNullable<typeof item> => Boolean(item));
+
+    return [...metrics, ...totals];
+  }, [compareParams, params, calcResult.items, concreteResult.totalVolume]);
 
   return (
     <main className="px-4 py-4">
@@ -138,6 +211,28 @@ export function FoundationPageClient() {
             <Section title="底部配筋">
               <Field label="X向底筋" value={params.bottomBarX} onChange={v => update({ bottomBarX: v })} placeholder="如: C12@150" />
               <Field label="Y向底筋" value={params.bottomBarY} onChange={v => update({ bottomBarY: v })} placeholder="如: C12@150" />
+              {params.by >= 2500 && (
+                <SelectField
+                  label="X向底筋隔一减短 10%"
+                  value={params.shortenBottomBarX ? 'yes' : 'no'}
+                  onChange={v => update({ shortenBottomBarX: v === 'yes' })}
+                  options={[
+                    { value: 'no', label: '否' },
+                    { value: 'yes', label: '是（3D 显示减短筋）' },
+                  ]}
+                />
+              )}
+              {params.bx >= 2500 && (
+                <SelectField
+                  label="Y向底筋隔一减短 10%"
+                  value={params.shortenBottomBarY ? 'yes' : 'no'}
+                  onChange={v => update({ shortenBottomBarY: v === 'yes' })}
+                  options={[
+                    { value: 'no', label: '否' },
+                    { value: 'yes', label: '是（3D 显示减短筋）' },
+                  ]}
+                />
+              )}
             </Section>
 
             <Section title="柱参数">
@@ -152,7 +247,56 @@ export function FoundationPageClient() {
             {(params.columnCount || 1) === 2 && (
               <Section title="顶部柱间配筋">
                 <Field label="纵向受力筋" value={params.topBarX || 'C14@150'} onChange={v => update({ topBarX: v })} placeholder="如: C14@150" />
+                <NumField label="纵向受力筋总根数" value={params.topBarXCount || 9} onChange={v => update({ topBarXCount: v })} min={2} max={40} />
                 <Field label="分布筋" value={params.topBarY || 'C10@200'} onChange={v => update({ topBarY: v })} placeholder="如: C10@200" />
+                <NumField label="顶部钢筋带宽 (mm)" value={params.topBandWidth || 1200} onChange={v => update({ topBandWidth: v })} min={400} max={params.by} />
+              </Section>
+            )}
+
+            {(params.columnCount || 1) === 2 && (
+              <Section title="基础梁 JL">
+                <SelectField
+                  label="是否设置基础梁"
+                  value={params.hasFoundationBeam ? 'yes' : 'no'}
+                  onChange={v => update({ hasFoundationBeam: v === 'yes' })}
+                  options={[
+                    { value: 'yes', label: '是' },
+                    { value: 'no', label: '否' },
+                  ]}
+                />
+                {params.hasFoundationBeam && (
+                  <>
+                    <NumField label="梁宽 b (mm)" value={params.foundationBeamB || 600} onChange={v => update({ foundationBeamB: v })} min={300} max={2000} />
+                    <NumField label="梁高 h (mm)" value={params.foundationBeamH || 700} onChange={v => update({ foundationBeamH: v })} min={300} max={2000} />
+                    <Field label="箍筋" value={params.foundationBeamStirrup || 'A10@150(4)'} onChange={v => update({ foundationBeamStirrup: v })} placeholder="如: A10@150(4)" />
+                    <Field label="底部纵筋" value={params.foundationBeamBottom || '4C22'} onChange={v => update({ foundationBeamBottom: v })} placeholder="如: 4C22" />
+                    <Field label="顶部纵筋" value={params.foundationBeamTop || '4C20'} onChange={v => update({ foundationBeamTop: v })} placeholder="如: 4C20" />
+                    <SelectField
+                      label="端部外伸类型"
+                      value={params.foundationBeamEndType || 'none'}
+                      onChange={v => update({ foundationBeamEndType: v as FoundationBeamEndType })}
+                      options={[
+                        { value: 'none', label: 'JL(1) 无外伸' },
+                        { value: 'oneSide', label: 'JL(1A) 单端外伸' },
+                        { value: 'bothSides', label: 'JL(1B) 双端外伸' },
+                      ]}
+                    />
+                    {(params.foundationBeamEndType || 'none') === 'oneSide' && (
+                      <SelectField
+                        label="单端外伸方向"
+                        value={params.foundationBeamOverhangSide || 'right'}
+                        onChange={v => update({ foundationBeamOverhangSide: v as FoundationBeamOverhangSide })}
+                        options={[
+                          { value: 'right', label: '右端外伸' },
+                          { value: 'left', label: '左端外伸' },
+                        ]}
+                      />
+                    )}
+                    {(params.foundationBeamEndType || 'none') !== 'none' && (
+                      <NumField label="外伸长度 (mm)" value={params.foundationBeamOverhang || 300} onChange={v => update({ foundationBeamOverhang: v })} min={100} max={3000} />
+                    )}
+                  </>
+                )}
               </Section>
             )}
 
@@ -172,9 +316,29 @@ export function FoundationPageClient() {
             ...((params.columnCount || 1) === 2 ? [
               { color: '#E67E22', label: '顶部纵向受力筋' },
               { color: '#27AE60', label: '顶部柱间分布筋' },
+              ...(params.hasFoundationBeam ? [
+                { color: '#2E8B57', label: '基础梁箍筋' },
+                { color: '#8B4513', label: '基础梁底筋' },
+                { color: '#C97B36', label: '基础梁顶筋' },
+                { color: '#9EB6C8', label: '基础梁混凝土', opacity: 0.55 },
+              ] : []),
             ] : []),
             { color: '#BDC3C7', label: '混凝土（半透明）', opacity: 0.6 },
           ]} />
+
+          <div className="bg-white rounded-xl p-4 border border-gray-100 shadow-sm">
+            <h3 className="text-sm font-semibold text-primary mb-3">历史记录</h3>
+            <HistoryPanel
+              history={history}
+              favorites={favorites}
+              isFavorite={isFavorite(params)}
+              onSelect={handleSelectHistory}
+              onAddFavorite={() => addToFavorites(params, params.id)}
+              onRemoveFavorite={removeFromFavorites}
+              onRemoveHistory={removeFromHistory}
+              onClearHistory={clearHistory}
+            />
+          </div>
         </div>
 
         {/* 中栏：3D模型 + 数据 tab */}
@@ -185,8 +349,9 @@ export function FoundationPageClient() {
               <div className="flex items-center gap-1 bg-gray-100/80 rounded-lg p-0.5">
                 {DATA_TABS.map(t => (
                   <button key={t.key} onClick={() => setDataTab(t.key)}
-                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all cursor-pointer ${dataTab === t.key ? 'bg-white text-accent shadow-sm' : 'text-muted hover:text-primary'}`}>
+                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all cursor-pointer flex items-center gap-1.5 ${dataTab === t.key ? 'bg-white text-accent shadow-sm' : 'text-muted hover:text-primary'}`}>
                     {t.label}
+                    {t.key === 'compliance' && <ComplianceBadge results={complianceResults} />}
                   </button>
                 ))}
               </div>
@@ -205,9 +370,56 @@ export function FoundationPageClient() {
                   </div>
                 </>
               )}
+              {dataTab === 'guide' && <FoundationExplain params={params} />}
+              {dataTab === 'compliance' && <CompliancePanel results={complianceResults} />}
               {dataTab === 'weight' && <WeightCalc result={calcResult} />}
               {dataTab === 'concrete' && <ConcreteCalc result={concreteResult} />}
               {dataTab === 'anchor' && <FoundationAnchorPanel params={params} />}
+              {dataTab === 'compare' && (
+                <div className="space-y-4">
+                  {compareParams ? (
+                    <MetricComparePanel
+                      metrics={compareMetrics}
+                      summary={{
+                        title: '钢筋用量变化',
+                        valueA: calcFoundation(compareParams).items.reduce((sum, item) => sum + item.weightKg, 0),
+                        valueB: calcResult.items.reduce((sum, item) => sum + item.weightKg, 0),
+                        unit: 'kg',
+                        labelA: compareLabel,
+                        labelB: '当前方案',
+                      }}
+                      labelA={compareLabel}
+                      labelB="当前方案"
+                    />
+                  ) : (
+                    <div className="text-center py-8">
+                      <p className="text-sm text-gray-500 mb-3">从历史记录或收藏中选择一个方案进行对比</p>
+                      <div className="flex flex-wrap justify-center gap-2">
+                        {[...favorites, ...history].slice(0, 6).map(item => (
+                          <button
+                            key={item.id}
+                            onClick={() => handleSelectForCompare(item.id, favorites.some(f => f.id === item.id))}
+                            className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs rounded-lg cursor-pointer transition-colors"
+                          >
+                            {item.name}
+                          </button>
+                        ))}
+                      </div>
+                      {history.length === 0 && favorites.length === 0 && (
+                        <p className="text-xs text-gray-400 mt-2">暂无历史记录，修改参数后会自动保存</p>
+                      )}
+                    </div>
+                  )}
+                  {compareParams && (
+                    <button
+                      onClick={() => setCompareParams(null)}
+                      className="text-xs text-gray-400 hover:text-gray-600 cursor-pointer"
+                    >
+                      清除对比方案
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -231,6 +443,11 @@ export function FoundationPageClient() {
                 if (preset in FOUNDATION_PRESETS) applyPreset(preset as keyof typeof FOUNDATION_PRESETS);
               }}
               onGetCurrentState={() => aiContext}
+              onRunComplianceCheck={() => ({
+                results: complianceResults,
+                summary: `校验完成: ${complianceResults.filter(r => r.status === 'pass').length}项通过, ${complianceResults.filter(r => r.status === 'fail').length}项不通过, ${complianceResults.filter(r => r.status === 'warn').length}项警告`,
+              })}
+              onSaveFavorite={(name, note) => addToFavorites(params, name, note)}
               onResetParams={() => setParams({ ...FOUNDATION_PRESETS.standard, stepDims: toMutableStepDims(FOUNDATION_PRESETS.standard.stepDims) })}
             />
           </div>
