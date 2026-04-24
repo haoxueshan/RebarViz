@@ -391,8 +391,26 @@ export function ColumnExplain({ params }: { params: ColumnParams }) {
       <div className="p-3 bg-blue-50 rounded-lg">
         <p className="font-semibold text-primary">{params.id}</p>
         <p className="text-xs text-muted mt-1">框架柱 · 截面 {params.b}×{params.h}mm · 净高 {colH}mm</p>
+        {params.hasVariableSection && (
+          <p className="text-xs text-muted mt-0.5">变截面：自 {params.variableStart}mm 高度起变为 {params.upperB}×{params.upperH}mm</p>
+        )}
+        <p className="text-xs text-muted mt-0.5">
+          柱顶节点：{params.topNodeType === 'corner' ? '角柱' : params.topNodeType === 'edge' ? '边柱' : '中柱'}
+          {' · '}柱根支承：{params.baseSupportType === 'wall' ? '剪力墙上起柱' : params.baseSupportType === 'beam' ? '梁上起柱' : '基础顶面起柱'}
+        </p>
         <div className="mt-2 px-2 py-1.5 bg-white/70 rounded font-mono text-[11px] text-blue-700 break-all">{notationStr}</div>
       </div>
+
+      <ExplainSection title="柱顶节点场景">
+        <div className="p-3 bg-slate-50 rounded-lg">
+          <div className="space-y-1 text-xs text-slate-700">
+            <p>柱顶节点类型：{params.topNodeType === 'corner' ? '角柱' : params.topNodeType === 'edge' ? '边柱' : '中柱'}</p>
+            <p>柱顶梁截面：{params.roofBeamB}×{params.roofBeamH}mm</p>
+            <p>屋面板：{params.hasRoofSlab ? `${params.roofSlabThickness}mm 厚现浇板` : '未设置'}</p>
+            <p>当前 3D 已按中柱 / 边柱 / 角柱分别显示不同的梁板关系，用于辅助理解 22G101-1 第 2-14~2-16 页柱顶构造。</p>
+          </div>
+        </div>
+      </ExplainSection>
 
       <ExplainSection title="配筋" defaultOpen>
         {resolved.isDetailed ? (
@@ -469,6 +487,20 @@ export function ColumnExplain({ params }: { params: ColumnParams }) {
           </div>
         </div>
       </ExplainSection>
+
+      {params.hasVariableSection && (
+        <ExplainSection title="变截面位置">
+          <div className="p-3 bg-amber-50 rounded-lg">
+            <p className="font-medium text-amber-800">KZ 柱变截面位置纵筋构造</p>
+            <div className="mt-1.5 space-y-1 text-xs text-amber-700">
+              <p>下段截面: {params.b}×{params.h}mm</p>
+              <p>上段截面: {params.upperB}×{params.upperH}mm</p>
+              <p>变截面起始高度: {params.variableStart}mm</p>
+              <p>当前 3D 已将上下两段柱身和变截面位置分段显示，对应 22G101-1 第 2-16 页。</p>
+            </div>
+          </div>
+        </ExplainSection>
+      )}
 
       <ExplainSection title="锚固/搭接">
         <div className="p-3 bg-cyan-50 rounded-lg">
@@ -711,7 +743,24 @@ export function ShearWallExplain({ params }: { params: ShearWallParams }) {
   const horiz = parseSlabRebar(params.horizBar);
   const boundaryR = parseRebar(params.boundaryMain);
   const boundaryStir = parseStirrup(params.boundaryStirrup);
-  const BL = Math.max(params.bw, 400);
+  const BL = params.boundaryLength || Math.max(params.bw, 400);
+  const boundaryTypeLabel = params.boundaryType === 'ybz'
+    ? '约束边缘构件 YBZ'
+    : params.boundaryType === 'fbz'
+      ? '扶壁柱 FBZ'
+      : params.boundaryType === 'az'
+        ? '非边缘暗柱 AZ'
+        : '构造边缘构件 GBZ';
+  const boundaryFormLabel = params.boundaryForm === 'endColumn'
+    ? '端柱'
+    : params.boundaryForm === 'wingWall'
+      ? '翼墙'
+      : params.boundaryForm === 'cornerWall'
+        ? '转角墙'
+        : '暗柱';
+  const tie = params.tieBar ? parseSlabRebar(params.tieBar) : null;
+  const openingVert = params.openingVertBar ? parseSlabRebar(params.openingVertBar) : null;
+  const openingHoriz = params.openingHorizBar ? parseSlabRebar(params.openingHorizBar) : null;
   const llE = calcLlE(boundaryR.grade, boundaryR.diameter, params.concreteGrade, params.seismicGrade);
 
   return (
@@ -722,6 +771,7 @@ export function ShearWallExplain({ params }: { params: ShearWallParams }) {
       </div>
       <div className="p-3 bg-gray-50 rounded-lg">
         <p className="font-medium">墙体: {params.bw}×{params.lw}mm，净高 {params.hw}mm</p>
+        <p className="text-xs text-muted mt-1">边缘构件类型: {boundaryTypeLabel}</p>
       </div>
 
       <ExplainSection title="分布筋" defaultOpen>
@@ -736,11 +786,14 @@ export function ShearWallExplain({ params }: { params: ShearWallParams }) {
         </div>
       </ExplainSection>
 
-      <ExplainSection title="约束边缘构件 (YBZ)">
+      <ExplainSection title="边缘构件">
         <div className="p-3 bg-purple-50 rounded-lg">
           <p className="font-medium text-purple-800">纵筋: {params.boundaryMain}</p>
           <p className="text-xs text-purple-600 mt-1">{boundaryR.count}根 {gradeLabel(boundaryR.grade)} Φ{boundaryR.diameter}，两端各一组</p>
-          <p className="text-xs text-purple-600 mt-0.5">边缘构件长度: max(bw, 400) = {BL}mm</p>
+          <p className="text-xs text-purple-600 mt-0.5">边缘构件类型: {boundaryTypeLabel}</p>
+          <p className="text-xs text-purple-600 mt-0.5">边缘构件外形: {boundaryFormLabel}</p>
+          <p className="text-xs text-purple-600 mt-0.5">边缘构件长度: {BL}mm</p>
+          {!!params.boundaryProjection && <p className="text-xs text-purple-600 mt-0.5">凸出深度: {params.boundaryProjection}mm</p>}
         </div>
         <div className="p-3 bg-green-50 rounded-lg">
           <p className="font-medium text-green-800">箍筋: {params.boundaryStirrup}</p>
@@ -748,6 +801,23 @@ export function ShearWallExplain({ params }: { params: ShearWallParams }) {
             {gradeLabel(boundaryStir.grade)} Φ{boundaryStir.diameter}@{boundaryStir.spacingDense}，全高加密
           </p>
         </div>
+      </ExplainSection>
+
+      <ExplainSection title="拉结筋与洞口">
+        <div className="p-3 bg-teal-50 rounded-lg">
+          <p className="font-medium text-teal-800">拉结筋: {params.tieBar || '未设置'}</p>
+          <p className="text-xs text-teal-600 mt-1">
+            {tie ? `${gradeLabel(tie.grade)} Φ${tie.diameter}@${tie.spacing}，连接墙体前后双排分布筋` : '当前未显式设置拉结筋，3D 以分布筋双排层次为主'}
+          </p>
+        </div>
+        {params.hasOpening && (
+          <div className="p-3 bg-pink-50 rounded-lg">
+            <p className="font-medium text-pink-800">洞口: {params.openingWidth}×{params.openingHeight}mm</p>
+            <p className="text-xs text-pink-600 mt-1">洞底距墙底 {params.openingBottom}mm，中心偏移 X={params.openingOffsetX || 0}mm</p>
+            <p className="text-xs text-pink-600 mt-0.5">侧边补强: {params.openingVertBar || '未设置'}{openingVert ? ` · ${gradeLabel(openingVert.grade)} Φ${openingVert.diameter}@${openingVert.spacing}` : ''}</p>
+            <p className="text-xs text-pink-600 mt-0.5">上下补强: {params.openingHorizBar || '未设置'}{openingHoriz ? ` · ${gradeLabel(openingHoriz.grade)} Φ${openingHoriz.diameter}@${openingHoriz.spacing}` : ''}</p>
+          </div>
+        )}
       </ExplainSection>
 
       <ExplainSection title="锚固/搭接">
@@ -766,12 +836,13 @@ export function ShearWallExplain({ params }: { params: ShearWallParams }) {
         <div className="p-3 bg-amber-50 rounded-lg">
           <p className="font-medium text-amber-800">识图要点 (22G101-1)</p>
           <ul className="mt-1.5 space-y-1 text-xs text-amber-700 list-disc list-inside">
-            <li>分布筋双排布置，拉筋连接两排</li>
-            <li>约束边缘构件 (YBZ) 箍筋全高加密</li>
-            <li>构造边缘构件 (GBZ) 箍筋可不加密</li>
+            <li>分布筋双排布置，当前 3D 已显示前后双排层次。</li>
+            <li>底部加强区长度通常取 max(hw/6, 500mm)，当前 3D 已高亮底部加强区。</li>
+            <li>约束边缘构件 (YBZ) 箍筋全高加密，构造边缘构件 (GBZ) 箍筋可不加密。</li>
             <li>水平分布筋伸入边缘构件内锚固</li>
             <li>竖向分布筋搭接位置错开，同一截面 ≤ 50%</li>
             <li>墙身水平筋在边缘构件范围内的间距同墙身</li>
+            <li>洞口周边需要附加补强钢筋，当前可直接在 3D 里观察洞口与补强位置。</li>
           </ul>
         </div>
       </ExplainSection>
@@ -1072,7 +1143,7 @@ export function StripFoundationExplain({ params }: { params: StripFoundationPara
             <div className="p-2 bg-amber-50 rounded-lg">
               <p className="text-xs font-medium text-amber-700">JL 主梁细部筋</p>
               <p className="text-[11px] text-amber-600 mt-0.5">
-                底筋 {params.jlBottom || '未设置'}{jlBottom ? `（${jlBottom.count}根 Φ${jlBottom.diameter}）` : ''}，顶筋 {params.jlTop || '未设置'}{jlTop ? `（${jlTop.count}根 Φ${jlTop.diameter}）` : ''}，箍筋 {params.jlStirrup || '未设置'}
+                底筋 {params.jlBottom || '未设置'}{jlBottom ? `（${jlBottom.count}根 Φ${jlBottom.diameter}）` : ''}，顶筋 {params.jlTop || '未设置'}{jlTop ? `（${jlTop.count}根 Φ${jlTop.diameter}）` : ''}，箍筋 {params.jlStirrup || '未设置'}，端部 {params.jlEndType === 'bothSides' ? `双端外伸 ${params.jlOverhang || 0}mm` : params.jlEndType === 'oneSide' ? `${params.jlOverhangSide === 'left' ? '左端' : '右端'}外伸 ${params.jlOverhang || 0}mm` : '无外伸'}
               </p>
             </div>
           )}
@@ -1080,7 +1151,7 @@ export function StripFoundationExplain({ params }: { params: StripFoundationPara
             <div className="p-2 bg-violet-50 rounded-lg">
               <p className="text-xs font-medium text-violet-700">JCL 次梁细部筋</p>
               <p className="text-[11px] text-violet-600 mt-0.5">
-                {params.jclCount || 1}道，截面 {params.jclB || '—'}×{params.jclH || '—'}mm，底筋 {params.jclBottom || '未设置'}{jclBottom ? `（${jclBottom.count}根 Φ${jclBottom.diameter}）` : ''}，顶筋 {params.jclTop || '未设置'}{jclTop ? `（${jclTop.count}根 Φ${jclTop.diameter}）` : ''}，箍筋 {params.jclStirrup || '未设置'}
+                {params.jclCount || 1}道，截面 {params.jclB || '—'}×{params.jclH || '—'}mm，底筋 {params.jclBottom || '未设置'}{jclBottom ? `（${jclBottom.count}根 Φ${jclBottom.diameter}）` : ''}，顶筋 {params.jclTop || '未设置'}{jclTop ? `（${jclTop.count}根 Φ${jclTop.diameter}）` : ''}，箍筋 {params.jclStirrup || '未设置'}，端部 {params.jclEndType === 'bothSides' ? `双端外伸 ${params.jclOverhang || 0}mm` : params.jclEndType === 'oneSide' ? `${params.jclOverhangSide === 'left' ? '下侧' : '上侧'}外伸 ${params.jclOverhang || 0}mm` : '无外伸'}
               </p>
             </div>
           )}
@@ -1102,6 +1173,7 @@ export function StripFoundationExplain({ params }: { params: StripFoundationPara
             {knowledge?.keyRules.map(rule => <li key={rule}>{rule}</li>)}
             {params.supportCount === 2 && <li>当前参数为双梁/双墙条基，识图时应单独核对两支承之间的顶部钢筋与锚固做法。</li>}
             {params.stripKind === 'beamPlate' && <li>当前为梁板式条基，宜同时对照 JL / JCL 相关详图核对基础梁构造。</li>}
+            {params.supportType === 'beam' && (params.jlEndType || 'none') !== 'none' && <li>当前 3D 已按“外伸部位第一排底筋上弯、其余排截断”的思路加强端部表达，用于辅助核对 2-25 / 2-29 细部构造。</li>}
           </ul>
         </div>
       </ExplainSection>
@@ -1290,7 +1362,7 @@ export function RaftExplain({ params }: { params: RaftFoundationParams }) {
             <div className="text-[11px] text-slate-600 mt-0.5 space-y-0.5">
               <p>≥ 2道矩形封闭箍（非复合箍），间距 ≤ 500mm</p>
               <p>箍筋直径 ≥ d/4 = {colR.diameter}/4 = Φ{anchor.stirrupMinDia}</p>
-              <p>箍筋间距 ≤ min(5d, 100) = min({5 * colR.diameter}, 100) = {anchor.stirrupMaxSpacing}mm</p>
+              <p>箍筋间距 ≤ min(10d, 100) = min({10 * colR.diameter}, 100) = {anchor.stirrupMaxSpacing}mm</p>
             </div>
           </div>
           {!anchor.isCoverLarge && (

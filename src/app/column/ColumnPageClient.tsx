@@ -24,6 +24,7 @@ import { Sparkles } from 'lucide-react';
 
 const DATA_TABS = [
   { key: 'section', label: '截面图' },
+  { key: 'guide', label: '识图说明' },
   { key: 'weight', label: '用量估算' },
   { key: 'concrete', label: '混凝土量' },
 ] as const;
@@ -147,6 +148,62 @@ export function ColumnPageClient() {
                 options={SEISMIC_GRADES.map(g => ({ value: g, label: g }))} />
               <NumField label="保护层 (mm)" value={params.cover} onChange={v => update({ cover: v })} min={15} max={50} />
               <NumField label="柱净高 (mm)" value={params.height} onChange={v => update({ height: v })} min={1000} max={10000} />
+              <SelectField
+                label="柱顶节点类型"
+                value={params.topNodeType || 'middle'}
+                onChange={v => update({ topNodeType: v as ColumnParams['topNodeType'] })}
+                options={[
+                  { value: 'middle', label: '中柱节点' },
+                  { value: 'edge', label: '边柱节点' },
+                  { value: 'corner', label: '角柱节点' },
+                ]}
+              />
+              <NumField label="柱顶梁宽 (mm)" value={params.roofBeamB || 300} onChange={v => update({ roofBeamB: v })} min={200} max={1000} />
+              <NumField label="柱顶梁高 (mm)" value={params.roofBeamH || 600} onChange={v => update({ roofBeamH: v })} min={300} max={1200} />
+              <SelectField
+                label="是否有屋面板"
+                value={params.hasRoofSlab ? 'yes' : 'no'}
+                onChange={v => update({ hasRoofSlab: v === 'yes' })}
+                options={[
+                  { value: 'yes', label: '是' },
+                  { value: 'no', label: '否' },
+                ]}
+              />
+              {params.hasRoofSlab && (
+                <NumField label="屋面板厚 (mm)" value={params.roofSlabThickness || 120} onChange={v => update({ roofSlabThickness: v })} min={80} max={300} />
+              )}
+              <SelectField
+                label="柱根支承"
+                value={params.baseSupportType || 'foundation'}
+                onChange={v => update({ baseSupportType: v as ColumnParams['baseSupportType'] })}
+                options={[
+                  { value: 'foundation', label: '基础顶面起柱' },
+                  { value: 'wall', label: '剪力墙上起柱' },
+                  { value: 'beam', label: '梁上起柱' },
+                ]}
+              />
+              {(params.baseSupportType === 'wall' || params.baseSupportType === 'beam') && (
+                <>
+                  <NumField label="支承宽度 (mm)" value={params.baseSupportWidth || params.b} onChange={v => update({ baseSupportWidth: v })} min={150} max={1200} />
+                  <NumField label="支承高度 (mm)" value={params.baseSupportHeight || 800} onChange={v => update({ baseSupportHeight: v })} min={200} max={2000} />
+                </>
+              )}
+              <SelectField
+                label="是否变截面"
+                value={params.hasVariableSection ? 'yes' : 'no'}
+                onChange={v => update({ hasVariableSection: v === 'yes' })}
+                options={[
+                  { value: 'no', label: '否' },
+                  { value: 'yes', label: '是' },
+                ]}
+              />
+              {params.hasVariableSection && (
+                <>
+                  <NumField label="上段宽 b1 (mm)" value={params.upperB || Math.max(params.b - 50, 200)} onChange={v => update({ upperB: v })} min={150} max={params.b} />
+                  <NumField label="上段高 h1 (mm)" value={params.upperH || Math.max(params.h - 50, 200)} onChange={v => update({ upperH: v })} min={150} max={params.h} />
+                  <NumField label="变截面起始高度 (mm)" value={params.variableStart || Math.round(params.height * 0.7)} onChange={v => update({ variableStart: v })} min={200} max={params.height - 200} />
+                </>
+              )}
             </Section>
           </div>
 
@@ -191,6 +248,7 @@ export function ColumnPageClient() {
                   </div>
                 </>
               )}
+              {dataTab === 'guide' && <ColumnExplain params={effectiveParams} />}
               {dataTab === 'weight' && <WeightCalc result={calcResult} />}
               {dataTab === 'concrete' && <ConcreteCalc result={concreteResult} />}
             </div>

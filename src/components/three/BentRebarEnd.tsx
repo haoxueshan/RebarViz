@@ -12,6 +12,7 @@ export interface BentRebarEndProps {
   bendLen: number;
   diameter: number;
   direction: 'down' | 'up';
+  horizontalAxis?: 'x' | 'z';
   color: string;
   hiColor?: string;
   info?: RebarMeshInfo;
@@ -30,6 +31,7 @@ export function BentRebarEnd({
   bendLen,
   diameter,
   direction,
+  horizontalAxis = 'x',
   color,
   hiColor,
   info,
@@ -52,35 +54,37 @@ export function BentRebarEnd({
   const radiusScale = selected ? 1.3 : hovered ? 1.15 : 1;
 
   const curve = useMemo(() => {
-    const bendRadius = Math.min(4 * diameter * S, straightLen * 0.3);
+    const bendRadius = Math.max(Math.min(4 * diameter * S, Math.max(straightLen, 4 * diameter * S) * 0.3), 2 * diameter * S, 0.006);
     const linePart = Math.max(straightLen - bendRadius, 0);
     const pts: THREE.Vector3[] = [];
+    const makePoint = (primary: number, vertical: number) =>
+      horizontalAxis === 'x'
+        ? new THREE.Vector3(primary, vertical, 0)
+        : new THREE.Vector3(0, vertical, primary);
 
     // 水平直段（从梁端面伸入柱内）
     for (let t = 0; t <= 1; t += 0.1) {
-      pts.push(new THREE.Vector3(xDir * t * linePart, 0, 0));
+      pts.push(makePoint(xDir * t * linePart, 0));
     }
 
     // 90° 弯折弧
     const sign = direction === 'down' ? -1 : 1;
     for (let a = 0; a <= Math.PI / 2; a += Math.PI / 20) {
-      pts.push(
-        new THREE.Vector3(
-          xDir * (linePart + bendRadius * Math.sin(a)),
-          sign * bendRadius * (1 - Math.cos(a)),
-          0,
-        ),
-      );
+      pts.push(makePoint(
+        xDir * (linePart + bendRadius * Math.sin(a)),
+        sign * bendRadius * (1 - Math.cos(a)),
+      ));
     }
 
     // 竖直弯折段
-    const bendEnd = new THREE.Vector3(xDir * (linePart + bendRadius), sign * bendRadius, 0);
+    const bendEndPrimary = xDir * (linePart + bendRadius);
+    const bendEndVertical = sign * bendRadius;
     for (let t = 0.1; t <= 1; t += 0.1) {
-      pts.push(new THREE.Vector3(bendEnd.x, bendEnd.y + sign * t * bendLen, 0));
+      pts.push(makePoint(bendEndPrimary, bendEndVertical + sign * t * bendLen));
     }
 
     return new THREE.CatmullRomCurve3(pts, false);
-  }, [straightLen, bendLen, diameter, direction, xDir]);
+  }, [straightLen, bendLen, diameter, direction, xDir, horizontalAxis]);
 
   return (
     <mesh

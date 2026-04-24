@@ -11,6 +11,7 @@ import { parseSlabRebar, parseRebar, gradeLabel } from '@/lib/rebar';
 import { calcLaE, getPileEmbedDepth } from '@/lib/anchor';
 import { determineColFoundAnchor, determinePileCapRebarEnd } from '@/lib/construction-rules';
 import { CameraController, InstancedRebarGroup, buildZBarMatrices, buildXBarMatrices, buildVertBarMatrices, buildColBendMatrices } from '@/components/InstancedRebar';
+import { BentRebarEnd } from '@/components/three';
 import {
   S,
   COLOR_PC_BOTTOM_X, COLOR_PC_BOTTOM_X_HI,
@@ -157,22 +158,6 @@ function PileCapScene({ params, selected, onSelect, concreteOpacity, visibleGrou
 
   const hookLenXM = rebarEndX.needBend ? rebarEndX.bendLen * S : 0;
   const hookLenYM = rebarEndY.needBend ? rebarEndY.bendLen * S : 0;
-  const xHookPositions = useMemo(
-    () => xBotPositions.flatMap(x => [{ x, z: zStart }, { x, z: zEnd }]),
-    [xBotPositions, zStart, zEnd],
-  );
-  const yHookPositions = useMemo(
-    () => yBotPositions.flatMap(z => [{ x: xStart, z }, { x: xEnd, z }]),
-    [yBotPositions, xStart, xEnd],
-  );
-  const xHookMatrices = useMemo(
-    () => rebarEndX.needBend ? buildVertBarMatrices(xHookPositions, cover + hookLenXM / 2) : [],
-    [rebarEndX.needBend, xHookPositions, cover, hookLenXM],
-  );
-  const yHookMatrices = useMemo(
-    () => rebarEndY.needBend ? buildVertBarMatrices(yHookPositions, cover + hookLenYM / 2) : [],
-    [rebarEndY.needBend, yHookPositions, cover, hookLenYM],
-  );
 
   // Column insert bar data
   const colInsertH = hM + 0.5;
@@ -245,13 +230,69 @@ function PileCapScene({ params, selected, onSelect, concreteOpacity, visibleGrou
         color={COLOR_PC_BOTTOM_Y} hiColor={COLOR_PC_BOTTOM_Y_HI}
         info={barYInfo} selected={barYSelected} onSelect={onSelect} visible={visibleGroups.has('bottomY')} />
 
-      <InstancedRebarGroup matrices={xHookMatrices} radius={barX.diameter * S / 2} length={hookLenXM}
-        color={COLOR_PC_BOTTOM_X} hiColor={COLOR_PC_BOTTOM_X_HI}
-        info={barXInfo} selected={barXSelected} onSelect={onSelect} visible={visibleGroups.has('bottomX')} />
+      {rebarEndX.needBend && visibleGroups.has('bottomX') && xBotPositions.flatMap((x, i) => ([
+        <BentRebarEnd
+          key={`pc-x-hook-start-${i}`}
+          position={[x, barXLevel, zStart]}
+          straightLen={0}
+          bendLen={hookLenXM}
+          diameter={barX.diameter}
+          direction="up"
+          horizontalAxis="z"
+          color={COLOR_PC_BOTTOM_X}
+          hiColor={COLOR_PC_BOTTOM_X_HI}
+          info={barXInfo}
+          selected={barXSelected}
+          onSelect={onSelect}
+          xDir={1}
+        />,
+        <BentRebarEnd
+          key={`pc-x-hook-end-${i}`}
+          position={[x, barXLevel, zEnd]}
+          straightLen={0}
+          bendLen={hookLenXM}
+          diameter={barX.diameter}
+          direction="up"
+          horizontalAxis="z"
+          color={COLOR_PC_BOTTOM_X}
+          hiColor={COLOR_PC_BOTTOM_X_HI}
+          info={barXInfo}
+          selected={barXSelected}
+          onSelect={onSelect}
+          xDir={-1}
+        />,
+      ]))}
 
-      <InstancedRebarGroup matrices={yHookMatrices} radius={barY.diameter * S / 2} length={hookLenYM}
-        color={COLOR_PC_BOTTOM_Y} hiColor={COLOR_PC_BOTTOM_Y_HI}
-        info={barYInfo} selected={barYSelected} onSelect={onSelect} visible={visibleGroups.has('bottomY')} />
+      {rebarEndY.needBend && visibleGroups.has('bottomY') && yBotPositions.flatMap((z, i) => ([
+        <BentRebarEnd
+          key={`pc-y-hook-start-${i}`}
+          position={[xStart, barYLevel, z]}
+          straightLen={0}
+          bendLen={hookLenYM}
+          diameter={barY.diameter}
+          direction="up"
+          color={COLOR_PC_BOTTOM_Y}
+          hiColor={COLOR_PC_BOTTOM_Y_HI}
+          info={barYInfo}
+          selected={barYSelected}
+          onSelect={onSelect}
+          xDir={1}
+        />,
+        <BentRebarEnd
+          key={`pc-y-hook-end-${i}`}
+          position={[xEnd, barYLevel, z]}
+          straightLen={0}
+          bendLen={hookLenYM}
+          diameter={barY.diameter}
+          direction="up"
+          color={COLOR_PC_BOTTOM_Y}
+          hiColor={COLOR_PC_BOTTOM_Y_HI}
+          info={barYInfo}
+          selected={barYSelected}
+          onSelect={onSelect}
+          xDir={-1}
+        />,
+      ]))}
 
       <InstancedRebarGroup matrices={colBarData.matrices} radius={colR.diameter * S / 2} length={colInsertH}
         color={COLOR_PC_COL} hiColor={COLOR_PC_COL_HI}

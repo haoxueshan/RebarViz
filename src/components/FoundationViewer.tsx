@@ -233,22 +233,6 @@ function FoundationScene({ params, selected, onSelect, concreteOpacity, visibleG
 
   const hookLenXM = needHookX ? 12 * barX.diameter * S : 0;
   const hookLenYM = needHookY ? 12 * barY.diameter * S : 0;
-  const xHookPositions = useMemo(
-    () => [...xBotFullPositions, ...xBotShortPositions].flatMap(x => [{ x, z: zStart }, { x, z: zEnd }]),
-    [xBotFullPositions, xBotShortPositions, zStart, zEnd],
-  );
-  const yHookPositions = useMemo(
-    () => [...yBotFullPositions, ...yBotShortPositions].flatMap(z => [{ x: xStart, z }, { x: xEnd, z }]),
-    [yBotFullPositions, yBotShortPositions, xStart, xEnd],
-  );
-  const xHookMatrices = useMemo(
-    () => needHookX ? buildVertBarMatrices(xHookPositions, cover + hookLenXM / 2) : [],
-    [needHookX, xHookPositions, cover, hookLenXM],
-  );
-  const yHookMatrices = useMemo(
-    () => needHookY ? buildVertBarMatrices(yHookPositions, cover + hookLenYM / 2) : [],
-    [needHookY, yHookPositions, cover, hookLenYM],
-  );
 
   const beamBottomMatrices = useMemo(() => {
     if (!hasFoundationBeam || !foundBeamBottom) return [];
@@ -352,13 +336,69 @@ function FoundationScene({ params, selected, onSelect, concreteOpacity, visibleG
         color={COLOR_FOUND_BOTTOM_Y} hiColor={COLOR_FOUND_BOTTOM_Y_HI}
         info={barYInfo} selected={barYSelected} onSelect={onSelect} visible={visibleGroups.has('bottomY')} />
 
-      <InstancedRebarGroup matrices={xHookMatrices} radius={barX.diameter * S / 2} length={hookLenXM}
-        color={COLOR_FOUND_BOTTOM_X} hiColor={COLOR_FOUND_BOTTOM_X_HI}
-        info={barXInfo} selected={barXSelected} onSelect={onSelect} visible={visibleGroups.has('bottomX')} />
+      {needHookX && visibleGroups.has('bottomX') && [...xBotFullPositions, ...xBotShortPositions].flatMap((x, i) => ([
+        <BentRebarEnd
+          key={`found-x-hook-start-${i}`}
+          position={[x, barXLevel, zStart]}
+          straightLen={0}
+          bendLen={hookLenXM}
+          diameter={barX.diameter}
+          direction="up"
+          horizontalAxis="z"
+          color={COLOR_FOUND_BOTTOM_X}
+          hiColor={COLOR_FOUND_BOTTOM_X_HI}
+          info={barXInfo}
+          selected={barXSelected}
+          onSelect={onSelect}
+          xDir={1}
+        />,
+        <BentRebarEnd
+          key={`found-x-hook-end-${i}`}
+          position={[x, barXLevel, zEnd]}
+          straightLen={0}
+          bendLen={hookLenXM}
+          diameter={barX.diameter}
+          direction="up"
+          horizontalAxis="z"
+          color={COLOR_FOUND_BOTTOM_X}
+          hiColor={COLOR_FOUND_BOTTOM_X_HI}
+          info={barXInfo}
+          selected={barXSelected}
+          onSelect={onSelect}
+          xDir={-1}
+        />,
+      ]))}
 
-      <InstancedRebarGroup matrices={yHookMatrices} radius={barY.diameter * S / 2} length={hookLenYM}
-        color={COLOR_FOUND_BOTTOM_Y} hiColor={COLOR_FOUND_BOTTOM_Y_HI}
-        info={barYInfo} selected={barYSelected} onSelect={onSelect} visible={visibleGroups.has('bottomY')} />
+      {needHookY && visibleGroups.has('bottomY') && [...yBotFullPositions, ...yBotShortPositions].flatMap((z, i) => ([
+        <BentRebarEnd
+          key={`found-y-hook-start-${i}`}
+          position={[xStart, barYLevel, z]}
+          straightLen={0}
+          bendLen={hookLenYM}
+          diameter={barY.diameter}
+          direction="up"
+          color={COLOR_FOUND_BOTTOM_Y}
+          hiColor={COLOR_FOUND_BOTTOM_Y_HI}
+          info={barYInfo}
+          selected={barYSelected}
+          onSelect={onSelect}
+          xDir={1}
+        />,
+        <BentRebarEnd
+          key={`found-y-hook-end-${i}`}
+          position={[xEnd, barYLevel, z]}
+          straightLen={0}
+          bendLen={hookLenYM}
+          diameter={barY.diameter}
+          direction="up"
+          color={COLOR_FOUND_BOTTOM_Y}
+          hiColor={COLOR_FOUND_BOTTOM_Y_HI}
+          info={barYInfo}
+          selected={barYSelected}
+          onSelect={onSelect}
+          xDir={-1}
+        />,
+      ]))}
 
       {beamStirrupInfo && visibleGroups.has('beamStirrup') && (
         <group position={[0, totalH, 0]}>

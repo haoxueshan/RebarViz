@@ -9,6 +9,8 @@ import * as THREE from 'three';
 import type { ColumnParams, RebarMeshInfo } from '@/lib/types';
 import { parseStirrup, gradeLabel, resolveColumnBars } from '@/lib/rebar';
 import { CameraController } from '@/components/InstancedRebar';
+import { BentRebarEnd } from '@/components/three';
+import { calcColumnLapZone } from '@/lib/anchor';
 import { S } from '@/lib/constants';
 
 function ClickableBar({ position, height, diameter, color, hiColor, info, selected, onSelect }: {
@@ -57,24 +59,53 @@ function ColumnScene({ params, selected, onSelect, cutPosition, concreteOpacity 
   const hm = params.h * S;
   const COVER = (params.cover || 25) * S;
   const COL_H = (params.height || 3000) * S;
+  const hasVariableSection = !!params.hasVariableSection;
+  const variableStart = hasVariableSection ? Math.min(Math.max((params.variableStart || ((params.height || 3000) * 0.7)) * S, 0.2), COL_H - 0.2) : COL_H;
+  const upperBm = (params.upperB || params.b) * S;
+  const upperHm = (params.upperH || params.h) * S;
+  const topNodeType = params.topNodeType || 'middle';
+  const roofBeamB = (params.roofBeamB || 300) * S;
+  const roofBeamH = (params.roofBeamH || 600) * S;
+  const roofSlabT = (params.roofSlabThickness || 120) * S;
+  const baseSupportType = params.baseSupportType || 'foundation';
+  const baseSupportWidth = (params.baseSupportWidth || params.b) * S;
+  const baseSupportHeight = (params.baseSupportHeight || 800) * S;
+  const topSpanX = bm * 2.0;
+  const topSpanZ = hm * 2.0;
+  const beamHalf = roofBeamB / 2;
   const stir = parseStirrup(params.stirrup);
   const innerW = bm - 2 * COVER;
   const innerH = hm - 2 * COVER;
+  const upperInnerW = upperBm - 2 * COVER;
+  const upperInnerH = upperHm - 2 * COVER;
+  const topNodeBarH = Math.max(roofBeamH + (params.hasRoofSlab ? roofSlabT : 0), 0.12);
 
   const resolved = useMemo(() =>
     resolveColumnBars(params.main, params.cornerMain, params.bMiddleMain, params.hMiddleMain, innerW, innerH),
   [params.main, params.cornerMain, params.bMiddleMain, params.hMiddleMain, innerW, innerH]);
 
+  const upperResolved = useMemo(() =>
+    resolveColumnBars(params.main, params.cornerMain, params.bMiddleMain, params.hMiddleMain, upperInnerW, upperInnerH),
+  [params.main, params.cornerMain, params.bMiddleMain, params.hMiddleMain, upperInnerW, upperInnerH]);
+  const nodeResolved = hasVariableSection ? upperResolved : resolved;
+
+  const denseZoneLen = useMemo(() => {
+    return Math.max(COL_H / 6, Math.max(bm, hm), 0.5);
+  }, [COL_H, bm, hm]);
+
+  const lapZone = useMemo(() => calcColumnLapZone(params.height || 3000), [params.height]);
+  const lapZoneStart = lapZone.start * S;
+  const lapZoneEnd = Math.min(lapZone.end * S, COL_H);
+
   const stirrups = useMemo(() => {
-    const positions: number[] = [];
-    const denseZone = 0.5;
+    const positions: { y: number; zone: 'dense' | 'normal' }[] = [];
     const denseS = stir.spacingDense * S;
     const normalS = stir.spacingNormal * S;
-    for (let y = 0.05; y < denseZone; y += denseS) positions.push(y);
-    for (let y = denseZone; y < COL_H - denseZone; y += normalS) positions.push(y);
-    for (let y = COL_H - denseZone; y < COL_H - 0.05; y += denseS) positions.push(y);
+    for (let y = 0.05; y < denseZoneLen; y += denseS) positions.push({ y, zone: 'dense' });
+    for (let y = denseZoneLen; y < COL_H - denseZoneLen; y += normalS) positions.push({ y, zone: 'normal' });
+    for (let y = COL_H - denseZoneLen; y < COL_H - 0.05; y += denseS) positions.push({ y, zone: 'dense' });
     return positions;
-  }, [stir.spacingDense, stir.spacingNormal, COL_H]);
+  }, [stir.spacingDense, stir.spacingNormal, COL_H, denseZoneLen]);
 
   const stirrupCurve = useMemo(() => {
     const w = innerW + stir.diameter * S;
@@ -93,6 +124,38 @@ function ColumnScene({ params, selected, onSelect, cutPosition, concreteOpacity 
     const pts = shape.getPoints(40);
     return new THREE.CatmullRomCurve3(pts.map(p => new THREE.Vector3(p.x, 0, p.y)), true);
   }, [innerW, innerH, stir.diameter]);
+
+  const upperStirrupCurve = useMemo(() => {
+    const w = upperInnerW + stir.diameter * S;
+    const h = upperInnerH + stir.diameter * S;
+    const w2 = w / 2, h2 = h / 2, r = 0.015;
+    const shape = new THREE.Shape();
+    shape.moveTo(-w2 + r, -h2);
+    shape.lineTo(w2 - r, -h2);
+    shape.quadraticCurveTo(w2, -h2, w2, -h2 + r);
+    shape.lineTo(w2, h2 - r);
+    shape.quadraticCurveTo(w2, h2, w2 - r, h2);
+    shape.lineTo(-w2 + r, h2);
+    shape.quadraticCurveTo(-w2, h2, -w2, h2 - r);
+    shape.lineTo(-w2, -h2 + r);
+    shape.quadraticCurveTo(-w2, -h2, -w2 + r, -h2);
+    const pts = shape.getPoints(40);
+    return new THREE.CatmullRomCurve3(pts.map(p => new THREE.Vector3(p.x, 0, p.y)), true);
+  }, [upperInnerW, upperInnerH, stir.diameter]);
+
+  const stirrupTieOffsets = useMemo(() => {
+    const innerLegs = Math.max(stir.legs - 2, 0);
+    if (innerLegs <= 0) return [];
+    if (innerLegs === 1) return [0];
+    return Array.from({ length: innerLegs }, (_, i) => -innerW / 2 + (innerW * (i + 1)) / (innerLegs + 1));
+  }, [stir.legs, innerW]);
+
+  const upperStirrupTieOffsets = useMemo(() => {
+    const innerLegs = Math.max(stir.legs - 2, 0);
+    if (innerLegs <= 0) return [];
+    if (innerLegs === 1) return [0];
+    return Array.from({ length: innerLegs }, (_, i) => -upperInnerW / 2 + (upperInnerW * (i + 1)) / (innerLegs + 1));
+  }, [stir.legs, upperInnerW]);
 
   const [stirHovered, setStirHovered] = useState(false);
   const stirSelected = selected?.type === 'stirrup';
@@ -127,6 +190,48 @@ function ColumnScene({ params, selected, onSelect, cutPosition, concreteOpacity 
     return false;
   }
 
+  const topNodeBars = useMemo(() => {
+    return nodeResolved.bars.filter((bar) => {
+      if (topNodeType === 'edge') return Math.abs(bar.z) <= beamHalf;
+      if (topNodeType === 'corner') return Math.abs(bar.z) <= beamHalf || Math.abs(bar.x) <= beamHalf;
+      return Math.abs(bar.z) <= beamHalf || Math.abs(bar.x) <= beamHalf;
+    });
+  }, [nodeResolved.bars, beamHalf, topNodeType]);
+
+  const topNodeBentBars = useMemo(() => {
+    if (topNodeType === 'middle') return [];
+    return nodeResolved.bars
+      .filter((bar) => {
+        if (topNodeType === 'edge') return Math.abs(bar.z) > beamHalf;
+        return Math.abs(bar.z) > beamHalf && Math.abs(bar.x) > beamHalf;
+      })
+      .map((bar) => {
+        if (topNodeType === 'edge') {
+          const excess = Math.max(Math.abs(bar.z) - beamHalf, 0);
+          return {
+            bar,
+            horizontalAxis: 'z' as const,
+            xDir: bar.z >= 0 ? -1 : 1,
+            straightLen: Math.max(excess + roofBeamB * 0.18, roofBeamB * 0.18, 0.08),
+            bendLen: Math.max(topNodeBarH * 0.72, 0.12),
+          };
+        }
+
+        const excessX = Math.max(Math.abs(bar.x) - beamHalf, 0);
+        const excessZ = Math.max(Math.abs(bar.z) - beamHalf, 0);
+        const bendAlongX = excessX <= excessZ;
+        return {
+          bar,
+          horizontalAxis: bendAlongX ? 'x' as const : 'z' as const,
+          xDir: bendAlongX
+            ? (bar.x >= 0 ? -1 : 1)
+            : (bar.z >= 0 ? -1 : 1),
+          straightLen: Math.max((bendAlongX ? excessX : excessZ) + roofBeamB * 0.18, roofBeamB * 0.18, 0.08),
+          bendLen: Math.max(topNodeBarH * 0.72, 0.12),
+        };
+      });
+  }, [beamHalf, nodeResolved.bars, roofBeamB, topNodeBarH, topNodeType]);
+
   return (
     <>
       <mesh position={[0, COL_H / 2, 0]} onClick={() => onSelect(null)} visible={false}>
@@ -134,34 +239,119 @@ function ColumnScene({ params, selected, onSelect, cutPosition, concreteOpacity 
         <meshBasicMaterial />
       </mesh>
 
-      <mesh position={[0, COL_H / 2, 0]}>
-        <boxGeometry args={[bm, COL_H, hm]} />
-        <meshPhysicalMaterial color="#BDC3C7" transparent opacity={concreteOpacity} side={THREE.DoubleSide} depthWrite={false} roughness={0.8} />
-      </mesh>
-      <lineSegments position={[0, COL_H / 2, 0]}>
-        <edgesGeometry args={[new THREE.BoxGeometry(bm, COL_H, hm)]} />
+      {!hasVariableSection ? (
+        <mesh position={[0, COL_H / 2, 0]}>
+          <boxGeometry args={[bm, COL_H, hm]} />
+          <meshPhysicalMaterial color="#BDC3C7" transparent opacity={concreteOpacity} side={THREE.DoubleSide} depthWrite={false} roughness={0.8} />
+        </mesh>
+      ) : (
+        <>
+          <mesh position={[0, variableStart / 2, 0]}>
+            <boxGeometry args={[bm, variableStart, hm]} />
+            <meshPhysicalMaterial color="#BDC3C7" transparent opacity={concreteOpacity} side={THREE.DoubleSide} depthWrite={false} roughness={0.8} />
+          </mesh>
+          <mesh position={[0, variableStart + (COL_H - variableStart) / 2, 0]}>
+            <boxGeometry args={[upperBm, COL_H - variableStart, upperHm]} />
+            <meshPhysicalMaterial color="#BDC3C7" transparent opacity={concreteOpacity} side={THREE.DoubleSide} depthWrite={false} roughness={0.8} />
+          </mesh>
+          <mesh position={[0, variableStart, 0]}>
+            <boxGeometry args={[bm * 1.02, 0.02, hm * 1.02]} />
+            <meshBasicMaterial color="#F59E0B" transparent opacity={0.22} depthWrite={false} />
+          </mesh>
+        </>
+      )}
+      <lineSegments position={[0, (!hasVariableSection ? COL_H : variableStart) / 2, 0]}>
+        <edgesGeometry args={[new THREE.BoxGeometry(bm, !hasVariableSection ? COL_H : variableStart, hm)]} />
         <lineBasicMaterial color="#94A3B8" />
       </lineSegments>
+      {hasVariableSection && (
+        <lineSegments position={[0, variableStart + (COL_H - variableStart) / 2, 0]}>
+          <edgesGeometry args={[new THREE.BoxGeometry(upperBm, COL_H - variableStart, upperHm)]} />
+          <lineBasicMaterial color="#94A3B8" />
+        </lineSegments>
+      )}
 
       {resolved.bars.map((bar, i) => (
-        <ClickableBar key={`r${i}`} position={[bar.x, COL_H / 2, bar.z]} height={COL_H} diameter={bar.diameter}
+        <ClickableBar key={`r-lower-${i}`} position={[bar.x, variableStart / 2, bar.z]} height={variableStart} diameter={bar.diameter}
           color={resolved.isDetailed ? barColor(bar.role) : COLOR_CORNER}
           hiColor={resolved.isDetailed ? barHiColor(bar.role) : COLOR_CORNER_HI}
           info={infoForRole(bar.role)} selected={isBarSelected(bar.role)} onSelect={onSelect} />
       ))}
+      {hasVariableSection && upperResolved.bars.map((bar, i) => (
+        <ClickableBar key={`r-upper-${i}`} position={[bar.x, variableStart + (COL_H - variableStart) / 2, bar.z]} height={COL_H - variableStart} diameter={bar.diameter}
+          color={upperResolved.isDetailed ? barColor(bar.role) : COLOR_CORNER}
+          hiColor={upperResolved.isDetailed ? barHiColor(bar.role) : COLOR_CORNER_HI}
+          info={infoForRole(bar.role)} selected={isBarSelected(bar.role)} onSelect={onSelect} />
+      ))}
 
-      {stirrups.map((y, i) => (
-        <mesh key={`s${i}`} position={[0, y, 0]}
+      {topNodeBars.map((bar, i) => (
+        <ClickableBar key={`r-top-node-${i}`} position={[bar.x, COL_H + topNodeBarH / 2, bar.z]} height={topNodeBarH} diameter={bar.diameter}
+          color={nodeResolved.isDetailed ? barColor(bar.role) : COLOR_CORNER}
+          hiColor={nodeResolved.isDetailed ? barHiColor(bar.role) : COLOR_CORNER_HI}
+          info={infoForRole(bar.role)} selected={isBarSelected(bar.role)} onSelect={onSelect} />
+      ))}
+
+      {topNodeBentBars.map(({ bar, horizontalAxis, xDir, straightLen, bendLen }, i) => (
+        <BentRebarEnd
+          key={`r-top-bent-${i}`}
+          position={[bar.x, COL_H, bar.z]}
+          straightLen={straightLen}
+          bendLen={bendLen}
+          diameter={bar.diameter}
+          direction="up"
+          horizontalAxis={horizontalAxis}
+          xDir={xDir}
+          color={nodeResolved.isDetailed ? barColor(bar.role) : COLOR_CORNER}
+          hiColor={nodeResolved.isDetailed ? barHiColor(bar.role) : COLOR_CORNER_HI}
+          info={infoForRole(bar.role)}
+          selected={isBarSelected(bar.role)}
+          onSelect={onSelect}
+        />
+      ))}
+
+      <group>
+        <mesh position={[0, denseZoneLen / 2, 0]}>
+          <boxGeometry args={[bm * 1.02, denseZoneLen, hm * 1.02]} />
+          <meshBasicMaterial color="#22C55E" transparent opacity={0.06} depthWrite={false} />
+        </mesh>
+        <mesh position={[0, COL_H - denseZoneLen / 2, 0]}>
+          <boxGeometry args={[bm * 1.02, denseZoneLen, hm * 1.02]} />
+          <meshBasicMaterial color="#22C55E" transparent opacity={0.06} depthWrite={false} />
+        </mesh>
+        <mesh position={[0, (lapZoneStart + lapZoneEnd) / 2, 0]}>
+          <boxGeometry args={[bm * 1.06, Math.max(lapZoneEnd - lapZoneStart, 0.02), hm * 1.06]} />
+          <meshBasicMaterial color="#06B6D4" transparent opacity={0.06} depthWrite={false} />
+        </mesh>
+      </group>
+
+      {stirrups.map(({ y, zone }, i) => {
+        const isUpper = hasVariableSection && y >= variableStart;
+        const activeCurve = isUpper ? upperStirrupCurve : stirrupCurve;
+        const activeTieOffsets = isUpper ? upperStirrupTieOffsets : stirrupTieOffsets;
+        const activeInnerH = isUpper ? upperInnerH : innerH;
+        return (
+        <group key={`s${i}`} position={[0, y, 0]}
           onClick={(e) => { e.stopPropagation(); onSelect(stirSelected ? null : stirInfo); }}
           onPointerOver={(e) => { e.stopPropagation(); setStirHovered(true); document.body.style.cursor = 'pointer'; }}
           onPointerOut={() => { setStirHovered(false); document.body.style.cursor = 'auto'; }}>
-          <tubeGeometry args={[stirrupCurve, 48, stir.diameter * S / 2, 8, true]} />
-          <meshStandardMaterial
-            color={stirSelected ? '#2ECC71' : stirHovered ? '#2ECC71' : '#27AE60'}
-            roughness={0.4} metalness={0.6}
-            emissive={stirSelected ? '#2ECC71' : '#000000'} emissiveIntensity={stirSelected ? 0.3 : 0} />
-        </mesh>
-      ))}
+          <mesh>
+            <tubeGeometry args={[activeCurve, 48, stir.diameter * S / 2, 8, true]} />
+            <meshStandardMaterial
+              color={stirSelected ? '#2ECC71' : stirHovered ? '#2ECC71' : zone === 'dense' ? '#1E8449' : '#27AE60'}
+              roughness={0.4} metalness={0.6}
+              emissive={stirSelected ? '#2ECC71' : '#000000'} emissiveIntensity={stirSelected ? 0.3 : 0} />
+          </mesh>
+          {activeTieOffsets.map((x, ti) => (
+            <mesh key={`st-tie-${ti}`} position={[x, 0, 0]}>
+              <boxGeometry args={[stir.diameter * S, stir.diameter * S, activeInnerH + stir.diameter * S]} />
+              <meshStandardMaterial
+                color={stirSelected ? '#2ECC71' : stirHovered ? '#2ECC71' : zone === 'dense' ? '#1E8449' : '#27AE60'}
+                roughness={0.4} metalness={0.6}
+                emissive={stirSelected ? '#2ECC71' : '#000000'} emissiveIntensity={stirSelected ? 0.3 : 0} />
+            </mesh>
+          ))}
+        </group>
+      )})}
 
       {cutPosition !== null && (
         <group position={[0, cutPosition, 0]} rotation={[Math.PI / 2, 0, 0]}>
@@ -178,6 +368,102 @@ function ColumnScene({ params, selected, onSelect, cutPosition, concreteOpacity 
             <lineBasicMaterial color="#2563EB" linewidth={2} />
           </lineLoop>
         </group>
+      )}
+
+      {topNodeType === 'middle' && (
+        <>
+          <mesh position={[0, COL_H + roofBeamH / 2, 0]}>
+            <boxGeometry args={[topSpanX, roofBeamH, roofBeamB]} />
+            <meshPhysicalMaterial color="#AAB4C3" transparent opacity={0.14} side={THREE.DoubleSide} depthWrite={false} roughness={0.8} />
+          </mesh>
+          <mesh position={[0, COL_H + roofBeamH / 2, 0]}>
+            <boxGeometry args={[roofBeamB, roofBeamH, topSpanZ]} />
+            <meshPhysicalMaterial color="#AAB4C3" transparent opacity={0.14} side={THREE.DoubleSide} depthWrite={false} roughness={0.8} />
+          </mesh>
+          {params.hasRoofSlab && (
+            <mesh position={[0, COL_H + roofBeamH + roofSlabT / 2, 0]}>
+              <boxGeometry args={[bm * 2.4, roofSlabT, hm * 2.4]} />
+              <meshPhysicalMaterial color="#CBD5E1" transparent opacity={0.1} side={THREE.DoubleSide} depthWrite={false} roughness={0.8} />
+            </mesh>
+          )}
+          <mesh position={[0, COL_H + roofBeamH * 0.5, 0]}>
+            <boxGeometry args={[bm * 0.9, roofBeamH * 0.96, roofBeamB]} />
+            <meshBasicMaterial color="#F59E0B" transparent opacity={0.08} depthWrite={false} />
+          </mesh>
+        </>
+      )}
+      {topNodeType === 'edge' && (
+        <>
+          <mesh position={[0, COL_H + roofBeamH / 2, 0]}>
+            <boxGeometry args={[topSpanX, roofBeamH, roofBeamB]} />
+            <meshPhysicalMaterial color="#AAB4C3" transparent opacity={0.14} side={THREE.DoubleSide} depthWrite={false} roughness={0.8} />
+          </mesh>
+          {params.hasRoofSlab && (
+            <mesh position={[0, COL_H + roofBeamH + roofSlabT / 2, hm * 0.6]}>
+              <boxGeometry args={[bm * 2.4, roofSlabT, hm * 1.2]} />
+              <meshPhysicalMaterial color="#CBD5E1" transparent opacity={0.1} side={THREE.DoubleSide} depthWrite={false} roughness={0.8} />
+            </mesh>
+          )}
+          <mesh position={[0, COL_H + roofBeamH * 0.5, 0]}>
+            <boxGeometry args={[bm * 0.9, roofBeamH * 0.96, roofBeamB]} />
+            <meshBasicMaterial color="#F59E0B" transparent opacity={0.08} depthWrite={false} />
+          </mesh>
+          <mesh position={[0, COL_H + roofBeamH * 0.5, hm * 0.42]}>
+            <boxGeometry args={[bm * 0.9, roofBeamH * 0.96, hm * 0.36]} />
+            <meshBasicMaterial color="#FBBF24" transparent opacity={0.08} depthWrite={false} />
+          </mesh>
+          <mesh position={[bm * 0.24, COL_H + roofBeamH * 0.35, 0]}>
+            <boxGeometry args={[bm * 0.18, roofBeamH * 0.7, roofBeamB * 0.9]} />
+            <meshBasicMaterial color="#F59E0B" transparent opacity={0.16} depthWrite={false} />
+          </mesh>
+        </>
+      )}
+      {topNodeType === 'corner' && (
+        <>
+          <mesh position={[0, COL_H + roofBeamH / 2, -hm * 0.25]}>
+            <boxGeometry args={[bm * 1.5, roofBeamH, roofBeamB]} />
+            <meshPhysicalMaterial color="#AAB4C3" transparent opacity={0.14} side={THREE.DoubleSide} depthWrite={false} roughness={0.8} />
+          </mesh>
+          <mesh position={[-bm * 0.25, COL_H + roofBeamH / 2, 0]}>
+            <boxGeometry args={[roofBeamB, roofBeamH, hm * 1.5]} />
+            <meshPhysicalMaterial color="#AAB4C3" transparent opacity={0.14} side={THREE.DoubleSide} depthWrite={false} roughness={0.8} />
+          </mesh>
+          {params.hasRoofSlab && (
+            <mesh position={[bm * 0.45, COL_H + roofBeamH + roofSlabT / 2, hm * 0.45]}>
+              <boxGeometry args={[bm * 1.35, roofSlabT, hm * 1.35]} />
+              <meshPhysicalMaterial color="#CBD5E1" transparent opacity={0.1} side={THREE.DoubleSide} depthWrite={false} roughness={0.8} />
+            </mesh>
+          )}
+          <mesh position={[0, COL_H + roofBeamH * 0.5, 0]}>
+            <boxGeometry args={[bm * 0.9, roofBeamH * 0.96, roofBeamB]} />
+            <meshBasicMaterial color="#F59E0B" transparent opacity={0.08} depthWrite={false} />
+          </mesh>
+          <mesh position={[0, COL_H + roofBeamH * 0.5, hm * 0.42]}>
+            <boxGeometry args={[bm * 0.9, roofBeamH * 0.96, hm * 0.36]} />
+            <meshBasicMaterial color="#FBBF24" transparent opacity={0.08} depthWrite={false} />
+          </mesh>
+          <mesh position={[bm * 0.42, COL_H + roofBeamH * 0.5, 0]}>
+            <boxGeometry args={[bm * 0.36, roofBeamH * 0.96, hm * 0.9]} />
+            <meshBasicMaterial color="#FBBF24" transparent opacity={0.08} depthWrite={false} />
+          </mesh>
+          <mesh position={[bm * 0.24, COL_H + roofBeamH * 0.35, hm * 0.24]}>
+            <boxGeometry args={[bm * 0.18, roofBeamH * 0.7, roofBeamB * 0.9]} />
+            <meshBasicMaterial color="#F59E0B" transparent opacity={0.16} depthWrite={false} />
+          </mesh>
+        </>
+      )}
+
+      {baseSupportType === 'wall' && (
+        <mesh position={[0, baseSupportHeight / 2, 0]}>
+          <boxGeometry args={[baseSupportWidth, baseSupportHeight, hm * 1.2]} />
+          <meshPhysicalMaterial color="#B8C2D9" transparent opacity={0.12} side={THREE.DoubleSide} depthWrite={false} roughness={0.8} />
+        </mesh>
+      )}
+      {baseSupportType === 'beam' && (
+        <mesh position={[0, baseSupportHeight / 2, 0]}>
+          <boxGeometry args={[bm * 1.8, baseSupportHeight, baseSupportWidth]} />
+          <meshPhysicalMaterial color="#B8C2D9" transparent opacity={0.12} side={THREE.DoubleSide} depthWrite={false} roughness={0.8} />
+        </mesh>
       )}
     </>
   );
@@ -212,6 +498,10 @@ export default function ColumnViewer({ params, cutPosition, showCut, onCutPositi
   const [cameraTarget, setCameraTarget] = useState<[number, number, number] | null>(null);
   const { isFullscreen: fsActive, toggle: fsToggle, containerRef: fsContainerRef, containerClass: fsClass } = useFullscreen();
   const COL_H = (params.height || 3000) * S;
+  const camDist = useMemo(() => {
+    const maxDim = Math.max(params.b, params.h, params.height || 3000) * S;
+    return Math.max(maxDim * 1.15, 3.5);
+  }, [params.b, params.h, params.height]);
 
   return (
     <div className="space-y-2">
@@ -242,10 +532,10 @@ export default function ColumnViewer({ params, cutPosition, showCut, onCutPositi
 
         <div className="absolute top-3 left-3 z-10 flex items-center gap-1.5">
           {[
-            { name: '正面', pos: [0, COL_H / 2, 4] as [number, number, number] },
-            { name: '侧面', pos: [4, COL_H / 2, 0] as [number, number, number] },
-            { name: '俑视', pos: [0, 5, 0.1] as [number, number, number] },
-            { name: '透视', pos: [2, 2, 3] as [number, number, number] },
+            { name: '正面', pos: [0, COL_H / 2, camDist] as [number, number, number] },
+            { name: '侧面', pos: [camDist, COL_H / 2, 0] as [number, number, number] },
+            { name: '俯视', pos: [0, camDist + COL_H * 0.2, 0.1] as [number, number, number] },
+            { name: '透视', pos: [camDist * 0.55, COL_H * 0.75, camDist * 0.75] as [number, number, number] },
           ].map(a => (
             <button key={a.name} onClick={() => setCameraTarget(a.pos)}
               className="px-2 py-1 rounded-md text-[11px] font-medium cursor-pointer bg-white/80 backdrop-blur-sm border border-gray-200/60 text-muted hover:bg-white hover:text-primary transition-colors">
@@ -264,7 +554,7 @@ export default function ColumnViewer({ params, cutPosition, showCut, onCutPositi
           </button>
         </div>
 
-        <Canvas camera={{ position: [2, 2, 3], fov: 45 }} scene={{ background: new THREE.Color('#f8fafc') }}>
+        <Canvas camera={{ position: [camDist * 0.55, COL_H * 0.75, camDist * 0.75], fov: 45 }} scene={{ background: new THREE.Color('#f8fafc') }}>
           <CameraController targetPosition={cameraTarget} />
           <ambientLight intensity={0.6} />
           <directionalLight position={[5, 8, 5]} intensity={0.8} castShadow />

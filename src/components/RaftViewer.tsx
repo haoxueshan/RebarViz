@@ -11,6 +11,7 @@ import { parseSlabRebar, parseRebar, parseStirrup, gradeLabel } from '@/lib/reba
 import { calcLaE } from '@/lib/anchor';
 import { determineColFoundAnchor } from '@/lib/construction-rules';
 import { CameraController, InstancedRebarGroup, buildZBarMatrices, buildXBarMatrices, buildVertBarMatrices, buildColBendMatrices } from '@/components/InstancedRebar';
+import { StirrupRing } from '@/components/three';
 import {
   S,
   COLOR_RAFT_BOTTOM_X, COLOR_RAFT_BOTTOM_X_HI,
@@ -147,29 +148,16 @@ function RaftSceneBeamSlab({ params, selected, onSelect, concreteOpacity, visibl
     xCols.flatMap(xc => buildZBarMatrices(topOffsets.map(dx => xc + dx), beamTopBarY, -lyM / 2, lyM / 2)),
     [xCols, topOffsets, beamTopBarY, lyM]);
 
-  // JL stirrups — short perpendicular cylinders (visual indicator, length = beamBM)
-  const beamStirMats = useMemo(() => {
-    const mats: THREE.Matrix4[] = [];
-    const rotZ = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1));
-    const rotX = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(1, 0, 0));
-    for (const zc of zCols) {
-      const n = Math.min(Math.floor(lxM / stirrupSpacingM) + 1, 80);
-      for (let i = 0; i < n; i++) {
-        const m = new THREE.Matrix4();
-        m.compose(new THREE.Vector3(-lxM / 2 + i * stirrupSpacingM, beamCenterYM, zc), rotZ, new THREE.Vector3(1, 1, 1));
-        mats.push(m);
-      }
-    }
-    for (const xc of xCols) {
-      const n = Math.min(Math.floor(lyM / stirrupSpacingM) + 1, 80);
-      for (let i = 0; i < n; i++) {
-        const m = new THREE.Matrix4();
-        m.compose(new THREE.Vector3(xc, beamCenterYM, -lyM / 2 + i * stirrupSpacingM), rotX, new THREE.Vector3(1, 1, 1));
-        mats.push(m);
-      }
-    }
-    return mats;
-  }, [zCols, xCols, stirrupSpacingM, lxM, lyM, beamCenterYM]);
+  const beamStirrupWidth = Math.max(beamBM - 2 * cover - stirrupR.diameter * S, beamBM * 0.2);
+  const beamStirrupHeight = Math.max(beamHM - 2 * cover - stirrupR.diameter * S, beamHM * 0.2);
+  const xBeamStirrupPositions = useMemo(() => {
+    const n = Math.min(Math.floor(lxM / stirrupSpacingM) + 1, 80);
+    return Array.from({ length: n }, (_, i) => -lxM / 2 + i * stirrupSpacingM).filter(x => x <= lxM / 2 + 1e-6);
+  }, [lxM, stirrupSpacingM]);
+  const yBeamStirrupPositions = useMemo(() => {
+    const n = Math.min(Math.floor(lyM / stirrupSpacingM) + 1, 80);
+    return Array.from({ length: n }, (_, i) => -lyM / 2 + i * stirrupSpacingM).filter(z => z <= lyM / 2 + 1e-6);
+  }, [lyM, stirrupSpacingM]);
 
   // Column inserts
   const colBarData = useMemo(() => {
@@ -303,8 +291,46 @@ function RaftSceneBeamSlab({ params, selected, onSelect, concreteOpacity, visibl
       <InstancedRebarGroup matrices={yBeamTopMats} radius={beamTopR.diameter * S / 2} length={lyM}
         color={COLOR_RAFT_BEAM_TOP} hiColor={COLOR_RAFT_BEAM_TOP_HI} info={beamTopInfo} selected={btSel} onSelect={onSelect} visible={visibleGroups.has('beamTop')} />
       {/* JL stirrups */}
-      <InstancedRebarGroup matrices={beamStirMats} radius={stirrupR.diameter * S / 2} length={beamBM}
-        color={COLOR_RAFT_BEAM_STIRRUP} hiColor={COLOR_RAFT_BEAM_STIRRUP_HI} info={beamStirInfo} selected={bsSel} onSelect={onSelect} visible={visibleGroups.has('beamStirrup')} />
+      {visibleGroups.has('beamStirrup') && zCols.map((zc, iy) => (
+        <group key={`raft-jl-x-stirrup-group-${iy}`} position={[0, beamLowM, zc]}>
+          {xBeamStirrupPositions.map((x, i) => (
+            <StirrupRing
+              key={`raft-jl-x-stirrup-${iy}-${i}`}
+              x={x}
+              width={beamStirrupWidth}
+              height={beamStirrupHeight}
+              diameter={stirrupR.diameter}
+              color={COLOR_RAFT_BEAM_STIRRUP}
+              hiColor={COLOR_RAFT_BEAM_STIRRUP_HI}
+              info={beamStirInfo}
+              selected={bsSel}
+              onSelect={onSelect}
+              cover={cover + (stirrupR.diameter * S) / 2}
+              legs={stirrupR.legs}
+            />
+          ))}
+        </group>
+      ))}
+      {visibleGroups.has('beamStirrup') && xCols.map((xc, ix) => (
+        <group key={`raft-jl-y-stirrup-group-${ix}`} position={[xc, beamLowM, 0]} rotation={[0, Math.PI / 2, 0]}>
+          {yBeamStirrupPositions.map((x, i) => (
+            <StirrupRing
+              key={`raft-jl-y-stirrup-${ix}-${i}`}
+              x={x}
+              width={beamStirrupWidth}
+              height={beamStirrupHeight}
+              diameter={stirrupR.diameter}
+              color={COLOR_RAFT_BEAM_STIRRUP}
+              hiColor={COLOR_RAFT_BEAM_STIRRUP_HI}
+              info={beamStirInfo}
+              selected={bsSel}
+              onSelect={onSelect}
+              cover={cover + (stirrupR.diameter * S) / 2}
+              legs={stirrupR.legs}
+            />
+          ))}
+        </group>
+      ))}
       {/* Column inserts */}
       <InstancedRebarGroup matrices={colBarData.matrices} radius={colR.diameter * S / 2} length={colInsertH}
         color={COLOR_RAFT_COL} hiColor={COLOR_RAFT_COL_HI} info={colInfo} selected={cSel} onSelect={onSelect} visible={visibleGroups.has('colMain')} />

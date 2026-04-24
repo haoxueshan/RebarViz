@@ -3,7 +3,7 @@
 import { useMemo, useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
-import type { ComponentType, StripFoundationParams } from '@/lib/types';
+import type { ComponentType, StripFoundationParams, FoundationBeamEndType, FoundationBeamOverhangSide } from '@/lib/types';
 import { STRIPFOUNDATION_PRESETS } from '@/lib/rebar';
 import { calcStripFoundation } from '@/lib/calc';
 import { calcStripFoundationConcrete } from '@/lib/calc-concrete';
@@ -124,7 +124,9 @@ export function StripFoundationPageClient() {
       metricFromText('JL 底筋', compareParams.jlBottom || '无', params.jlBottom || '无'),
       metricFromText('JL 顶筋', compareParams.jlTop || '无', params.jlTop || '无'),
       metricFromText('JL 箍筋', compareParams.jlStirrup || '无', params.jlStirrup || '无'),
+      metricFromText('JL 外伸', `${compareParams.jlEndType || 'none'}:${compareParams.jlOverhang || 0}`, `${params.jlEndType || 'none'}:${params.jlOverhang || 0}`),
       metricFromText('JCL', compareParams.hasJcl ? '有' : '无', params.hasJcl ? '有' : '无'),
+      metricFromText('JCL 外伸', `${compareParams.jclEndType || 'none'}:${compareParams.jclOverhang || 0}`, `${params.jclEndType || 'none'}:${params.jclOverhang || 0}`),
       metricFromText('原位修正', compareParams.hasLocalOverride ? '有' : '无', params.hasLocalOverride ? '有' : '无'),
       metricFromNumber('支承道数', compareParams.supportCount, params.supportCount),
       metricFromNumber('支承中心距', compareParams.supportSpacing || 0, params.supportSpacing || 0, 'mm'),
@@ -214,6 +216,30 @@ export function StripFoundationPageClient() {
                 <Field label="JL 底部纵筋" value={params.jlBottom || ''} onChange={v => update({ jlBottom: v || undefined })} placeholder="如: 4C22" />
                 <Field label="JL 顶部纵筋" value={params.jlTop || ''} onChange={v => update({ jlTop: v || undefined })} placeholder="如: 4C20" />
                 <Field label="JL 箍筋" value={params.jlStirrup || ''} onChange={v => update({ jlStirrup: v || undefined })} placeholder="如: A10@150(4)" />
+                <SelectField
+                  label="JL 端部外伸"
+                  value={params.jlEndType || 'none'}
+                  onChange={v => update({ jlEndType: v as FoundationBeamEndType })}
+                  options={[
+                    { value: 'none', label: '无外伸' },
+                    { value: 'oneSide', label: '单端外伸' },
+                    { value: 'bothSides', label: '双端外伸' },
+                  ]}
+                />
+                {(params.jlEndType || 'none') === 'oneSide' && (
+                  <SelectField
+                    label="JL 单端方向"
+                    value={params.jlOverhangSide || 'right'}
+                    onChange={v => update({ jlOverhangSide: v as FoundationBeamOverhangSide })}
+                    options={[
+                      { value: 'right', label: '右端外伸' },
+                      { value: 'left', label: '左端外伸' },
+                    ]}
+                  />
+                )}
+                {(params.jlEndType || 'none') !== 'none' && (
+                  <NumField label="JL 外伸长度 (mm)" value={params.jlOverhang || 600} onChange={v => update({ jlOverhang: v })} min={100} max={3000} />
+                )}
               </Section>
             )}
 
@@ -237,6 +263,30 @@ export function StripFoundationPageClient() {
                     <Field label="JCL 底部纵筋" value={params.jclBottom || ''} onChange={v => update({ jclBottom: v || undefined })} placeholder="如: 4C18" />
                     <Field label="JCL 顶部纵筋" value={params.jclTop || ''} onChange={v => update({ jclTop: v || undefined })} placeholder="如: 4C16" />
                     <Field label="JCL 箍筋" value={params.jclStirrup || ''} onChange={v => update({ jclStirrup: v || undefined })} placeholder="如: A8@200(2)" />
+                    <SelectField
+                      label="JCL 端部外伸"
+                      value={params.jclEndType || 'none'}
+                      onChange={v => update({ jclEndType: v as FoundationBeamEndType })}
+                      options={[
+                        { value: 'none', label: '无外伸' },
+                        { value: 'oneSide', label: '单端外伸' },
+                        { value: 'bothSides', label: '双端外伸' },
+                      ]}
+                    />
+                    {(params.jclEndType || 'none') === 'oneSide' && (
+                      <SelectField
+                        label="JCL 单端方向"
+                        value={params.jclOverhangSide || 'right'}
+                        onChange={v => update({ jclOverhangSide: v as FoundationBeamOverhangSide })}
+                        options={[
+                          { value: 'right', label: '上侧外伸' },
+                          { value: 'left', label: '下侧外伸' },
+                        ]}
+                      />
+                    )}
+                    {(params.jclEndType || 'none') !== 'none' && (
+                      <NumField label="JCL 外伸长度 (mm)" value={params.jclOverhang || 300} onChange={v => update({ jclOverhang: v })} min={100} max={3000} />
+                    )}
                   </>
                 )}
               </Section>

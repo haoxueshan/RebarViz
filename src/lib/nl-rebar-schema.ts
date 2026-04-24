@@ -194,6 +194,10 @@ export interface StripFoundationSchema {
   jlBottom?: string;
   jlTop?: string;
   jlStirrup?: string;
+  jlStirrupAlt?: string;
+  jlEndType?: 'none' | 'oneSide' | 'bothSides';
+  jlOverhangSide?: 'left' | 'right';
+  jlOverhang?: number;
   hasJcl?: boolean;
   jclCount?: number;
   jclSpacing?: number;
@@ -202,6 +206,10 @@ export interface StripFoundationSchema {
   jclBottom?: string;
   jclTop?: string;
   jclStirrup?: string;
+  jclStirrupAlt?: string;
+  jclEndType?: 'none' | 'oneSide' | 'bothSides';
+  jclOverhangSide?: 'left' | 'right';
+  jclOverhang?: number;
   hasLocalOverride?: boolean;
   localOverrideStart?: number;
   localOverrideLength?: number;
@@ -406,6 +414,10 @@ const STRIPFOUNDATION_JSON_SCHEMA = `{
   "jlBottom": "数量+等级+直径" (JL底筋，如4C22，可选),
   "jlTop": "数量+等级+直径" (JL顶筋，如4C20，可选),
   "jlStirrup": "等级+直径@间距(肢数)" (JL箍筋，可选),
+  "jlStirrupAlt": "等级+直径@间距(肢数)" (JL第二种箍筋，可选),
+  "jlEndType": "none" | "oneSide" | "bothSides" (JL端部外伸类型，可选),
+  "jlOverhangSide": "left" | "right" (JL单端外伸方向，可选),
+  "jlOverhang": number (JL外伸长度mm，可选),
   "hasJcl": boolean (是否设置JCL，可选),
   "jclCount": number (JCL道数，可选),
   "jclSpacing": number (JCL中心距mm，可选),
@@ -414,6 +426,10 @@ const STRIPFOUNDATION_JSON_SCHEMA = `{
   "jclBottom": "数量+等级+直径" (JCL底筋，可选),
   "jclTop": "数量+等级+直径" (JCL顶筋，可选),
   "jclStirrup": "等级+直径@间距(肢数)" (JCL箍筋，可选),
+  "jclStirrupAlt": "等级+直径@间距(肢数)" (JCL第二种箍筋，可选),
+  "jclEndType": "none" | "oneSide" | "bothSides" (JCL端部外伸类型，可选),
+  "jclOverhangSide": "left" | "right" (JCL单端外伸方向，可选),
+  "jclOverhang": number (JCL外伸长度mm，可选),
   "hasLocalOverride": boolean (是否设置原位修正段，可选),
   "localOverrideStart": number (原位修正起点mm，可选),
   "localOverrideLength": number (原位修正长度mm，可选),

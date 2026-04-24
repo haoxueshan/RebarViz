@@ -73,6 +73,18 @@ export interface ColumnParams {
   seismicGrade: SeismicGrade;
   cover: number;
   height: number;         // 柱净高 mm
+  hasVariableSection?: boolean;
+  upperB?: number;        // 变截面后上段宽度
+  upperH?: number;        // 变截面后上段高度
+  variableStart?: number; // 变截面起始高度（距柱底）
+  topNodeType?: 'middle' | 'edge' | 'corner';
+  roofBeamH?: number;
+  roofBeamB?: number;
+  hasRoofSlab?: boolean;
+  roofSlabThickness?: number;
+  baseSupportType?: 'foundation' | 'wall' | 'beam';
+  baseSupportWidth?: number;
+  baseSupportHeight?: number;
 }
 
 export type SlabSupportType = 'simple' | 'continuous' | 'cantilever';
@@ -121,8 +133,20 @@ export interface ShearWallParams {
   hw: number;       // 墙净高 mm
   vertBar: string;  // 竖向分布筋 e.g. C10@200
   horizBar: string; // 水平分布筋 e.g. C10@200
+  boundaryType?: 'ybz' | 'gbz' | 'fbz' | 'az'; // 边缘构件类型
+  boundaryForm?: 'concealed' | 'endColumn' | 'wingWall' | 'cornerWall'; // 边缘构件外形
+  boundaryLength?: number; // 边缘构件长度 mm
+  boundaryProjection?: number; // 边缘构件凸出深度 mm（扶壁柱等）
   boundaryMain: string;   // 约束边缘构件纵筋 e.g. 8C16
   boundaryStirrup: string; // 约束边缘构件箍筋 e.g. A8@100
+  tieBar?: string; // 拉结筋 e.g. A8@600
+  hasOpening?: boolean;
+  openingWidth?: number; // 洞口宽 mm
+  openingHeight?: number; // 洞口高 mm
+  openingBottom?: number; // 洞口底距墙底 mm
+  openingOffsetX?: number; // 洞口中心相对墙中心偏移 mm
+  openingVertBar?: string; // 洞口侧边补强筋 e.g. C12@150
+  openingHorizBar?: string; // 洞口上下补强筋 e.g. C12@150
   concreteGrade: import('./anchor').ConcreteGrade;
   seismicGrade: import('./anchor').SeismicGrade;
   cover: number;
@@ -281,6 +305,10 @@ export interface StripFoundationParams {
   jlBottom?: string;                // JL底部贯通纵筋
   jlTop?: string;                   // JL顶部贯通纵筋
   jlStirrup?: string;               // JL箍筋
+  jlStirrupAlt?: string;            // JL第二种箍筋（跨中/非外伸部位）
+  jlEndType?: FoundationBeamEndType;      // JL端部外伸类型
+  jlOverhangSide?: FoundationBeamOverhangSide; // JL单端外伸方向
+  jlOverhang?: number;              // JL外伸长度 (mm)
   // JCL 次梁（可选）
   hasJcl?: boolean;                 // 是否设置基础次梁
   jclCount?: number;                // 次梁道数
@@ -290,6 +318,10 @@ export interface StripFoundationParams {
   jclBottom?: string;               // 次梁底部纵筋
   jclTop?: string;                  // 次梁顶部纵筋
   jclStirrup?: string;              // 次梁箍筋
+  jclStirrupAlt?: string;           // 次梁第二种箍筋（跨中/非外伸部位）
+  jclEndType?: FoundationBeamEndType;      // JCL端部外伸类型
+  jclOverhangSide?: FoundationBeamOverhangSide; // JCL单端外伸方向
+  jclOverhang?: number;             // JCL外伸长度 (mm)
   // 原位修正（示意）
   hasLocalOverride?: boolean;       // 是否设置原位修正段
   localOverrideStart?: number;      // 原位修正段起点（距左端 mm）
@@ -371,6 +403,7 @@ export interface RebarMeshInfo {
     | 'bottomX' | 'bottomY' | 'topX' | 'topY' | 'distribution' | 'supportNegX' | 'supportNegY'
     | 'colMain' | 'colStirrup' | 'beamTop' | 'beamBottom' | 'beamStirrup' | 'jointStirrup' | 'anchor'
     | 'vertBar' | 'horizBar' | 'boundaryMain' | 'boundaryStirrup'
+    | 'wallTieBar' | 'wallOpeningRebar'
     | 'sideBar' | 'erection' | 'tieBar' | 'innerSupport'
     | 'stairTop' | 'stairBottom' | 'stairDist' | 'stairPlatform'
     | 'foundBottomX' | 'foundBottomY' | 'foundColMain' | 'foundTopX' | 'foundTopY'

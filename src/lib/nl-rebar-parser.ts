@@ -217,11 +217,17 @@ export function validateRebarGenSchema(
       if (d.jclSpacing !== undefined && !numInRange(d.jclSpacing, 800, 12000)) errors.push('jclSpacing 应为 800-12000mm');
       if (d.jclB !== undefined && !numInRange(d.jclB, 200, 1200)) errors.push('jclB 应为 200-1200mm');
       if (d.jclH !== undefined && !numInRange(d.jclH, 300, 1500)) errors.push('jclH 应为 300-1500mm');
+      if (d.jlOverhang !== undefined && !numInRange(d.jlOverhang, 100, 3000)) errors.push('jlOverhang 应为 100-3000mm');
+      if (d.jclOverhang !== undefined && !numInRange(d.jclOverhang, 100, 3000)) errors.push('jclOverhang 应为 100-3000mm');
       if (d.localOverrideStart !== undefined && !numInRange(d.localOverrideStart, 0, 30000)) errors.push('localOverrideStart 应为 0-30000mm');
       if (d.localOverrideLength !== undefined && !numInRange(d.localOverrideLength, 200, 12000)) errors.push('localOverrideLength 应为 200-12000mm');
       if (d.stripKind !== undefined && !['beamPlate', 'slab'].includes(d.stripKind as string)) errors.push('stripKind 应为 beamPlate/slab');
       if (d.supportType !== undefined && !['beam', 'wall'].includes(d.supportType as string)) errors.push('supportType 应为 beam/wall');
       if (d.supportCount !== undefined && ![1, 2].includes(d.supportCount as number)) errors.push('supportCount 应为 1/2');
+      if (d.jlEndType !== undefined && !['none', 'oneSide', 'bothSides'].includes(d.jlEndType as string)) errors.push('jlEndType 应为 none/oneSide/bothSides');
+      if (d.jclEndType !== undefined && !['none', 'oneSide', 'bothSides'].includes(d.jclEndType as string)) errors.push('jclEndType 应为 none/oneSide/bothSides');
+      if (d.jlOverhangSide !== undefined && !['left', 'right'].includes(d.jlOverhangSide as string)) errors.push('jlOverhangSide 应为 left/right');
+      if (d.jclOverhangSide !== undefined && !['left', 'right'].includes(d.jclOverhangSide as string)) errors.push('jclOverhangSide 应为 left/right');
       break;
 
     case 'raft':

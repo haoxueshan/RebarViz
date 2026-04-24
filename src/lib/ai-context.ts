@@ -72,7 +72,7 @@ ${barDesc}
 总As=${AsMain.toFixed(0)}mm²，全截面配筋率: ρ=${rho}%
 箍筋: ${p.stirrup} (${gradeLabel(stir.grade)} Φ${stir.diameter} 加密${stir.spacingDense}/非加密${stir.spacingNormal} ${stir.legs}肢箍)
 混凝土等级: ${p.concreteGrade}(ft=${ft}MPa)，抗震等级: ${p.seismicGrade}
-保护层: ${cover}mm，柱净高: ${p.height}mm`;
+保护层: ${cover}mm，柱净高: ${p.height}mm${p.hasVariableSection ? `\n变截面: 上段 ${p.upperB}×${p.upperH}mm，自 ${p.variableStart}mm 高度起变化` : ''}`;
 }
 
 export function buildSlabContext(p: SlabParams): string {
@@ -132,18 +132,42 @@ export function buildShearWallContext(p: ShearWallParams): string {
   const vert = parseSlabRebar(p.vertBar);
   const horiz = parseSlabRebar(p.horizBar);
   const boundaryR = parseRebar(p.boundaryMain);
+  const tie = p.tieBar ? parseSlabRebar(p.tieBar) : null;
+  const openingVert = p.openingVertBar ? parseSlabRebar(p.openingVertBar) : null;
+  const openingHoriz = p.openingHorizBar ? parseSlabRebar(p.openingHorizBar) : null;
   // 竖向配筋率 (双排)
   const AsVert = 2 * rebarArea(vert.diameter) * 1000 / vert.spacing;
   const rhoVert = (AsVert / (p.bw * 1000) * 100).toFixed(3);
   const AsHoriz = 2 * rebarArea(horiz.diameter) * 1000 / horiz.spacing;
   const rhoHoriz = (AsHoriz / (p.bw * 1000) * 100).toFixed(3);
   const AsBoundary = boundaryR.count * rebarArea(boundaryR.diameter);
+  const boundaryTypeLabel = p.boundaryType === 'ybz'
+    ? '约束边缘构件 YBZ'
+    : p.boundaryType === 'fbz'
+      ? '扶壁柱 FBZ'
+      : p.boundaryType === 'az'
+        ? '非边缘暗柱 AZ'
+        : '构造边缘构件 GBZ';
+  const boundaryFormLabel = p.boundaryForm === 'endColumn'
+    ? '端柱'
+    : p.boundaryForm === 'wingWall'
+      ? '翼墙'
+      : p.boundaryForm === 'cornerWall'
+        ? '转角墙'
+        : '暗柱';
+  const openingInfo = p.hasOpening
+    ? `\n洞口: ${p.openingWidth}×${p.openingHeight}mm，洞底标高=${p.openingBottom}mm，中心偏移X=${p.openingOffsetX || 0}mm
+洞口侧边补强: ${p.openingVertBar || '未设置'}${openingVert ? ` (${gradeLabel(openingVert.grade)} Φ${openingVert.diameter}@${openingVert.spacing})` : ''}
+洞口上下补强: ${p.openingHorizBar || '未设置'}${openingHoriz ? ` (${gradeLabel(openingHoriz.grade)} Φ${openingHoriz.diameter}@${openingHoriz.spacing})` : ''}`
+    : '\n洞口: 无';
   return `构件类型: 剪力墙 ${p.id}
 墙厚 bw: ${p.bw}mm，墙长 lw: ${p.lw}mm，墙净高 hw: ${p.hw}mm
 竖向分布筋: ${p.vertBar} (${gradeLabel(vert.grade)} Φ${vert.diameter}@${vert.spacing}，双排，ρv=${rhoVert}%)
 水平分布筋: ${p.horizBar} (${gradeLabel(horiz.grade)} Φ${horiz.diameter}@${horiz.spacing}，双排，ρh=${rhoHoriz}%)
-约束边缘构件纵筋: ${p.boundaryMain} (${boundaryR.count}根 ${gradeLabel(boundaryR.grade)} Φ${boundaryR.diameter}，总As=${AsBoundary.toFixed(0)}mm²，两端各一组)
-约束边缘构件箍筋: ${p.boundaryStirrup}
+边缘构件类型: ${boundaryTypeLabel}，外形=${boundaryFormLabel}，长度=${p.boundaryLength || Math.max(p.bw, 400)}mm${p.boundaryProjection ? `，凸出深度=${p.boundaryProjection}mm` : ''}
+边缘构件纵筋: ${p.boundaryMain} (${boundaryR.count}根 ${gradeLabel(boundaryR.grade)} Φ${boundaryR.diameter}，总As=${AsBoundary.toFixed(0)}mm²，两端各一组)
+边缘构件箍筋: ${p.boundaryStirrup}
+拉结筋: ${p.tieBar || '未设置'}${tie ? ` (${gradeLabel(tie.grade)} Φ${tie.diameter}@${tie.spacing})` : ''}${openingInfo}
 混凝土等级: ${p.concreteGrade}，抗震等级: ${p.seismicGrade}
 保护层: ${p.cover}mm`;
 }
@@ -239,13 +263,15 @@ export function buildStripFoundationContext(p: StripFoundationParams): string {
   const jlInfo = p.supportType === 'beam'
     ? `\nJL主梁底筋: ${p.jlBottom || '未设置'}${jlBottom ? ` (${jlBottom.count}根 ${gradeLabel(jlBottom.grade)} Φ${jlBottom.diameter})` : ''}
 JL主梁顶筋: ${p.jlTop || '未设置'}${jlTop ? ` (${jlTop.count}根 ${gradeLabel(jlTop.grade)} Φ${jlTop.diameter})` : ''}
-JL主梁箍筋: ${p.jlStirrup || '未设置'}`
+JL主梁箍筋: ${p.jlStirrup || '未设置'}
+JL端部: ${p.jlEndType === 'bothSides' ? `双端外伸 ${p.jlOverhang || 0}mm` : p.jlEndType === 'oneSide' ? `${p.jlOverhangSide === 'left' ? '左端' : '右端'}外伸 ${p.jlOverhang || 0}mm` : '无外伸'}`
     : '';
   const jclInfo = p.hasJcl
     ? `\nJCL次梁: ${p.jclCount || 1}道，间距 ${p.jclSpacing || '未设置'}mm，截面 ${p.jclB || '未设置'}×${p.jclH || '未设置'}mm
 JCL底筋: ${p.jclBottom || '未设置'}${jclBottom ? ` (${jclBottom.count}根 ${gradeLabel(jclBottom.grade)} Φ${jclBottom.diameter})` : ''}
 JCL顶筋: ${p.jclTop || '未设置'}${jclTop ? ` (${jclTop.count}根 ${gradeLabel(jclTop.grade)} Φ${jclTop.diameter})` : ''}
-JCL箍筋: ${p.jclStirrup || '未设置'}`
+JCL箍筋: ${p.jclStirrup || '未设置'}
+JCL端部: ${p.jclEndType === 'bothSides' ? `双端外伸 ${p.jclOverhang || 0}mm` : p.jclEndType === 'oneSide' ? `${p.jclOverhangSide === 'left' ? '左端' : '右端'}外伸 ${p.jclOverhang || 0}mm` : '无外伸'}`
     : '';
   const overrideInfo = p.hasLocalOverride
     ? `\n原位修正: 起点 ${p.localOverrideStart || 0}mm，长度 ${p.localOverrideLength || 0}mm

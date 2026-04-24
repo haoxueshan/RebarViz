@@ -74,16 +74,18 @@ export function StripFoundationRulePanel({ params }: { params: StripFoundationPa
           <Row label="JL 底筋" value={params.jlBottom || '未设置'} />
           <Row label="JL 顶筋" value={params.jlTop || '未设置'} />
           <Row label="JL 箍筋" value={params.jlStirrup || '未设置'} />
+          <Row label="JL 外伸" value={params.jlEndType === 'bothSides' ? `双端外伸 ${params.jlOverhang || 0}mm` : params.jlEndType === 'oneSide' ? `${params.jlOverhangSide === 'left' ? '左端' : '右端'}外伸 ${params.jlOverhang || 0}mm` : '无外伸'} />
           <Row label="JCL" value={params.hasJcl ? `${params.jclCount || 1}道` : '未设置'} note={params.hasJcl ? `间距 ${params.jclSpacing || '—'}mm，截面 ${params.jclB || '—'}×${params.jclH || '—'}mm` : undefined} />
           {params.hasJcl && (
             <>
               <Row label="JCL 底筋" value={params.jclBottom || '未设置'} />
               <Row label="JCL 顶筋" value={params.jclTop || '未设置'} />
               <Row label="JCL 箍筋" value={params.jclStirrup || '未设置'} />
+              <Row label="JCL 外伸" value={params.jclEndType === 'bothSides' ? `双端外伸 ${params.jclOverhang || 0}mm` : params.jclEndType === 'oneSide' ? `${params.jclOverhangSide === 'left' ? '下侧' : '上侧'}外伸 ${params.jclOverhang || 0}mm` : '无外伸'} />
             </>
           )}
           <div className="rounded bg-violet-50 px-2 py-1 text-[11px] text-violet-700">
-            本页中的 JL/JCL 细部筋用于帮助识别条形基础与基础梁、基础次梁的组合关系，对应 22G101-3 第 2-23~2-31 页。
+            OCR 对照要点：基础主梁与基础次梁外伸部位底部第一排纵筋伸至梁端头并上弯，其余排伸至梁端头后截断；从第三排起非贯通纵筋伸出长度应由设计注明。对应 22G101-3 第 1-26、2-25、2-29 页。
           </div>
         </RuleCard>
       )}

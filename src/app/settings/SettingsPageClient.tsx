@@ -120,6 +120,23 @@ export function SettingsPageClient() {
         </p>
       </div>
 
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-6">
+        <div className="text-xs text-blue-700 space-y-1.5">
+          <p className="font-medium">新手先看</p>
+          <p>1. API 是程序调用 AI 服务的接口，API Key 是调用权限钥匙。</p>
+          <p>2. 只有 API Key 还不够，大多数服务商还需要账户有余额或已开通计费。</p>
+          <p>3. 充值不是在 RebarViz 里充，而是在各服务商官网后台充值或绑定支付方式。</p>
+          <p>4. 建议先去服务商官网开通 API、充值、创建 Key，再回到这里粘贴并测试连接。</p>
+          <p>
+            详细说明见：
+            {' '}
+            <a href="/docs/api-help.md" target="_blank" rel="noopener noreferrer" className="font-medium underline hover:text-blue-900">
+              API 配置帮助文档
+            </a>
+          </p>
+        </div>
+      </div>
+
       <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6">
         <div className="flex items-start gap-2">
           <Shield className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
@@ -127,6 +144,14 @@ export function SettingsPageClient() {
             <p className="font-medium">安全说明</p>
             <p>API Key 仅保存在你的浏览器本地存储中，不会上传到任何服务器。调用时直接发送到对应的 AI 服务商接口。</p>
           </div>
+        </div>
+      </div>
+
+      <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 mb-6">
+        <div className="text-xs text-rose-700 space-y-1">
+          <p className="font-medium">计费提醒</p>
+          <p>如果测试连接失败，除了 Key 填写错误，另一个很常见的原因是服务商账户没有余额或没有开通 API 计费。</p>
+          <p>请到对应服务商官网完成充值 / 开通 billing，再回到这里测试。</p>
         </div>
       </div>
 
@@ -179,6 +204,9 @@ export function SettingsPageClient() {
                         autoFocus
                         onKeyDown={e => { if (e.key === 'Enter') handleSave(provider.id); if (e.key === 'Escape') { setEditing(null); setInputValue(''); } }}
                       />
+                      <p className="mt-1 text-[11px] text-muted">
+                        提醒：创建 Key 后，通常还需要去 {provider.name} 官网确认账户有余额或已开通计费，否则接口仍可能无法使用。
+                      </p>
                     </div>
                     <div className="flex items-center gap-2">
                       <button
@@ -255,6 +283,13 @@ export function SettingsPageClient() {
                 <div className="mt-3 pt-3 border-t border-gray-100">
                   <p className="text-[11px] text-muted">
                     可用模型: {provider.models.join('、')}
+                  </p>
+                  <p className="text-[11px] text-muted mt-1">
+                    充值 / 开通计费请前往：
+                    {' '}
+                    <a href={meta.url} target="_blank" rel="noopener noreferrer" className="underline hover:text-accent">
+                      {provider.name} 官网
+                    </a>
                   </p>
                 </div>
               </div>

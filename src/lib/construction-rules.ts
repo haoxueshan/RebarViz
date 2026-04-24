@@ -514,9 +514,9 @@ export const COL_FOUND_BENT_STRAIGHT_D_FACTOR = 20;  // ≥ 20d
 export const COL_FOUND_COVER_THRESHOLD_D_FACTOR = 5;
 
 /** 锚固区箍筋要求 — 22G101-3 注2 */
-export const COL_FOUND_STIRRUP_DIA_RATIO = 0.25;    // 箍筋直径 ≥ d/4 (d=纵筋最大直径)
-export const COL_FOUND_STIRRUP_SPACING_D_FACTOR = 5; // 间距 ≤ 5d (d=纵筋最小直径)
-export const COL_FOUND_STIRRUP_SPACING_MAX = 100;    // 间距 ≤ 100mm
+export const COL_FOUND_STIRRUP_DIA_RATIO = 0.25;     // 箍筋直径 ≥ d/4 (d=纵筋最大直径)
+export const COL_FOUND_STIRRUP_SPACING_D_FACTOR = 10; // 间距 ≤ 10d (d=纵筋最小直径)
+export const COL_FOUND_STIRRUP_SPACING_MAX = 100;     // 间距 ≤ 100mm
 export const COL_FOUND_STIRRUP_ZONE_SPACING_MAX = 500; // 非复合箍间距 ≤ 500mm
 export const COL_FOUND_STIRRUP_MIN_COUNT = 2;        // 至少 2 道矩形封闭箍筋
 

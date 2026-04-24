@@ -24,6 +24,7 @@ import { Sparkles } from 'lucide-react';
 
 const DATA_TABS = [
   { key: 'section', label: '截面图' },
+  { key: 'guide', label: '识图说明' },
   { key: 'weight', label: '用量估算' },
   { key: 'concrete', label: '混凝土量' },
 ] as const;
@@ -108,8 +109,57 @@ export function ShearWallPageClient() {
             </Section>
 
             <Section title="约束边缘构件">
+              <SelectField
+                label="边缘构件类型"
+                value={params.boundaryType || 'ybz'}
+                onChange={v => update({ boundaryType: v as ShearWallParams['boundaryType'] })}
+                options={[
+                  { value: 'ybz', label: '约束边缘构件 YBZ' },
+                  { value: 'gbz', label: '构造边缘构件 GBZ' },
+                  { value: 'fbz', label: '扶壁柱 FBZ' },
+                  { value: 'az', label: '非边缘暗柱 AZ' },
+                ]}
+              />
+              <SelectField
+                label="边缘构件外形"
+                value={params.boundaryForm || 'concealed'}
+                onChange={v => update({ boundaryForm: v as ShearWallParams['boundaryForm'] })}
+                options={[
+                  { value: 'concealed', label: '暗柱' },
+                  { value: 'endColumn', label: '端柱' },
+                  { value: 'wingWall', label: '翼墙' },
+                  { value: 'cornerWall', label: '转角墙' },
+                ]}
+              />
+              <NumField label="边缘构件长度 (mm)" value={params.boundaryLength || Math.max(params.bw, 400)} onChange={v => update({ boundaryLength: v })} min={300} max={1500} />
+              {((params.boundaryType === 'fbz' || params.boundaryType === 'az') || (params.boundaryForm && params.boundaryForm !== 'concealed')) && (
+                <NumField label="边缘构件凸出深度 (mm)" value={params.boundaryProjection || 150} onChange={v => update({ boundaryProjection: v })} min={0} max={600} />
+              )}
               <Field label="纵筋" value={params.boundaryMain} onChange={v => update({ boundaryMain: v })} placeholder="如: 8C16" />
               <Field label="箍筋" value={params.boundaryStirrup} onChange={v => update({ boundaryStirrup: v })} placeholder="如: A8@100" />
+            </Section>
+
+            <Section title="拉结筋与洞口">
+              <Field label="拉结筋" value={params.tieBar || ''} onChange={v => update({ tieBar: v || undefined })} placeholder="如: A8@600" />
+              <SelectField
+                label="是否设置洞口"
+                value={params.hasOpening ? 'yes' : 'no'}
+                onChange={v => update({ hasOpening: v === 'yes' })}
+                options={[
+                  { value: 'no', label: '否' },
+                  { value: 'yes', label: '是' },
+                ]}
+              />
+              {params.hasOpening && (
+                <>
+                  <NumField label="洞口宽度 (mm)" value={params.openingWidth || 1200} onChange={v => update({ openingWidth: v })} min={300} max={4000} />
+                  <NumField label="洞口高度 (mm)" value={params.openingHeight || 1500} onChange={v => update({ openingHeight: v })} min={300} max={3000} />
+                  <NumField label="洞底距墙底 (mm)" value={params.openingBottom || 900} onChange={v => update({ openingBottom: v })} min={0} max={params.hw} />
+                  <NumField label="洞口中心偏移 X (mm)" value={params.openingOffsetX || 0} onChange={v => update({ openingOffsetX: v })} min={-Math.floor(params.lw / 3)} max={Math.floor(params.lw / 3)} />
+                  <Field label="洞口侧边补强" value={params.openingVertBar || ''} onChange={v => update({ openingVertBar: v || undefined })} placeholder="如: C14@150" />
+                  <Field label="洞口上下补强" value={params.openingHorizBar || ''} onChange={v => update({ openingHorizBar: v || undefined })} placeholder="如: C14@150" />
+                </>
+              )}
             </Section>
 
             <Section title="材料与构造">
@@ -126,6 +176,8 @@ export function ShearWallPageClient() {
             { color: '#2980B9', label: '水平分布筋' },
             { color: '#8E44AD', label: '边缘构件纵筋' },
             { color: '#27AE60', label: '边缘构件箍筋' },
+            { color: '#16A085', label: '拉结筋' },
+            { color: '#EC4899', label: '洞口补强筋' },
             { color: '#BDC3C7', label: '混凝土墙体（半透明）', opacity: 0.6 },
           ]} />
         </div>
@@ -162,6 +214,7 @@ export function ShearWallPageClient() {
                   </div>
                 </>
               )}
+              {dataTab === 'guide' && <ShearWallExplain params={params} />}
               {dataTab === 'weight' && <WeightCalc result={calcResult} />}
               {dataTab === 'concrete' && <ConcreteCalc result={concreteResult} />}
             </div>

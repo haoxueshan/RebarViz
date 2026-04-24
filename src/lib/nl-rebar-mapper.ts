@@ -205,6 +205,10 @@ function stripFoundationSchemaToParams(s: StripFoundationSchema): Partial<StripF
   if (s.jlBottom !== undefined) p.jlBottom = s.jlBottom;
   if (s.jlTop !== undefined) p.jlTop = s.jlTop;
   if (s.jlStirrup !== undefined) p.jlStirrup = s.jlStirrup;
+  if (s.jlStirrupAlt !== undefined) p.jlStirrupAlt = s.jlStirrupAlt;
+  if (s.jlEndType !== undefined) p.jlEndType = s.jlEndType;
+  if (s.jlOverhangSide !== undefined) p.jlOverhangSide = s.jlOverhangSide;
+  if (s.jlOverhang !== undefined) p.jlOverhang = s.jlOverhang;
   if (s.hasJcl !== undefined) p.hasJcl = s.hasJcl;
   if (s.jclCount !== undefined) p.jclCount = s.jclCount;
   if (s.jclSpacing !== undefined) p.jclSpacing = s.jclSpacing;
@@ -213,6 +217,10 @@ function stripFoundationSchemaToParams(s: StripFoundationSchema): Partial<StripF
   if (s.jclBottom !== undefined) p.jclBottom = s.jclBottom;
   if (s.jclTop !== undefined) p.jclTop = s.jclTop;
   if (s.jclStirrup !== undefined) p.jclStirrup = s.jclStirrup;
+  if (s.jclStirrupAlt !== undefined) p.jclStirrupAlt = s.jclStirrupAlt;
+  if (s.jclEndType !== undefined) p.jclEndType = s.jclEndType;
+  if (s.jclOverhangSide !== undefined) p.jclOverhangSide = s.jclOverhangSide;
+  if (s.jclOverhang !== undefined) p.jclOverhang = s.jclOverhang;
   if (s.hasLocalOverride !== undefined) p.hasLocalOverride = s.hasLocalOverride;
   if (s.localOverrideStart !== undefined) p.localOverrideStart = s.localOverrideStart;
   if (s.localOverrideLength !== undefined) p.localOverrideLength = s.localOverrideLength;

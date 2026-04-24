@@ -61,6 +61,17 @@ AI 助手需要配置 API Key，Key 仅保存在浏览器本地，不会上传�
 | 通义千问 | https://dashscope.console.aliyun.com/apiKey |
 | Kimi | https://platform.moonshot.cn/console/api-keys |
 
+新手建议先看：
+
+- [API 配置帮助文档](docs/api-help.md)
+
+特别提醒：
+
+- `API Key 不等于已经开通可用额度`
+- 很多服务商的 API 是按调用计费的
+- 只创建 Key 但账户没有余额时，接口也可能无法使用
+- 充值 / 开通计费通常需要在各服务商官网后台完成，不是在 RebarViz 内充值
+
 ## 技术栈
 
 - [Next.js 15](https://nextjs.org/) + React 19
