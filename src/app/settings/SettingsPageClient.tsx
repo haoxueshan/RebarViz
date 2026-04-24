@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useState, useEffect } from 'react';
 import { Eye, EyeOff, Check, Trash2, ExternalLink, Loader2, Sparkles, Shield } from 'lucide-react';
 import { AI_PROVIDERS } from '@/lib/ai-providers';
@@ -130,9 +131,9 @@ export function SettingsPageClient() {
           <p>
             详细说明见：
             {' '}
-            <a href="/docs/api-help.md" target="_blank" rel="noopener noreferrer" className="font-medium underline hover:text-blue-900">
+            <Link href="/api-help" target="_blank" rel="noopener noreferrer" className="font-medium underline hover:text-blue-900">
               API 配置帮助文档
-            </a>
+            </Link>
           </p>
         </div>
       </div>
