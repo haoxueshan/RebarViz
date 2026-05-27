@@ -76,6 +76,17 @@ const TOOLS_UNSUPPORTED_RE = /tool|function|unsupported|not.?support|invalid.*pa
 /** 请求超时时间 (ms) — 非流式工具调用请求 */
 const TOOL_REQUEST_TIMEOUT_MS = 90_000;
 
+const DIRECT_FINAL_TOOLS = new Set(['modify_params', 'apply_preset', 'reset_params', 'switch_view', 'highlight_element', 'navigate_component', 'save_favorite']);
+
+function buildToolResultSummary(results: Array<{ name: string; result: ToolResult }>): string {
+  const successful = results.filter(r => r.result.success);
+  const failed = results.filter(r => !r.result.success);
+  if (failed.length > 0) {
+    return failed.map(r => r.result.message || `${r.name} 执行失败`).join('\n');
+  }
+  return successful.map(r => r.result.message || `${r.name} 已完成`).join('\n') || '已完成。';
+}
+
 /** 后续轮次精简版 prompt 后缀（不含字段速查表和示例） */
 const AGENT_SYSTEM_SUFFIX_LITE = `
 
@@ -412,6 +423,7 @@ export async function runAgent(
     messages.push(assistantMsg);
 
     let allToolsSucceeded = true;
+    const executedToolResults: Array<{ name: string; result: ToolResult }> = [];
 
     // ─── Parse all tool call arguments first ───
     const parsedCalls = response.toolCalls.map(tc => {
@@ -456,6 +468,7 @@ export async function runAgent(
         const resultStep: AgentStep = { type: 'tool_result', toolName: tc.function.name, result: cached, timestamp: Date.now() };
         steps.push(resultStep);
         stateCallbacks.onStepAdded(resultStep);
+        executedToolResults.push({ name: tc.function.name, result: cached });
         return { result: cached, tc, args };
       }
 
@@ -484,6 +497,7 @@ export async function runAgent(
       const resultStep: AgentStep = { type: 'tool_result', toolName: tc.function.name, result, timestamp: Date.now() };
       steps.push(resultStep);
       stateCallbacks.onStepAdded(resultStep);
+      executedToolResults.push({ name: tc.function.name, result });
 
       return { result, tc, args };
     };
@@ -554,6 +568,12 @@ export async function runAgent(
       const finalContent = response.content!;
       stateCallbacks.onStreamUpdate(finalContent);
       tryApplyRebarJson(finalContent, config.componentType, callbacks, stateCallbacks);
+      return { assistantContent: finalContent, steps, usedTools: true };
+    }
+
+    if (allToolsSucceeded && parsedCalls.every(p => DIRECT_FINAL_TOOLS.has(p.tc.function.name))) {
+      const finalContent = buildToolResultSummary(executedToolResults);
+      stateCallbacks.onStreamUpdate(finalContent);
       return { assistantContent: finalContent, steps, usedTools: true };
     }
 
