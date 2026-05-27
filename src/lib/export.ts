@@ -76,6 +76,12 @@ export function exportToCSV(result: CalcResult, meta: ExportMeta = {}): void {
   }
   lines.push(`合计,,,${summary.reduce((s, r) => s + r.totalLengthM, 0).toFixed(2)},${summary.reduce((s, r) => s + r.totalWeightKg, 0).toFixed(2)}`);
   
+  if (result.wasteRate != null && result.totalWithWaste) {
+    lines.push('');
+    lines.push(`损耗率,${(result.wasteRate * 100).toFixed(1)}%`);
+    lines.push(`含损耗合计,,,,${result.totalWithWaste}`);
+  }
+  
   const blob = new Blob([bom + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -230,7 +236,7 @@ export function exportToPrintHTML(result: CalcResult, meta: ExportMeta = {}): vo
   </table>
   
   <div class="footer">
-    <span>注：本表根据 22G101 图集规定计算锚固和搭接长度，未含施工损耗</span>
+    <span>注：本表根据 22G101 图集规定计算锚固和搭接长度${result.wasteRate != null ? `，损耗率 ${(result.wasteRate * 100).toFixed(1)}%，含损耗合计 ${result.totalWithWaste}` : '，未含施工损耗'}</span>
     <span>由 RebarViz 自动生成</span>
   </div>
   
@@ -269,6 +275,9 @@ export async function copyToClipboard(result: CalcResult, meta: ExportMeta = {})
   lines.push('【汇总】\t钢种\t直径\t总根数\t总长(m)\t总重(kg)');
   for (const r of summary) {
     lines.push(`\t${GRADE_MAP[r.grade] || r.grade}\t${r.diameter}\t${r.totalCount}\t${r.totalLengthM.toFixed(2)}\t${r.totalWeightKg.toFixed(2)}`);
+  }
+  if (result.wasteRate != null && result.totalWithWaste) {
+    lines.push(`损耗率: ${(result.wasteRate * 100).toFixed(1)}%\t含损耗合计: ${result.totalWithWaste}`);
   }
   
   try {

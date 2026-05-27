@@ -75,6 +75,7 @@ export function notationToStirrupSpec(notation: string): StirrupSpec {
 
 function beamSchemaToParams(s: BeamSchema): Partial<BeamParams> {
   const p: Partial<BeamParams> = {};
+  if (s.id) p.id = s.id;
   if (s.sectionWidth !== undefined) p.b = s.sectionWidth;
   if (s.sectionHeight !== undefined) p.h = s.sectionHeight;
   if (s.topRebar) p.top = typeof s.topRebar === 'string' ? s.topRebar : rebarSpecToNotation(s.topRebar);
@@ -82,6 +83,9 @@ function beamSchemaToParams(s: BeamSchema): Partial<BeamParams> {
   if (s.stirrup) p.stirrup = stirrupSpecToNotation(s.stirrup);
   if (s.leftSupportRebar) p.leftSupport = rebarSpecToNotation(s.leftSupportRebar);
   if (s.rightSupportRebar) p.rightSupport = rebarSpecToNotation(s.rightSupportRebar);
+  if (s.leftSupport2Rebar) p.leftSupport2 = rebarSpecToNotation(s.leftSupport2Rebar);
+  if (s.rightSupport2Rebar) p.rightSupport2 = rebarSpecToNotation(s.rightSupport2Rebar);
+  if (s.erectionBar) p.erectionBar = rebarSpecToNotation(s.erectionBar);
   if (s.sideBar) {
     const prefix = s.sideBar.prefix || 'G';
     p.sideBar = `${prefix}${s.sideBar.count}${gradeLetter(s.sideBar.grade)}${s.sideBar.diameter}`;
@@ -93,6 +97,9 @@ function beamSchemaToParams(s: BeamSchema): Partial<BeamParams> {
   if (s.seismicGrade) p.seismicGrade = s.seismicGrade;
   if (s.cover !== undefined) p.cover = s.cover;
   if (s.spanLength !== undefined) p.spanLength = s.spanLength;
+  if (s.spanCount !== undefined) p.spanCount = s.spanCount;
+  if (s.spanWidths) p.spanWidths = s.spanWidths;
+  if (s.spanHeights) p.spanHeights = s.spanHeights;
   if (s.columnWidth !== undefined) p.hc = s.columnWidth;
   return p;
 }

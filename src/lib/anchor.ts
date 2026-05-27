@@ -17,6 +17,8 @@ export const FY: Record<string, number> = {
   C: 360,  // HRB400
   D: 360,  // RRB400
   E: 360,  // HRBF400
+  F: 435,  // HRB500
+  G: 435,  // HRBF500
 };
 
 export type ConcreteGrade = 'C20' | 'C25' | 'C30' | 'C35' | 'C40' | 'C45' | 'C50' | 'C55' | 'C60';
@@ -75,7 +77,9 @@ export function calcLab(rebarGrade: string, diameter: number, concreteGrade: Con
 export function calcLa(rebarGrade: string, diameter: number, concreteGrade: ConcreteGrade): number {
   const lab = calcLab(rebarGrade, diameter, concreteGrade);
   const zetaA = 1.0; // 简化：普通钢筋，非环氧涂层
-  const la = Math.ceil(zetaA * lab);
+  // GB50010 §8.3.1: 带肋钢筋 d>25mm 时 la 乘以 1.1 修正
+  const largeDiaFactor = needsLargeDiaCorrection(rebarGrade, diameter) ? ANCHOR_LARGE_DIA_FACTOR : 1.0;
+  const la = Math.ceil(zetaA * lab * largeDiaFactor);
   return anchorMinLength(la, diameter);
 }
 

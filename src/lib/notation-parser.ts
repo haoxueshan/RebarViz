@@ -32,8 +32,8 @@ const RE_SECTION = /(\d{2,4})\s*[×xX*×乘]\s*(\d{2,4})/;
 /** 箍筋标注: A8@100/200(2), C10@100/200(4) */
 const RE_STIRRUP = /([A-Ea-e])(\d{1,2})@(\d{2,3})(?:\/(\d{2,3}))?\((\d)\)/;
 
-/** 梁编号: KL1, KL1(3), WKL2(5) */
-const RE_BEAM_ID = /[A-Z]*KL\d+(?:\(\d+\))?/i;
+/** 梁编号: KL1, KL1(3), WKL2(5), 允许OCR产生的空格/连字符、中文括号 */
+const RE_BEAM_ID = /[A-Z]*KL[\s\-]*\d+(?:\s*[\(\uff08]\s*\d+\s*[\)\uff09])?/i;
 
 /** 柱编号: KZ1, KZ2 */
 const RE_COLUMN_ID = /KZ\d+/i;
@@ -54,6 +54,11 @@ function extractAllRebars(text: string): Array<{ count: number; grade: string; d
     // 排除箍筋中的匹配（如 A8@... 中的 A8 不是纵筋）
     const after = text.slice(m.index + m[0].length);
     if (after.startsWith('@')) continue; // 这是分布筋/箍筋，不是纵筋
+    // 排除腰筋/抗扭筋（前缀 G 或 N，如 G4C12、N2C16）
+    if (m.index > 0) {
+      const before = text[m.index - 1];
+      if (before === 'G' || before === 'N' || before === 'g' || before === 'n') continue;
+    }
     results.push({
       count: parseInt(m[1]),
       grade: m[2].toUpperCase(),
@@ -99,6 +104,65 @@ function rebarNotation(count: number, grade: string, diameter: number): string {
   return `${count}${grade}${diameter}`;
 }
 
+/** 提取混合直径标注: 2C25+2C22, 2C25+3C20 等 → 完整字符串 */
+function extractMixedDiameter(text: string): string | null {
+  const m = text.match(/(\d{1,2}[A-Ea-e]\d{1,2})\s*\+\s*(\d{1,2}[A-Ea-e]\d{1,2})/);
+  if (!m) return null;
+  return `${m[1].toUpperCase()}+${m[2].toUpperCase()}`;
+}
+
+/** 提取多排标注: 6C25 4/2 或 6C25(2) → { notation, rows?, perRow? } */
+function extractRowInfo(text: string): { notation: string; rows?: number; perRow?: string } | null {
+  // 匹配 6C25 4/2 格式
+  const m1 = text.match(/(\d{1,2})([A-Ea-e])(\d{1,2})\s+(\d)\/(\d)/);
+  if (m1) {
+    const count = parseInt(m1[1]);
+    const grade = m1[2].toUpperCase();
+    const diameter = parseInt(m1[3]);
+    return { notation: `${count}${grade}${diameter}(${m1[4]}/${m1[5]})`, perRow: `${m1[4]}/${m1[5]}` };
+  }
+  // 匹配 6C25(2) 格式（排数）
+  const m2 = text.match(/(\d{1,2})([A-Ea-e])(\d{1,2})\s*\((\d)\)(?!\s*@)/);
+  if (m2) {
+    // 排除箍筋格式 A8@100/200(2) — 前面没有 @ 时才是排数标注
+    const before = text.slice(0, m2.index);
+    if (before.match(/@\d+\/\d+\s*$/)) return null; // 这是箍筋
+    const count = parseInt(m2[1]);
+    const grade = m2[2].toUpperCase();
+    const diameter = parseInt(m2[3]);
+    const rows = parseInt(m2[4]);
+    return { notation: `${count}${grade}${diameter}(${rows})`, rows };
+  }
+  return null;
+}
+
+/** 提取多跨截面: "第一跨250x400 第二跨250x500" 或 "250x400,250x500" */
+function extractMultiSpanSections(text: string): Array<{ b: number; h: number }> | null {
+  const results: Array<{ b: number; h: number }> = [];
+  // 模式1: 第N跨250x400
+  const re1 = /第[一二三四五六七八九十\d]+跨\s*(\d{2,4})\s*[×xX*×乘]\s*(\d{2,4})/g;
+  let m: RegExpExecArray | null;
+  while ((m = re1.exec(text)) !== null) {
+    results.push({ b: parseInt(m[1]), h: parseInt(m[2]) });
+  }
+  if (results.length >= 2) return results;
+  // 模式2: 逗号/顿号分隔的多个截面 250x400,250x500
+  const secs = text.match(/(\d{2,4})\s*[×xX*×乘]\s*(\d{2,4})/g);
+  if (secs && secs.length >= 2) {
+    // 只有在确认是多跨上下文时才当多截面（检测有梁编号+括号跨数）
+    const hasMultiSpanId = /KL[\s\-]*\d+[\s]*[\(\uff08]\s*(\d+)\s*[\)\uff09]/i.test(text);
+    if (hasMultiSpanId) {
+      const re2 = /(\d{2,4})\s*[×xX*×乘]\s*(\d{2,4})/g;
+      let m2: RegExpExecArray | null;
+      while ((m2 = re2.exec(text)) !== null) {
+        results.push({ b: parseInt(m2[1]), h: parseInt(m2[2]) });
+      }
+      if (results.length >= 2) return results;
+    }
+  }
+  return null;
+}
+
 function stirrupNotation(s: { grade: string; diameter: number; spacingDense: number; spacingNormal: number; legs: number }): string {
   return `${s.grade}${s.diameter}@${s.spacingDense}/${s.spacingNormal}(${s.legs})`;
 }
@@ -123,11 +187,19 @@ function parseBeamNotation(text: string): NotationResult {
   const params: Partial<BeamParams> = {};
   const desc: string[] = [];
 
-  // 编号
+  // 编号（规范化：去除空格/连字符、统一括号）
   const idMatch = text.match(RE_BEAM_ID);
   if (idMatch) {
-    params.id = idMatch[0].toUpperCase();
+    params.id = idMatch[0].toUpperCase().replace(/[\s\-]/g, '').replace(/\uff08/g, '(').replace(/\uff09/g, ')');
     desc.push(params.id);
+    // 从编号中提取跨数: KL1(3) → spanCount=3
+    const spanCountMatch = params.id.match(/\((\d+)\)/);
+    if (spanCountMatch) {
+      const sc = parseInt(spanCountMatch[1]);
+      if (sc >= 1 && sc <= 20) {
+        params.spanCount = sc;
+      }
+    }
   }
 
   // 截面
@@ -138,6 +210,19 @@ function parseBeamNotation(text: string): NotationResult {
     desc.push(`截面${params.b}×${params.h}`);
   }
 
+  // 多跨截面：检测是否有多个不同截面
+  const multiSections = extractMultiSpanSections(text);
+  if (multiSections && multiSections.length >= 2) {
+    params.spanWidths = multiSections.map(s => s.b);
+    params.spanHeights = multiSections.map(s => s.h);
+    if (!params.spanCount || params.spanCount < multiSections.length) {
+      params.spanCount = multiSections.length;
+    }
+    if (!params.b) params.b = multiSections[0].b;
+    if (!params.h) params.h = multiSections[0].h;
+    desc.push(`多跨截面${multiSections.map(s => `${s.b}×${s.h}`).join('/')}`);
+  }
+
   // 箍筋（先提取，避免和纵筋混淆）
   const stirrup = extractStirrup(text);
   if (stirrup) {
@@ -145,34 +230,97 @@ function parseBeamNotation(text: string): NotationResult {
     desc.push(`箍筋${params.stirrup}`);
   }
 
-  // 纵筋：按顺序分配为 上部筋、下部筋、左支座、右支座
-  if (rebars.length >= 1) {
-    params.top = rebarNotation(rebars[0].count, rebars[0].grade, rebars[0].diameter);
-    desc.push(`上部筋${params.top}`);
-  }
-  if (rebars.length >= 2) {
-    params.bottom = rebarNotation(rebars[1].count, rebars[1].grade, rebars[1].diameter);
-    desc.push(`下部筋${params.bottom}`);
+  // 腰筋/抗扭筋：检测 G或N 前缀的钢筋标注（如 G4C12、N2C16）
+  const sideBarMatch = text.match(/([GNgn])(\d{1,2})([A-Ea-e])(\d{1,2})/);
+  if (sideBarMatch) {
+    const prefix = sideBarMatch[1].toUpperCase();
+    const count = parseInt(sideBarMatch[2]);
+    const grade = sideBarMatch[3].toUpperCase();
+    const diameter = parseInt(sideBarMatch[4]);
+    params.sideBar = `${prefix}${count}${grade}${diameter}`;
+    desc.push(`腰筋${params.sideBar}`);
   }
 
-  // 检查是否有原位标注分隔符（;或分号后的为支座筋）
-  const supportPart = text.match(/[;；]\s*(.*)/);
-  if (supportPart) {
-    const supportRebars = extractAllRebars(supportPart[1]);
-    if (supportRebars.length >= 1) {
-      params.leftSupport = rebarNotation(supportRebars[0].count, supportRebars[0].grade, supportRebars[0].diameter);
+  // 纵筋解析：平法集中标注中 “;” 或 “；” 分隔上部筋和下部筋
+  const semiParts = text.split(/[;；]/);
+  const topMixed = extractMixedDiameter(semiParts[0]);
+  const bottomMixed = semiParts.length >= 2 ? extractMixedDiameter(semiParts[1]) : null;
+  const topRowInfo = extractRowInfo(semiParts[0]);
+  const bottomRowInfo = semiParts.length >= 2 ? extractRowInfo(semiParts[1]) : null;
+
+  if (semiParts.length >= 2) {
+    const topRebars = extractAllRebars(semiParts[0]);
+    const bottomRebars = extractAllRebars(semiParts[1]);
+
+    // 上部筋：优先混合直径 > 多排标注 > 普通标注
+    if (topMixed) {
+      params.top = topMixed;
+      desc.push(`上部筋${params.top}`);
+    } else if (topRowInfo) {
+      params.top = topRowInfo.notation;
+      desc.push(`上部筋${params.top}`);
+    } else if (topRebars.length >= 1) {
+      params.top = rebarNotation(topRebars[topRebars.length - 1].count, topRebars[topRebars.length - 1].grade, topRebars[topRebars.length - 1].diameter);
+      desc.push(`上部筋${params.top}`);
+    }
+
+    // 下部筋：优先混合直径 > 多排标注 > 普通标注
+    if (bottomMixed) {
+      params.bottom = bottomMixed;
+      desc.push(`下部筋${params.bottom}`);
+    } else if (bottomRowInfo) {
+      params.bottom = bottomRowInfo.notation;
+      desc.push(`下部筋${params.bottom}`);
+    } else if (bottomRebars.length >= 1) {
+      params.bottom = rebarNotation(bottomRebars[0].count, bottomRebars[0].grade, bottomRebars[0].diameter);
+      desc.push(`下部筋${params.bottom}`);
+    }
+
+    // 如果分号后有多个纵筋，第二个可能是支座筋（排除腰筋后）
+    if (bottomRebars.length >= 2) {
+      params.leftSupport = rebarNotation(bottomRebars[1].count, bottomRebars[1].grade, bottomRebars[1].diameter);
       desc.push(`左支座${params.leftSupport}`);
     }
-    if (supportRebars.length >= 2) {
-      params.rightSupport = rebarNotation(supportRebars[1].count, supportRebars[1].grade, supportRebars[1].diameter);
+    if (bottomRebars.length >= 3) {
+      params.rightSupport = rebarNotation(bottomRebars[2].count, bottomRebars[2].grade, bottomRebars[2].diameter);
       desc.push(`右支座${params.rightSupport}`);
     }
-  } else if (rebars.length >= 4) {
-    // 4根纵筋时：上部、下部、左支座、右支座
-    params.leftSupport = rebarNotation(rebars[2].count, rebars[2].grade, rebars[2].diameter);
-    params.rightSupport = rebarNotation(rebars[3].count, rebars[3].grade, rebars[3].diameter);
-    desc.push(`左支座${params.leftSupport}`);
-    desc.push(`右支座${params.rightSupport}`);
+  } else {
+    // 无分号分隔：检测混合直径和多排标注
+    if (topMixed) {
+      params.top = topMixed;
+      desc.push(`上部筋${params.top}`);
+      const remaining = rebars.filter(r => !topMixed.includes(r.raw));
+      if (remaining.length >= 1) {
+        params.bottom = rebarNotation(remaining[0].count, remaining[0].grade, remaining[0].diameter);
+        desc.push(`下部筋${params.bottom}`);
+      }
+    } else if (topRowInfo) {
+      params.top = topRowInfo.notation;
+      desc.push(`上部筋${params.top}`);
+      if (rebars.length >= 2) {
+        params.bottom = rebarNotation(rebars[1].count, rebars[1].grade, rebars[1].diameter);
+        desc.push(`下部筋${params.bottom}`);
+      }
+    } else {
+      // 按顺序分配为 上部筋、下部筋、左支座、右支座
+      if (rebars.length >= 1) {
+        params.top = rebarNotation(rebars[0].count, rebars[0].grade, rebars[0].diameter);
+        desc.push(`上部筋${params.top}`);
+      }
+      if (rebars.length >= 2) {
+        params.bottom = rebarNotation(rebars[1].count, rebars[1].grade, rebars[1].diameter);
+        desc.push(`下部筋${params.bottom}`);
+      }
+      if (rebars.length >= 3) {
+        params.leftSupport = rebarNotation(rebars[2].count, rebars[2].grade, rebars[2].diameter);
+        desc.push(`左支座${params.leftSupport}`);
+      }
+      if (rebars.length >= 4) {
+        params.rightSupport = rebarNotation(rebars[3].count, rebars[3].grade, rebars[3].diameter);
+        desc.push(`右支座${params.rightSupport}`);
+      }
+    }
   }
 
   if (Object.keys(params).length < 2) return { success: false };

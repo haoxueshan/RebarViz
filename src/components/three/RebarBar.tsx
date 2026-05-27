@@ -6,6 +6,20 @@ import * as THREE from 'three';
 import type { RebarMeshInfo } from '@/lib/types';
 import { S, REBAR_MATERIAL, REBAR_SEGMENTS } from '@/lib/constants';
 
+// ─── Shared geometry cache: same (diameter, length) → single CylinderGeometry ───
+const geoCache = new Map<string, THREE.CylinderGeometry>();
+
+function getCachedGeo(radius: number, length: number): THREE.CylinderGeometry {
+  // Round to 6 decimals to avoid floating-point key collisions
+  const key = `${radius.toFixed(6)}_${length.toFixed(6)}`;
+  let geo = geoCache.get(key);
+  if (!geo) {
+    geo = new THREE.CylinderGeometry(radius, radius, length, REBAR_SEGMENTS);
+    geoCache.set(key, geo);
+  }
+  return geo;
+}
+
 export interface RebarBarProps {
   position: [number, number, number];
   length: number;
@@ -46,14 +60,8 @@ export function RebarBar({
   const activeColor = selected ? hiColor : hovered ? hiColor : color;
   const scale = selected ? 1.3 : hovered ? 1.15 : 1;
 
-  // 使用共享几何体减少内存占用
   const geometry = useMemo(
-    () => new THREE.CylinderGeometry(
-      (diameter * S) / 2,
-      (diameter * S) / 2,
-      length,
-      REBAR_SEGMENTS,
-    ),
+    () => getCachedGeo((diameter * S) / 2, length),
     [diameter, length],
   );
 
@@ -153,7 +161,7 @@ export function SlopedRebarBar({
       }}
       scale={[scale, 1, scale]}
     >
-      <cylinderGeometry args={[(diameter * S) / 2, (diameter * S) / 2, length, REBAR_SEGMENTS]} />
+      <primitive object={getCachedGeo((diameter * S) / 2, length)} attach="geometry" />
       <meshStandardMaterial
         color={activeColor}
         roughness={REBAR_MATERIAL.roughness}

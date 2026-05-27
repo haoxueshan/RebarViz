@@ -134,7 +134,13 @@ export function validateRebarGenSchema(
       if (d.stirrup) validateStirrupSpec(d.stirrup, 'stirrup', errors);
       if (d.leftSupportRebar) validateRebarSpec(d.leftSupportRebar, 'leftSupportRebar', errors);
       if (d.rightSupportRebar) validateRebarSpec(d.rightSupportRebar, 'rightSupportRebar', errors);
+      if (d.leftSupport2Rebar) validateRebarSpec(d.leftSupport2Rebar, 'leftSupport2Rebar', errors);
+      if (d.rightSupport2Rebar) validateRebarSpec(d.rightSupport2Rebar, 'rightSupport2Rebar', errors);
+      if (d.erectionBar) validateRebarSpec(d.erectionBar, 'erectionBar', errors);
       if (d.spanLength !== undefined && !numInRange(d.spanLength, 1000, 20000)) errors.push('spanLength 应为 1000-20000mm');
+      if (d.spanCount !== undefined && !numInRange(d.spanCount, 1, 20)) errors.push('spanCount 应为 1-20');
+      if (d.spanWidths && (!Array.isArray(d.spanWidths) || d.spanWidths.some((v: number) => !numInRange(v, 150, 1200)))) errors.push('spanWidths 每项应为 150-1200mm');
+      if (d.spanHeights && (!Array.isArray(d.spanHeights) || d.spanHeights.some((v: number) => !numInRange(v, 200, 2000)))) errors.push('spanHeights 每项应为 200-2000mm');
       if (d.columnWidth !== undefined && !numInRange(d.columnWidth, 200, 1200)) errors.push('columnWidth 应为 200-1200mm');
       break;
 

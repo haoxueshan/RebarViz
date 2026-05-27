@@ -173,6 +173,7 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
   const hm = params.h * S;
   const COVER = (params.cover || 25) * S;
   const HC = (params.hc || 500) * S; // 柱截面宽度
+  const SUPPORT_DEPTH = (params.supportDepth || Math.max(params.b, 600)) * S;
 
   // ============ 多跨布局 (支持各跨独立宽度/跨长) ============
   const spanCount = params.spanCount || 1;
@@ -445,8 +446,8 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
         const isEnd = ci === 0 || ci === colPositions.length - 1;
         const isLeft = ci === 0;
         const depthV = isEnd && haunchType === 'vertical'
-          ? (isLeft ? (hasLeftHaunch ? bm + 2 * haunchH : bm * 1.2) : (hasRightHaunch ? bm + 2 * haunchH : bm * 1.2))
-          : bm * 1.2;
+          ? (isLeft ? (hasLeftHaunch ? SUPPORT_DEPTH + 2 * haunchH : SUPPORT_DEPTH) : (hasRightHaunch ? SUPPORT_DEPTH + 2 * haunchH : SUPPORT_DEPTH))
+          : SUPPORT_DEPTH;
         const haunchD = isEnd && haunchType === 'horizontal'
           ? (isLeft ? (hasLeftHaunch ? haunchH : 0) : (hasRightHaunch ? haunchH : 0))
           : 0;

@@ -932,3 +932,90 @@ export function determineColFoundAnchor(h: number, cover: number, d: number, laE
     stirrupMaxSpacing,  // 锚固区箍筋最大间距 (mm)
   };
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// 22. 箍筋下料长度精确计算 — 22G101 / GB50010
+// ═══════════════════════════════════════════════════════════════════
+
+/** 箍筋135°弯钩直段长度: max(10d, 75mm) — GB50010 §8.3.2 / 22G101 */
+export const STIRRUP_HOOK_FACTOR = 10;
+export const STIRRUP_HOOK_MIN = 75;
+
+/** 箍筋弯钩直段长度 (mm) */
+export function stirrupHookLen(d: number): number {
+  return Math.max(STIRRUP_HOOK_FACTOR * d, STIRRUP_HOOK_MIN);
+}
+
+/** 90°弯折量差调整值 — 每个直角弯折内侧弧长与直段之差，简化取 1.75d */
+export const STIRRUP_BEND_ADJUST_PER_CORNER = 1.75;
+
+/**
+ * 矩形箍筋单根下料长度 (mm) — 精确公式
+ * L = 2(b₀ + h₀) + 2×hookLen + 4×1.75d (弯折增加量)
+ *
+ * @param innerB  箍筋内净宽 = b - 2c (mm)
+ * @param innerH  箍筋内净高 = h - 2c (mm)
+ * @param d       箍筋直径 (mm)
+ * @param legs    肢数 (2/4/...) — 多肢箍按外圈+内箍分别计算
+ * @returns 单根(含内箍)下料长度 mm
+ */
+export function stirrupCutLength(innerB: number, innerH: number, d: number, legs: number = 2): number {
+  const hookLen = stirrupHookLen(d);
+  const nCorners = 4;
+  const perimeter = 2 * (innerB + innerH);
+  const bendAdjust = nCorners * STIRRUP_BEND_ADJUST_PER_CORNER * d;
+  const singleLoop = perimeter + 2 * hookLen + bendAdjust;
+  if (legs > 2) {
+    const innerLoops = Math.floor(legs / 2) - 1;
+    const innerLoopLen = innerB + 2 * hookLen + 2 * STIRRUP_BEND_ADJUST_PER_CORNER * d;
+    return singleLoop + innerLoops * innerLoopLen;
+  }
+  return singleLoop;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 23. 钢筋损耗系数 — 行业通用
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * 钢筋损耗率 (%) — 按构件类型推荐值
+ * 来源: 建筑工程工程量清单计价规范 / 行业经验值
+ */
+export const WASTE_RATE: Record<string, number> = {
+  beam: 0.03,
+  column: 0.03,
+  slab: 0.02,
+  shearwall: 0.025,
+  stair: 0.03,
+  foundation: 0.025,
+  stripfoundation: 0.025,
+  pilecap: 0.025,
+  raft: 0.025,
+};
+
+/** 获取损耗系数 (1 + rate) */
+export function wasteFactor(componentType: string): number {
+  return 1 + (WASTE_RATE[componentType] ?? 0.03);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// 24. 弯折调整值（弯起/弯锚量差）— 22G101
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * 钢筋弯折调整值 (mm) — 每个弯折点的长度修正
+ * 30°: 0.268d, 45°: 0.414d, 60°: 0.575d, 90°: 0.785d, 135°: 1.571d
+ */
+export const BEND_ADJUST: Record<number, number> = {
+  30:  0.268,
+  45:  0.414,
+  60:  0.575,
+  90:  0.785,
+  135: 1.571,
+};
+
+/** 获取弯折增加量 (mm)，angle为弯折角度 */
+export function bendAdjustment(d: number, angle: number = 90): number {
+  const factor = BEND_ADJUST[angle] ?? 0.785;
+  return factor * d;
+}

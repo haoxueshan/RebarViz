@@ -82,7 +82,7 @@ export function formatParams(
       let s = `截面: ${p.b}×${p.h}mm, 上部筋: ${p.top}(${fmtRebar(p.top)}), 下部筋: ${p.bottom}(${fmtRebar(p.bottom)}), 箍筋: ${p.stirrup}(${fmtStirrup(p.stirrup)})`;
       if (p.leftSupport) s += `, 左支座负筋: ${p.leftSupport}`;
       if (p.rightSupport) s += `, 右支座负筋: ${p.rightSupport}`;
-      s += `, 混凝土: ${p.concreteGrade}, 抗震: ${p.seismicGrade}, 保护层: ${p.cover}mm, 净跨: ${p.spanLength}mm, 柱宽hc: ${p.hc}mm`;
+      s += `, 混凝土: ${p.concreteGrade}, 抗震: ${p.seismicGrade}, 保护层: ${p.cover}mm, 净跨: ${p.spanLength}mm, 支座柱宽hc: ${p.hc}mm, 支座柱截面深度: ${p.supportDepth || 600}mm`;
       return s;
     }
     case 'column': {

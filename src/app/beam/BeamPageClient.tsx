@@ -74,15 +74,18 @@ export function BeamPageClient() {
 
   const update = (patch: Partial<BeamParams>) => setParams(p => ({ ...p, ...patch }));
 
-  // 更新跨数时，同步调整 spanWidths / spanLengths 数组长度，并同步梁编号括号内跨数
+  // 更新跨数时，同步调整 spanWidths / spanHeights / spanLengths 数组长度，并同步梁编号括号内跨数
   const updateSpanCount = (n: number) => {
     setParams(p => {
       const oldCount = p.spanCount || 1;
       const oldWidths = p.spanWidths && p.spanWidths.length === oldCount ? p.spanWidths : Array(oldCount).fill(p.b);
+      const oldHeights = p.spanHeights && p.spanHeights.length === oldCount ? p.spanHeights : Array(oldCount).fill(p.h);
       const oldLengths = p.spanLengths && p.spanLengths.length === oldCount ? p.spanLengths : Array(oldCount).fill(p.spanLength || 4000);
       const newWidths = Array.from({ length: n }, (_, i) => oldWidths[i] ?? p.b);
+      const newHeights = Array.from({ length: n }, (_, i) => oldHeights[i] ?? p.h);
       const newLengths = Array.from({ length: n }, (_, i) => oldLengths[i] ?? (p.spanLength || 4000));
       const allWidthsSame = newWidths.every(w => w === p.b);
+      const allHeightsSame = newHeights.every(h => h === p.h);
       const allLengthsSame = newLengths.every(l => l === (p.spanLength || 4000));
       // 同步梁编号括号内的跨数，如 KL1(3) → KL1(5)
       const newId = p.id.replace(/\(\d+\)/, `(${n})`);
@@ -91,6 +94,7 @@ export function BeamPageClient() {
         id: newId,
         spanCount: n,
         spanWidths: allWidthsSame ? undefined : newWidths,
+        spanHeights: allHeightsSame ? undefined : newHeights,
         spanLengths: allLengthsSame ? undefined : newLengths,
       };
     });
@@ -105,6 +109,15 @@ export function BeamPageClient() {
     });
   };
 
+  const updateSpanHeight = (i: number, val: number) => {
+    setParams(p => {
+      const n = p.spanCount || 1;
+      const arr = p.spanHeights && p.spanHeights.length === n ? [...p.spanHeights] : Array(n).fill(p.h);
+      arr[i] = val;
+      return { ...p, spanHeights: arr };
+    });
+  };
+
   const updateSpanLength = (i: number, val: number) => {
     setParams(p => {
       const n = p.spanCount || 1;
@@ -115,7 +128,7 @@ export function BeamPageClient() {
   };
 
   const resetSpanArrays = () => {
-    setParams(p => ({ ...p, spanWidths: undefined, spanLengths: undefined }));
+    setParams(p => ({ ...p, spanWidths: undefined, spanHeights: undefined, spanLengths: undefined }));
   };
   const calcResult = useMemo(() => calcBeam(params), [params]);
   const concreteResult = useMemo(() => calcBeamConcrete(params), [params]);
@@ -244,27 +257,31 @@ export function BeamPageClient() {
                 options={SEISMIC_GRADES.map(g => ({ value: g, label: g }))} />
               <NumField label="保护层 (mm)" value={params.cover} onChange={v => update({ cover: v })} min={15} max={50} />
               <NumField label="梁净跨 (mm)" value={params.spanLength} onChange={v => update({ spanLength: v })} min={1000} max={15000} />
-              <NumField label="柱截面宽度 hc (mm)" value={params.hc} onChange={v => update({ hc: v })} min={200} max={1200} />
+              <NumField label="支座柱宽 hc (mm)" value={params.hc} onChange={v => update({ hc: v })} min={200} max={1200} />
+              <NumField label="支座柱截面深度 (mm)" value={params.supportDepth || 600} onChange={v => update({ supportDepth: v })} min={200} max={1500} />
               <NumField label="跨数" value={params.spanCount || 1} onChange={updateSpanCount} min={1} max={6} />
             </Section>
 
             {(params.spanCount || 1) > 1 && (
               <Section title="分跨参数">
-                <p className="text-[11px] text-muted -mt-1">各跨截面宽和净跨长度（留空则使用上方统一值）</p>
+                <p className="text-[11px] text-muted -mt-1">各跨截面尺寸和净跨长度（留空则使用上方统一值）</p>
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs border-collapse">
                     <thead>
                       <tr className="text-muted">
                         <th className="text-left py-1 pr-2 font-medium">跨号</th>
-                        <th className="text-left py-1 pr-2 font-medium">截面宽 b (mm)</th>
-                        <th className="text-left py-1 font-medium">净跨 ln (mm)</th>
+                        <th className="text-left py-1 pr-2 font-medium">截面宽 b</th>
+                        <th className="text-left py-1 pr-2 font-medium">截面高 h</th>
+                        <th className="text-left py-1 font-medium">净跨 ln</th>
                       </tr>
                     </thead>
                     <tbody>
                       {Array.from({ length: params.spanCount || 1 }, (_, i) => {
                         const spanWidths = params.spanWidths && params.spanWidths.length === (params.spanCount || 1) ? params.spanWidths : null;
+                        const spanHeights = params.spanHeights && params.spanHeights.length === (params.spanCount || 1) ? params.spanHeights : null;
                         const spanLengths = params.spanLengths && params.spanLengths.length === (params.spanCount || 1) ? params.spanLengths : null;
                         const bVal = spanWidths ? spanWidths[i] : params.b;
+                        const hVal = spanHeights ? spanHeights[i] : params.h;
                         const lVal = spanLengths ? spanLengths[i] : (params.spanLength || 4000);
                         return (
                           <tr key={i} className="border-t border-gray-100">
@@ -276,6 +293,16 @@ export function BeamPageClient() {
                                 min={100}
                                 max={1000}
                                 onChange={e => updateSpanWidth(i, Number(e.target.value))}
+                                className="w-full border border-gray-200 rounded px-2 py-0.5 text-xs focus:outline-none focus:border-blue-400"
+                              />
+                            </td>
+                            <td className="py-1 pr-2">
+                              <input
+                                type="number"
+                                value={hVal}
+                                min={200}
+                                max={2000}
+                                onChange={e => updateSpanHeight(i, Number(e.target.value))}
                                 className="w-full border border-gray-200 rounded px-2 py-0.5 text-xs focus:outline-none focus:border-blue-400"
                               />
                             </td>
@@ -295,7 +322,7 @@ export function BeamPageClient() {
                     </tbody>
                   </table>
                 </div>
-                {(params.spanWidths || params.spanLengths) && (
+                {(params.spanWidths || params.spanHeights || params.spanLengths) && (
                   <button
                     onClick={resetSpanArrays}
                     className="mt-1 text-[11px] text-blue-500 hover:text-blue-700 cursor-pointer"
@@ -364,7 +391,7 @@ export function BeamPageClient() {
               { color: '#2980B9', label: '腰筋/抗扭筋' },
               { color: '#1ABC9C', label: '拉筋' },
             ] : []),
-            { color: '#7F8C8D', label: '柱截面（hc）', opacity: 0.3 },
+            { color: '#7F8C8D', label: `支座柱截面（hc×${params.supportDepth || 600}）`, opacity: 0.3 },
             { color: '#BDC3C7', label: '混凝土截面（半透明）', opacity: 0.6 },
             ...(params.haunchType !== 'none' ? [
               { color: '#A0AEC0', label: '加腋混凝土', opacity: 0.4 },

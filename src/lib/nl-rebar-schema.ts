@@ -52,6 +52,7 @@ export const STANDARD_DIAMETERS = [6, 8, 10, 12, 14, 16, 18, 20, 22, 25, 28, 32,
 
 export interface BeamSchema {
   componentType: 'beam';
+  id?: string;                     // 梁编号，如 "KL1(3)"
   sectionWidth?: number;
   sectionHeight?: number;
   topRebar?: RebarSpec | string;   // RebarSpec 或混合直径字符串如 "2C25+2C22"
@@ -59,10 +60,16 @@ export interface BeamSchema {
   stirrup?: StirrupSpec;
   leftSupportRebar?: RebarSpec;
   rightSupportRebar?: RebarSpec;
+  leftSupport2Rebar?: RebarSpec;   // 左支座第二排
+  rightSupport2Rebar?: RebarSpec;  // 右支座第二排
+  erectionBar?: RebarSpec;         // 架立筋（跨中上部构造筋）
   concreteGrade?: ConcreteGrade;
   seismicGrade?: SeismicGrade;
   cover?: number;
   spanLength?: number;
+  spanCount?: number;              // 跨数
+  spanWidths?: number[];           // 各跨截面宽
+  spanHeights?: number[];          // 各跨截面高
   columnWidth?: number;
   sideBar?: RebarSpec & { prefix?: 'G' | 'N' };
   tieBar?: { grade: string; diameter: number };
@@ -257,20 +264,27 @@ const STIRRUP_SPEC_SCHEMA = `{ "grade": "HPB300|HRB335|HRB400|RRB400|HRBF400", "
 
 export const BEAM_JSON_SCHEMA = `{
   "componentType": "beam",
+  "id": string (可选, 梁编号如 "KL1(3)"),
   "sectionWidth": number (mm, 150-1200),
   "sectionHeight": number (mm, 200-2000),
   "topRebar": ${REBAR_SPEC_SCHEMA} 或 "2C25+2C22" (混合直径字符串),
   "bottomRebar": ${REBAR_SPEC_SCHEMA} 或 "4C25+2C22" (混合直径字符串),
   "stirrup": ${STIRRUP_SPEC_SCHEMA},
-  "leftSupportRebar": ${REBAR_SPEC_SCHEMA} (可选),
-  "rightSupportRebar": ${REBAR_SPEC_SCHEMA} (可选),
+  "leftSupportRebar": ${REBAR_SPEC_SCHEMA} (可选, 左支座负筋第一排),
+  "rightSupportRebar": ${REBAR_SPEC_SCHEMA} (可选, 右支座负筋第一排),
+  "leftSupport2Rebar": ${REBAR_SPEC_SCHEMA} (可选, 左支座负筋第二排),
+  "rightSupport2Rebar": ${REBAR_SPEC_SCHEMA} (可选, 右支座负筋第二排),
+  "erectionBar": ${REBAR_SPEC_SCHEMA} (可选, 架立筋/跨中上部构造筋),
   "sideBar": { "prefix": "G|N", "count": number, "grade": "...", "diameter": number } (可选, G=构造腰筋, N=抗扭筋),
   "tieBar": { "grade": "HPB300|HRB400|...", "diameter": number } (可选, 拉筋，留空自动确定: b≤350→A6),
   "concreteGrade": "C20-C60" (可选),
   "seismicGrade": "一级|二级|三级|四级|非抗震" (可选),
   "cover": number (mm, 可选),
-  "spanLength": number (mm, 可选),
-  "columnWidth": number (mm, 可选)
+  "spanLength": number (mm, 可选, 净跨),
+  "spanCount": number (可选, 跨数1-20),
+  "spanWidths": [number] (可选, 各跨截面宽mm, length=spanCount),
+  "spanHeights": [number] (可选, 各跨截面高mm, length=spanCount),
+  "columnWidth": number (mm, 可选, 支座柱宽)
 }`;
 
 export const COLUMN_JSON_SCHEMA = `{

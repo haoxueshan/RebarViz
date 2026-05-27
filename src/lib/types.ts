@@ -42,6 +42,7 @@ export interface BeamParams {
   cover: number;          // 保护层厚度 mm
   spanLength: number;     // 梁净跨 mm
   hc: number;             // 支座柱截面宽度 mm（沿梁方向）
+  supportDepth?: number;  // 支座柱截面深度 mm（垂直梁方向）
   // 加腋
   haunchType: HaunchType;       // 加腋类型
   haunchLength: number;         // 加腋长度 c1 (mm)
@@ -54,6 +55,7 @@ export interface BeamParams {
   erectionBar?: string; // 架立筋，如 2C12，留空时按规范自动确定
   spanCount?: number; // 跨数（多跨连续梁），默认1
   spanWidths?: number[];  // 各跨截面宽 mm，length = spanCount，未定义则全用 b
+  spanHeights?: number[]; // 各跨截面高 mm，length = spanCount，未定义则全用 h
   spanLengths?: number[]; // 各跨净跨 mm，length = spanCount，未定义则全用 spanLength
   innerSupport?: string;  // 中间支座负筋（内跨支座，贯通中间柱），如 4C25
 }

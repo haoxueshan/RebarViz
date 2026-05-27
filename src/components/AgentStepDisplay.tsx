@@ -84,22 +84,22 @@ const StepGroupCard = memo(function StepGroupCard({ group, index }: { group: Ste
 
   return (
     <div
-      className="group rounded-lg border border-gray-100 bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04)] overflow-hidden animate-[fadeSlideIn_0.25s_ease-out]"
+      className="group rounded-xl border border-gray-100/80 bg-white shadow-[0_1px_3px_rgba(0,0,0,0.03)] overflow-hidden animate-[fadeSlideIn_0.25s_ease-out]"
       style={{ animationDelay: `${index * 60}ms`, animationFillMode: 'backwards' }}
     >
       {/* Header */}
       <button
         type="button"
         onClick={() => setExpanded(e => !e)}
-        className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left hover:bg-gray-50/80 transition-colors cursor-pointer"
+        className="w-full flex items-center gap-2 px-2.5 py-2 text-left hover:bg-gray-50/50 transition-colors cursor-pointer"
       >
         {/* Tool icon badge */}
-        <span className={`flex items-center justify-center w-5 h-5 rounded ${meta.color} text-white shrink-0`}>
+        <span className={`flex items-center justify-center w-5.5 h-5.5 rounded-lg ${meta.color} text-white shrink-0 shadow-sm`}>
           <Icon className="w-3 h-3" />
         </span>
 
         {/* Tool label */}
-        <span className="text-[11px] font-semibold text-gray-800 truncate">
+        <span className="text-[11px] font-semibold text-gray-700 truncate">
           {meta.label}
         </span>
 
@@ -107,13 +107,13 @@ const StepGroupCard = memo(function StepGroupCard({ group, index }: { group: Ste
         {group.result && (
           <span className="ml-auto flex items-center gap-1 shrink-0">
             {succeeded ? (
-              <span className="flex items-center gap-0.5 text-[10px] text-green-600 font-medium">
-                <Check className="w-3 h-3" />
+              <span className="flex items-center gap-0.5 text-[10px] text-emerald-600 font-medium bg-emerald-50 px-1.5 py-0.5 rounded-full">
+                <Check className="w-2.5 h-2.5" />
                 成功
               </span>
             ) : (
-              <span className="flex items-center gap-0.5 text-[10px] text-red-500 font-medium">
-                <AlertCircle className="w-3 h-3" />
+              <span className="flex items-center gap-0.5 text-[10px] text-red-500 font-medium bg-red-50 px-1.5 py-0.5 rounded-full">
+                <AlertCircle className="w-2.5 h-2.5" />
                 失败
               </span>
             )}
@@ -122,25 +122,27 @@ const StepGroupCard = memo(function StepGroupCard({ group, index }: { group: Ste
 
         {/* Spinner if no result yet */}
         {!group.result && (
-          <Loader2 className="ml-auto w-3 h-3 text-violet-400 animate-spin shrink-0" />
+          <span className="ml-auto animate-pulse-glow rounded-full">
+            <Loader2 className="w-3.5 h-3.5 text-violet-400 animate-spin" />
+          </span>
         )}
 
         {/* Expand chevron */}
         {(hasArgs || resultMsg) && (
-          <span className="text-gray-300 group-hover:text-gray-400 transition-colors shrink-0">
-            {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+          <span className={`transition-transform shrink-0 text-gray-300 ${expanded ? 'rotate-90' : ''}`}>
+            <ChevronRight className="w-3 h-3" />
           </span>
         )}
       </button>
 
       {/* Expanded detail */}
       {expanded && (hasArgs || resultMsg) && (
-        <div className="px-2.5 pb-2 pt-0 space-y-1.5 border-t border-gray-50">
+        <div className="px-2.5 pb-2.5 pt-0 space-y-2 border-t border-gray-50">
           {/* Args */}
           {hasArgs && (
-            <div className="mt-1.5">
-              <div className="text-[10px] font-medium text-gray-400 uppercase tracking-wider mb-0.5">参数</div>
-              <pre className="text-[10px] text-gray-600 bg-gray-50 rounded px-2 py-1 overflow-x-auto whitespace-pre-wrap break-all font-mono leading-relaxed">
+            <div className="mt-2">
+              <div className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider mb-1">参数</div>
+              <pre className="text-[10px] text-gray-600 bg-gray-50/80 rounded-lg px-2.5 py-1.5 overflow-x-auto whitespace-pre-wrap break-all font-mono leading-relaxed border border-gray-100/50">
                 {formatArgs(group.call.toolArgs!)}
               </pre>
             </div>
@@ -149,8 +151,8 @@ const StepGroupCard = memo(function StepGroupCard({ group, index }: { group: Ste
           {/* Result message */}
           {resultMsg && (
             <div>
-              <div className="text-[10px] font-medium text-gray-400 uppercase tracking-wider mb-0.5">结果</div>
-              <p className={`text-[11px] leading-relaxed whitespace-pre-wrap ${succeeded ? 'text-green-700' : 'text-red-600'}`}>
+              <div className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider mb-1">结果</div>
+              <p className={`text-[11px] leading-relaxed whitespace-pre-wrap ${succeeded ? 'text-emerald-700' : 'text-red-600'}`}>
                 {resultMsg}
               </p>
             </div>
@@ -165,13 +167,13 @@ const StepGroupCard = memo(function StepGroupCard({ group, index }: { group: Ste
 
 function ThinkingIndicator({ message }: { message?: string }) {
   return (
-    <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-violet-50/80 border border-violet-100">
-      <div className="flex gap-0.5">
-        <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-[bounce_1s_ease-in-out_infinite]" />
-        <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-[bounce_1s_ease-in-out_infinite_0.15s]" style={{ animationDelay: '0.15s' }} />
-        <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-[bounce_1s_ease-in-out_infinite_0.3s]" style={{ animationDelay: '0.3s' }} />
+    <div className="flex items-center gap-2.5 px-3 py-2 rounded-xl bg-violet-50/60 border border-violet-100/60">
+      <div className="flex gap-1">
+        <span className="typing-dot w-1.5 h-1.5 rounded-full bg-violet-400" />
+        <span className="typing-dot w-1.5 h-1.5 rounded-full bg-violet-400" />
+        <span className="typing-dot w-1.5 h-1.5 rounded-full bg-violet-400" />
       </div>
-      <span className="text-[11px] text-violet-600 font-medium">
+      <span className="text-[11px] text-violet-500 font-medium">
         {message || '正在思考...'}
       </span>
     </div>
@@ -200,11 +202,16 @@ export const AgentStepDisplay = memo(function AgentStepDisplay({ steps, isStream
 
       {/* Step count header */}
       {groups.length > 0 && (
-        <div className="flex items-center gap-1.5 px-1">
-          <Wrench className="w-3 h-3 text-violet-400" />
-          <span className="text-[10px] font-medium text-violet-500 uppercase tracking-wider">
-            Agent · {groups.length} 步操作
-          </span>
+        <div className="flex items-center gap-2 px-1">
+          <div className="flex items-center gap-1.5">
+            <span className="w-4 h-4 rounded-md bg-violet-100 flex items-center justify-center">
+              <Wrench className="w-2.5 h-2.5 text-violet-500" />
+            </span>
+            <span className="text-[10px] font-semibold text-violet-500 tracking-wide">
+              Agent · {groups.length} 步
+            </span>
+          </div>
+          <span className="flex-1 h-px bg-gradient-to-r from-violet-100 to-transparent" />
         </div>
       )}
 
