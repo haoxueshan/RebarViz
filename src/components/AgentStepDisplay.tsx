@@ -220,8 +220,8 @@ export const AgentStepDisplay = memo(function AgentStepDisplay({ steps, isStream
         <StepGroupCard key={i} group={group} index={i} />
       ))}
 
-      {/* Thinking indicator (latest thinking step, shown at bottom) */}
-      {thinking && <ThinkingIndicator message={thinking.message} />}
+      {/* Thinking indicator — only while actively streaming */}
+      {thinking && isStreaming && <ThinkingIndicator message={thinking.message} />}
 
       {/* Fallback spinner when last tool call has no result yet */}
       {isStreaming && !thinking && groups.length > 0 && !groups[groups.length - 1].result && (

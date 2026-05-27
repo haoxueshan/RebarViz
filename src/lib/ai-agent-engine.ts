@@ -573,7 +573,15 @@ export async function runAgent(
 
     if (allToolsSucceeded && parsedCalls.every(p => DIRECT_FINAL_TOOLS.has(p.tc.function.name))) {
       const finalContent = buildToolResultSummary(executedToolResults);
-      stateCallbacks.onStreamUpdate(finalContent);
+      // Typewriter effect: emit content word by word for a streaming feel
+      const words = finalContent.split('');
+      let accumulated = '';
+      for (const ch of words) {
+        if (signal.aborted) break;
+        accumulated += ch;
+        stateCallbacks.onStreamUpdate(accumulated);
+        await new Promise(r => setTimeout(r, 12));
+      }
       return { assistantContent: finalContent, steps, usedTools: true };
     }
 
