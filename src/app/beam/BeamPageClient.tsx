@@ -58,6 +58,40 @@ const presetList = [
 
 const DEFAULT = { ...BEAM_PRESETS.standard };
 
+function applySpanCountPatch(current: BeamParams, patch: Partial<BeamParams>): BeamParams {
+  const merged = { ...current, ...patch };
+  const oldCount = current.spanCount || 1;
+  const newCount = merged.spanCount || 1;
+  if (newCount === oldCount && patch.spanCount === undefined) return merged;
+
+  const oldWidths = current.spanWidths && current.spanWidths.length === oldCount ? current.spanWidths : Array(oldCount).fill(current.b);
+  const oldHeights = current.spanHeights && current.spanHeights.length === oldCount ? current.spanHeights : Array(oldCount).fill(current.h);
+  const oldLengths = current.spanLengths && current.spanLengths.length === oldCount ? current.spanLengths : Array(oldCount).fill(current.spanLength || 4000);
+  const newWidths = patch.spanWidths && patch.spanWidths.length === newCount
+    ? patch.spanWidths
+    : Array.from({ length: newCount }, (_, i) => oldWidths[i] ?? merged.b);
+  const newHeights = patch.spanHeights && patch.spanHeights.length === newCount
+    ? patch.spanHeights
+    : Array.from({ length: newCount }, (_, i) => oldHeights[i] ?? merged.h);
+  const newLengths = patch.spanLengths && patch.spanLengths.length === newCount
+    ? patch.spanLengths
+    : Array.from({ length: newCount }, (_, i) => oldLengths[i] ?? (merged.spanLength || 4000));
+  const allWidthsSame = newWidths.every(w => w === merged.b);
+  const allHeightsSame = newHeights.every(h => h === merged.h);
+  const allLengthsSame = newLengths.every(l => l === (merged.spanLength || 4000));
+  const idBase = merged.id || current.id;
+  const newId = /\(\d+\)/.test(idBase) ? idBase.replace(/\(\d+\)/, `(${newCount})`) : `${idBase}(${newCount})`;
+
+  return {
+    ...merged,
+    id: patch.id ?? newId,
+    spanCount: newCount,
+    spanWidths: allWidthsSame ? undefined : newWidths,
+    spanHeights: allHeightsSame ? undefined : newHeights,
+    spanLengths: allLengthsSame ? undefined : newLengths,
+  };
+}
+
 export function BeamPageClient() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -76,28 +110,7 @@ export function BeamPageClient() {
 
   // 更新跨数时，同步调整 spanWidths / spanHeights / spanLengths 数组长度，并同步梁编号括号内跨数
   const updateSpanCount = (n: number) => {
-    setParams(p => {
-      const oldCount = p.spanCount || 1;
-      const oldWidths = p.spanWidths && p.spanWidths.length === oldCount ? p.spanWidths : Array(oldCount).fill(p.b);
-      const oldHeights = p.spanHeights && p.spanHeights.length === oldCount ? p.spanHeights : Array(oldCount).fill(p.h);
-      const oldLengths = p.spanLengths && p.spanLengths.length === oldCount ? p.spanLengths : Array(oldCount).fill(p.spanLength || 4000);
-      const newWidths = Array.from({ length: n }, (_, i) => oldWidths[i] ?? p.b);
-      const newHeights = Array.from({ length: n }, (_, i) => oldHeights[i] ?? p.h);
-      const newLengths = Array.from({ length: n }, (_, i) => oldLengths[i] ?? (p.spanLength || 4000));
-      const allWidthsSame = newWidths.every(w => w === p.b);
-      const allHeightsSame = newHeights.every(h => h === p.h);
-      const allLengthsSame = newLengths.every(l => l === (p.spanLength || 4000));
-      // 同步梁编号括号内的跨数，如 KL1(3) → KL1(5)
-      const newId = p.id.replace(/\(\d+\)/, `(${n})`);
-      return {
-        ...p,
-        id: newId,
-        spanCount: n,
-        spanWidths: allWidthsSame ? undefined : newWidths,
-        spanHeights: allHeightsSame ? undefined : newHeights,
-        spanLengths: allLengthsSame ? undefined : newLengths,
-      };
-    });
+    setParams(p => applySpanCountPatch(p, { spanCount: n }));
   };
 
   const updateSpanWidth = (i: number, val: number) => {
@@ -166,7 +179,7 @@ export function BeamPageClient() {
   const [selectedRebarType, setSelectedRebarType] = useState<string | null>(null);
 
   const handleAIApply = (p: Partial<BeamParams>) => {
-    update(p);
+    setParams(current => applySpanCountPatch(current, p));
   };
 
   const handlePreset = (key: keyof typeof BEAM_PRESETS) => {
