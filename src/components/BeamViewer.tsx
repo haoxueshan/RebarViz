@@ -377,7 +377,7 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
   // 用折线点数组(polyline)代替 CatmullRomCurve3，弯折处用小弧线离散化
   const memoTiePoints = useMemo((): THREE.Vector3[] | null => {
     if (!sideInfo) return null;
-    const sideZ = (stirCenterW / 2) - STIR_D / 2;
+    const sideZ = stirCenterW / 2 - STIR_D / 2;  // 拉筋端点对齐腰筋中心线(箍筋内皮)，弯钩从腰筋处向外弯出
     const tieInfo = params.tieBar ? parseTieBar(params.tieBar) : autoTieBar(params.b, stir.grade, stir.diameter);
     if (!tieInfo) return null;
     const tieDiaS = tieInfo.diameter * S;
@@ -397,11 +397,12 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
     // 22G101: 弯钩尾端应朝向混凝土核心(+Z方向)
     // 弧心在直线段端点正下方: (0, -bendR, -sideZ)
     // 弧从 π/2(顶部=直线段端点) 逆时针转 3π/4 到 5π/4
+    // 注意: 逆时针反向遍历(从5π/4→π/2)保证与直线段的切线连续(DZ=+1)
     const leftCy = -bendR, leftCz = -sideZ;
     const leftEndAngle = Math.PI / 2 + bendAngle; // 5π/4
     const leftArcEndY = leftCy + bendR * Math.sin(leftEndAngle);
     const leftArcEndZ = leftCz + bendR * Math.cos(leftEndAngle);
-    // 弧在末端的切线方向(逆时针): (cos(a), -sin(a))
+    // 逆时针弧末端切线方向(CCW tangent): (cos(a), -sin(a))
     const leftTailDY = Math.cos(leftEndAngle);
     const leftTailDZ = -Math.sin(leftEndAngle);
     pts.push(new THREE.Vector3(0, leftArcEndY + hookLen * leftTailDY, leftArcEndZ + hookLen * leftTailDZ));
@@ -418,13 +419,14 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
     // ── 右侧 135° 弯钩 (镜像) ──
     // 弧心: (0, -bendR, +sideZ)
     // 弧从 π/2(顶部) 顺时针转 3π/4 到 -π/4
+    // 注意: 顺时针正向遍历(从π/2→-π/4)保证与直线段的切线连续(DZ=+1)
     const rightCy = -bendR, rightCz = sideZ;
     const rightEndAngle = Math.PI / 2 - bendAngle; // -π/4
     for (let i = 0; i <= arcSegs; i++) {
       const a = Math.PI / 2 - (i / arcSegs) * bendAngle;
       pts.push(new THREE.Vector3(0, rightCy + bendR * Math.sin(a), rightCz + bendR * Math.cos(a)));
     }
-    // 弧在末端的切线方向(顺时针): (-cos(a), sin(a))
+    // 顺时针弧末端切线方向(CW tangent): (-cos(a), sin(a))
     const rightArcEndY = rightCy + bendR * Math.sin(rightEndAngle);
     const rightArcEndZ = rightCz + bendR * Math.cos(rightEndAngle);
     const rightTailDY = -Math.cos(rightEndAngle);
@@ -1482,12 +1484,14 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
   );
 }
 
-export default function BeamViewer({ params, cutPosition, showCut, onCutPositionChange, onShowCutChange }: {
+export default function BeamViewer({ params, cutPosition, showCut, onCutPositionChange, onShowCutChange, highlightedType, onSelectedChange }: {
   params: BeamParams;
   cutPosition: number | null;
   showCut: boolean;
   onCutPositionChange: (v: number | null) => void;
   onShowCutChange: (v: boolean) => void;
+  highlightedType?: string | null;
+  onSelectedChange?: (type: string | null) => void;
 }) {
   const hm = params.h * S;
   const spanCount = params.spanCount || 1;
@@ -1502,6 +1506,18 @@ export default function BeamViewer({ params, cutPosition, showCut, onCutPosition
   const [selected, setSelected] = useState<RebarMeshInfo | null>(null);
   const [concreteOpacity, setConcreteOpacity] = useState(0.15);
   const [showDimensions, setShowDimensions] = useState(false);
+
+  // Notify parent of selection changes for bidirectional highlight
+  useEffect(() => {
+    onSelectedChange?.(selected?.type ?? null);
+  }, [selected, onSelectedChange]);
+
+  // Merge external highlight with user selection for BeamScene
+  const effectiveSelected = useMemo<RebarMeshInfo | null>(() => {
+    if (selected) return selected;
+    if (highlightedType) return { type: highlightedType as RebarMeshInfo['type'], label: '', detail: '' };
+    return null;
+  }, [selected, highlightedType]);
   const [cameraTarget, setCameraTarget] = useState<[number, number, number] | null>(null);
   const [animating, setAnimating] = useState(false);
   const [step, setStep] = useState(BEAM_CONSTRUCTION_STEPS.length - 1);
@@ -1772,7 +1788,7 @@ export default function BeamViewer({ params, cutPosition, showCut, onCutPosition
           <CameraController targetPosition={cameraTarget} />
           <ambientLight intensity={0.6} />
           <directionalLight position={[5 * camScale, 8, 5 * camScale]} intensity={0.8} castShadow />
-          <BeamScene params={params} selected={selected} onSelect={setSelected} cutPosition={cutPosition} concreteOpacity={concreteOpacity} showDimensions={showDimensions} visibleGroups={visibleGroups} />
+          <BeamScene params={params} selected={effectiveSelected} onSelect={setSelected} cutPosition={cutPosition} concreteOpacity={concreteOpacity} showDimensions={showDimensions} visibleGroups={visibleGroups} />
           <Grid args={[gridSize, gridSize]} position={[0, -0.01, 0]} cellColor="#E2E8F0" sectionColor="#E2E8F0" fadeDistance={gridSize * 1.5} />
           <axesHelper args={[1]} />
           <OrbitControls target={[0, hm / 2, 0]} enableDamping dampingFactor={0.1} />

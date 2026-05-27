@@ -489,9 +489,25 @@ export async function runAgent(
     };
 
     // Phase 1: Execute mutating tools sequentially (order matters)
+    // After modify_params succeeds, auto-run compliance and append to result
+    let complianceAppendix: Map<string, string> | null = null;
     for (const parsed of mutatingCalls) {
-      const { result } = executeSingle(parsed);
-      if (!result.success) allToolsSucceeded = false;
+      const { result, tc } = executeSingle(parsed);
+      if (!result.success) {
+        allToolsSucceeded = false;
+      } else if (tc.function.name === 'modify_params') {
+        // Auto-run compliance check after params modified
+        try {
+          const compResult = callbacks.onRunComplianceCheck();
+          const failures = (compResult as { results?: Array<{ status: string; message: string; rule: string }> }).results
+            ?.filter(r => r.status === 'fail' || r.status === 'warn') || [];
+          if (failures.length > 0) {
+            if (!complianceAppendix) complianceAppendix = new Map();
+            const summary = failures.map(f => `[${f.status === 'fail' ? '❌' : '⚠️'}] ${f.message} (${f.rule})`).join('\n');
+            complianceAppendix.set(tc.id, `\n⚠️ 合规校验发现问题:\n${summary}\n请考虑调整参数以满足规范要求。`);
+          }
+        } catch { /* compliance check optional — don't block agent */ }
+      }
     }
 
     // Phase 2: Execute independent + dependent tools in parallel
@@ -515,6 +531,10 @@ export async function runAgent(
       const result = cachedResult || { success: false, message: '工具未执行' };
 
       let resultJson = JSON.stringify(result);
+      // Append auto-compliance results for modify_params
+      if (complianceAppendix?.has(parsed.tc.id)) {
+        resultJson += complianceAppendix.get(parsed.tc.id);
+      }
       if (resultJson.length > 3000) {
         resultJson = resultJson.slice(0, 3000) + '...[已截断]';
       }

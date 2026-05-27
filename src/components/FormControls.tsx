@@ -2,33 +2,59 @@
 
 import { useState } from 'react';
 
-export function Field({ label, value, onChange, placeholder, error }: {
+export function Field({ label, value, onChange, placeholder, error, highlightKey, onHover, highlighted, complianceStatus, complianceMessage }: {
   label: string; value: string; onChange: (v: string) => void; placeholder?: string; error?: string | null;
+  highlightKey?: string; onHover?: (key: string | null) => void;
+  highlighted?: boolean; complianceStatus?: 'pass' | 'warn' | 'fail'; complianceMessage?: string;
 }) {
+  const borderClass = error
+    ? 'border-red-300 focus:border-red-400 focus:ring-2 focus:ring-red-500/20'
+    : complianceStatus === 'fail'
+      ? 'border-red-300 focus:border-red-400 focus:ring-2 focus:ring-red-500/20'
+      : complianceStatus === 'warn'
+        ? 'border-amber-300 focus:border-amber-400 focus:ring-2 focus:ring-amber-500/20'
+        : 'border-gray-200 focus:border-accent focus:ring-2 focus:ring-accent/20';
   return (
-    <div>
+    <div
+      className={`transition-all ${highlighted ? 'border-l-2 border-l-blue-500 pl-2 -ml-2 bg-blue-50/40 rounded' : ''}`}
+      onMouseEnter={() => highlightKey && onHover?.(highlightKey)}
+      onMouseLeave={() => onHover?.(null)}
+    >
       <label className="text-xs text-gray-500 mb-1 block">{label}</label>
       <input type="text" value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
-        className={`w-full px-3 py-2 border rounded-lg text-sm outline-none transition-colors bg-white text-gray-800 placeholder-gray-400 ${
-          error ? 'border-red-300 focus:border-red-400 focus:ring-2 focus:ring-red-500/20' : 'border-gray-200 focus:border-accent focus:ring-2 focus:ring-accent/20'
-        }`} />
+        className={`w-full px-3 py-2 border rounded-lg text-sm outline-none transition-colors bg-white text-gray-800 placeholder-gray-400 ${borderClass}`} />
       {error && <p className="text-[11px] text-red-500 mt-1">{error}</p>}
+      {!error && complianceStatus === 'fail' && complianceMessage && <p className="text-[11px] text-red-500 mt-1">{complianceMessage}</p>}
+      {!error && complianceStatus === 'warn' && complianceMessage && <p className="text-[11px] text-amber-600 mt-1">{complianceMessage}</p>}
     </div>
   );
 }
 
-export function NumField({ label, value, onChange, error, min, max }: {
+export function NumField({ label, value, onChange, error, min, max, highlightKey, onHover, highlighted, complianceStatus, complianceMessage }: {
   label: string; value: number; onChange: (v: number) => void; error?: string | null; min?: number; max?: number;
+  highlightKey?: string; onHover?: (key: string | null) => void;
+  highlighted?: boolean; complianceStatus?: 'pass' | 'warn' | 'fail'; complianceMessage?: string;
 }) {
+  const borderClass = error
+    ? 'border-red-300 focus:border-red-400 focus:ring-2 focus:ring-red-500/20'
+    : complianceStatus === 'fail'
+      ? 'border-red-300 focus:border-red-400 focus:ring-2 focus:ring-red-500/20'
+      : complianceStatus === 'warn'
+        ? 'border-amber-300 focus:border-amber-400 focus:ring-2 focus:ring-amber-500/20'
+        : 'border-gray-200 focus:border-accent focus:ring-2 focus:ring-accent/20';
   return (
-    <div>
+    <div
+      className={`transition-all ${highlighted ? 'border-l-2 border-l-blue-500 pl-2 -ml-2 bg-blue-50/40 rounded' : ''}`}
+      onMouseEnter={() => highlightKey && onHover?.(highlightKey)}
+      onMouseLeave={() => onHover?.(null)}
+    >
       <label className="text-xs text-gray-500 mb-1 block">{label}</label>
       <input type="number" value={value} min={min} max={max}
         onChange={e => onChange(parseInt(e.target.value) || 0)}
-        className={`w-full px-3 py-2 border rounded-lg text-sm outline-none transition-colors bg-white text-gray-800 ${
-          error ? 'border-red-300 focus:border-red-400 focus:ring-2 focus:ring-red-500/20' : 'border-gray-200 focus:border-accent focus:ring-2 focus:ring-accent/20'
-        }`} />
+        className={`w-full px-3 py-2 border rounded-lg text-sm outline-none transition-colors bg-white text-gray-800 ${borderClass}`} />
       {error && <p className="text-[11px] text-red-500 mt-1">{error}</p>}
+      {!error && complianceStatus === 'fail' && complianceMessage && <p className="text-[11px] text-red-500 mt-1">{complianceMessage}</p>}
+      {!error && complianceStatus === 'warn' && complianceMessage && <p className="text-[11px] text-amber-600 mt-1">{complianceMessage}</p>}
     </div>
   );
 }

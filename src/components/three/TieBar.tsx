@@ -27,7 +27,7 @@ export function TieBarMesh({
 }: TieBarMeshProps) {
   const [hovered, setHovered] = useState(false);
   const activeColor = selected ? COLOR_TIEBAR_HI : hovered ? COLOR_TIEBAR_HI : COLOR_TIEBAR;
-  const scale = selected ? 1.3 : hovered ? 1.15 : 1;
+  const scale = selected ? 1.3 : 1;
 
   // Build a CurvePath from line segments to preserve sharp bends
   const curve = useMemo(() => {
@@ -41,7 +41,7 @@ export function TieBarMesh({
   return (
     <mesh
       position={position}
-      scale={[scale, scale, scale]}
+      scale={selected ? scale : 1}
       onClick={(e) => {
         e.stopPropagation();
         onSelect(selected ? null : info);

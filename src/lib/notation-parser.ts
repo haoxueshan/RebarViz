@@ -8,9 +8,9 @@
  * 板: LB1 h=120 C10@150 C10@200
  * 剪力墙: Q1 bw=200 lw=3000 C10@200 C10@200 8C16
  */
-import type { ComponentType, BeamParams, ColumnParams, SlabParams, JointParams, ShearWallParams } from './types';
+import type { ComponentType, BeamParams, ColumnParams, SlabParams, JointParams, ShearWallParams, StairParams, FoundationParams } from './types';
 
-type AnyParams = BeamParams | ColumnParams | SlabParams | JointParams | ShearWallParams;
+type AnyParams = BeamParams | ColumnParams | SlabParams | JointParams | ShearWallParams | StairParams | FoundationParams;
 
 export interface NotationParseResult {
   success: true;
@@ -43,6 +43,12 @@ const RE_SLAB_ID = /LB\d+/i;
 
 /** 剪力墙编号: Q1, Q2 */
 const RE_WALL_ID = /Q\d+/i;
+
+/** 楼梯标识: AT, BT, CT, DT, ET, 楼梯, 梯段 */
+const RE_STAIR_ID = /(?:AT|BT|CT|DT|ET)(?:\d*|型)|楼梯|梯段/i;
+
+/** 独立基础编号: DJ1, 独立基础, 独基 */
+const RE_FOUNDATION_ID = /DJ\d*|独立基础|独基/i;
 
 // ─── 辅助 ───
 
@@ -487,6 +493,160 @@ function parseShearWallNotation(text: string): NotationResult {
   };
 }
 
+// ─── 楼梯标注解析 (22G101-2) ───
+
+function parseStairNotation(text: string): NotationResult {
+  const hasStairId = RE_STAIR_ID.test(text);
+  const distributed = extractDistributed(text);
+
+  // 提取楼梯类型: AT, BT, CT 等
+  const typeMatch = text.match(/\b(AT|BT|CT|DT|ET)/i);
+  // 提取踏步数: 10步, 12级, n=10
+  const stepCountMatch = text.match(/(\d{1,2})\s*[步级踏]/) || text.match(/n\s*=\s*(\d{1,2})/i);
+  // 提取踏步尺寸: 高150宽280, 步高150 步宽280, h=150 b=280
+  const stepSizeMatch = text.match(/(?:踏步|步)?[^\d]*高\s*(\d{2,3})\s*(?:宽|×|x)\s*(\d{2,3})/i)
+    || text.match(/步高\s*(\d{2,3})\s*步宽\s*(\d{2,3})/)
+    || text.match(/h\s*=\s*(\d{2,3})\s*b\s*=\s*(\d{2,3})/i);
+  // 提取板厚
+  const thicknessMatch = text.match(/板厚\s*(\d{2,3})/) || text.match(/t\s*=\s*(\d{2,3})/i);
+  // 提取梯段宽度
+  const flightWidthMatch = text.match(/(?:梯段宽|宽度)\s*(\d{3,4})/) || text.match(/W\s*=\s*(\d{3,4})/i);
+
+  if (!hasStairId && !stepCountMatch && distributed.length < 1) return { success: false };
+
+  const params: Partial<StairParams> = {};
+  const desc: string[] = [];
+
+  // 楼梯类型
+  if (typeMatch) {
+    params.stairType = typeMatch[1].toUpperCase() as StairParams['stairType'];
+    desc.push(`${params.stairType}型楼梯`);
+  }
+
+  // 踏步数
+  if (stepCountMatch) {
+    params.stepCount = parseInt(stepCountMatch[1]);
+    desc.push(`${params.stepCount}步`);
+  }
+
+  // 踏步尺寸
+  if (stepSizeMatch) {
+    params.stepHeight = parseInt(stepSizeMatch[1]);
+    params.stepWidth = parseInt(stepSizeMatch[2]);
+    desc.push(`步高${params.stepHeight}×步宽${params.stepWidth}`);
+  }
+
+  // 板厚
+  if (thicknessMatch) {
+    params.slabThickness = parseInt(thicknessMatch[1]);
+    desc.push(`板厚${params.slabThickness}mm`);
+  }
+
+  // 梯段宽度
+  if (flightWidthMatch) {
+    params.flightWidth = parseInt(flightWidthMatch[1]);
+    desc.push(`梯段宽${params.flightWidth}mm`);
+  }
+
+  // 配筋: 分布筋按顺序 → bottomBar, topBar, distBar
+  if (distributed.length >= 1) {
+    params.bottomBar = distributedNotation(distributed[0]);
+    desc.push(`底筋${params.bottomBar}`);
+  }
+  if (distributed.length >= 2) {
+    params.topBar = distributedNotation(distributed[1]);
+    desc.push(`面筋${params.topBar}`);
+  }
+  if (distributed.length >= 3) {
+    params.distBar = distributedNotation(distributed[2]);
+    desc.push(`分布筋${params.distBar}`);
+  }
+
+  if (Object.keys(params).length < 2) return { success: false };
+
+  return {
+    success: true,
+    params,
+    description: `已识别楼梯标注：${desc.join('，')}`,
+  };
+}
+
+// ─── 独立基础标注解析 (22G101-3) ───
+
+function parseFoundationNotation(text: string): NotationResult {
+  const hasFoundId = RE_FOUNDATION_ID.test(text);
+  const distributed = extractDistributed(text);
+  const rebars = extractAllRebars(text);
+
+  // 提取基础底面尺寸: 2000×2000 or bx=2000 by=2000
+  const sizeMatch = text.match(/(\d{3,5})\s*[×xX*×乘]\s*(\d{3,5})/);
+  const bxMatch = text.match(/bx\s*=\s*(\d{3,5})/i);
+  const byMatch = text.match(/by\s*=\s*(\d{3,5})/i);
+  // 提取总高: h=800, 高800
+  const hMatch = text.match(/(?:基础)?[总]?高\s*(\d{3,4})/) || text.match(/h\s*=\s*(\d{3,4})/i);
+  // 提取柱截面: 柱400×400, 柱截面400×400
+  const colMatch = text.match(/柱(?:截面)?\s*(\d{2,4})\s*[×xX*×乘]\s*(\d{2,4})/);
+
+  if (!hasFoundId && !sizeMatch && !bxMatch && distributed.length < 1) return { success: false };
+
+  const params: Partial<FoundationParams> = {};
+  const desc: string[] = [];
+
+  // 编号
+  const idMatch = text.match(/DJ\d+/i);
+  if (idMatch) {
+    params.id = idMatch[0].toUpperCase();
+    desc.push(params.id);
+  }
+
+  // 底面尺寸
+  if (sizeMatch) {
+    params.bx = parseInt(sizeMatch[1]);
+    params.by = parseInt(sizeMatch[2]);
+    desc.push(`底面${params.bx}×${params.by}`);
+  } else {
+    if (bxMatch) { params.bx = parseInt(bxMatch[1]); desc.push(`bx=${params.bx}`); }
+    if (byMatch) { params.by = parseInt(byMatch[1]); desc.push(`by=${params.by}`); }
+  }
+
+  // 总高
+  if (hMatch) {
+    params.h = parseInt(hMatch[1]);
+    desc.push(`高${params.h}mm`);
+  }
+
+  // 柱截面
+  if (colMatch) {
+    params.colBx = parseInt(colMatch[1]);
+    params.colBy = parseInt(colMatch[2]);
+    desc.push(`柱${params.colBx}×${params.colBy}`);
+  }
+
+  // 底筋: 分布筋 → bottomBarX, bottomBarY
+  if (distributed.length >= 1) {
+    params.bottomBarX = distributedNotation(distributed[0]);
+    desc.push(`X底筋${params.bottomBarX}`);
+  }
+  if (distributed.length >= 2) {
+    params.bottomBarY = distributedNotation(distributed[1]);
+    desc.push(`Y底筋${params.bottomBarY}`);
+  }
+
+  // 柱插筋 (纵筋格式)
+  if (rebars.length >= 1) {
+    params.colMain = rebarNotation(rebars[0].count, rebars[0].grade, rebars[0].diameter);
+    desc.push(`柱插筋${params.colMain}`);
+  }
+
+  if (Object.keys(params).length < 2) return { success: false };
+
+  return {
+    success: true,
+    params,
+    description: `已识别独立基础标注：${desc.join('，')}`,
+  };
+}
+
 // ─── 主入口 ───
 
 /**
@@ -526,6 +686,16 @@ export function tryParseNotation(text: string, componentType: ComponentType): No
     case 'joint':
       // 节点标注较复杂，暂不做本地解析，交给 AI
       break;
+    case 'stair': {
+      const result = parseStairNotation(trimmed);
+      if (result.success) return result;
+      break;
+    }
+    case 'foundation': {
+      const result = parseFoundationNotation(trimmed);
+      if (result.success) return result;
+      break;
+    }
   }
 
   // 如果当前类型匹配失败，尝试检测文本中是否有明确的构件类型标识
@@ -543,6 +713,14 @@ export function tryParseNotation(text: string, componentType: ComponentType): No
   }
   if (componentType !== 'shearwall' && RE_WALL_ID.test(trimmed)) {
     const result = parseShearWallNotation(trimmed);
+    if (result.success) return result;
+  }
+  if (componentType !== 'stair' && RE_STAIR_ID.test(trimmed)) {
+    const result = parseStairNotation(trimmed);
+    if (result.success) return result;
+  }
+  if (componentType !== 'foundation' && RE_FOUNDATION_ID.test(trimmed)) {
+    const result = parseFoundationNotation(trimmed);
     if (result.success) return result;
   }
 

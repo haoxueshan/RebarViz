@@ -149,6 +149,22 @@ export function BeamPageClient() {
     rightSupport2: params.rightSupport2 ? validateRebar(params.rightSupport2, 'rightSupport2') : null,
   }), [params]);
 
+  // ─── Compliance by field (for inline red/amber borders) ───
+  const complianceByField = useMemo(() => {
+    const map: Record<string, { status: 'pass' | 'warn' | 'fail'; message: string }> = {};
+    for (const r of complianceResults) {
+      if (r.status === 'pass') continue;
+      if (!map[r.field] || (r.status === 'fail' && map[r.field].status === 'warn')) {
+        map[r.field] = { status: r.status, message: r.message };
+      }
+    }
+    return map;
+  }, [complianceResults]);
+
+  // ─── Bidirectional highlight: form ↔ 3D ───
+  const [hoveredField, setHoveredField] = useState<string | null>(null);
+  const [selectedRebarType, setSelectedRebarType] = useState<string | null>(null);
+
   const handleAIApply = (p: Partial<BeamParams>) => {
     update(p);
   };
@@ -245,9 +261,15 @@ export function BeamPageClient() {
             </div>
 
             <Section title="集中标注" defaultOpen>
-              <Field label="上部通长筋" value={params.top} onChange={v => update({ top: v })} placeholder="如: 2C25" error={errors.top?.message} />
-              <Field label="下部通长筋" value={params.bottom} onChange={v => update({ bottom: v })} placeholder="如: 4C25" error={errors.bottom?.message} />
-              <Field label="箍筋" value={params.stirrup} onChange={v => update({ stirrup: v })} placeholder="如: A8@100/200(2)" error={errors.stirrup?.message} />
+              <Field label="上部通长筋" value={params.top} onChange={v => update({ top: v })} placeholder="如: 2C25" error={errors.top?.message}
+                highlightKey="top" onHover={setHoveredField} highlighted={selectedRebarType === 'top'}
+                complianceStatus={complianceByField.top?.status} complianceMessage={complianceByField.top?.message} />
+              <Field label="下部通长筋" value={params.bottom} onChange={v => update({ bottom: v })} placeholder="如: 4C25" error={errors.bottom?.message}
+                highlightKey="bottom" onHover={setHoveredField} highlighted={selectedRebarType === 'bottom'}
+                complianceStatus={complianceByField.bottom?.status} complianceMessage={complianceByField.bottom?.message} />
+              <Field label="箍筋" value={params.stirrup} onChange={v => update({ stirrup: v })} placeholder="如: A8@100/200(2)" error={errors.stirrup?.message}
+                highlightKey="stirrup" onHover={setHoveredField} highlighted={selectedRebarType === 'stirrup'}
+                complianceStatus={complianceByField.stirrup?.status} complianceMessage={complianceByField.stirrup?.message} />
             </Section>
 
             <Section title="材料与构造">
@@ -335,27 +357,36 @@ export function BeamPageClient() {
 
             <Section title="原位标注（支座负筋）">
               <p className="text-[11px] text-muted -mt-1">留空表示无支座负筋，第二排伸入跨内 ln/4</p>
-              <Field label="左支座负筋" value={params.leftSupport || ''} onChange={v => update({ leftSupport: v })} placeholder="如: 2C25" error={errors.leftSupport?.message} />
+              <Field label="左支座负筋" value={params.leftSupport || ''} onChange={v => update({ leftSupport: v })} placeholder="如: 2C25" error={errors.leftSupport?.message}
+                highlightKey="leftSupport" onHover={setHoveredField} highlighted={selectedRebarType === 'leftSupport'}
+                complianceStatus={complianceByField.leftSupport?.status} complianceMessage={complianceByField.leftSupport?.message} />
               {params.leftSupport && (
-                <Field label="左支座(二排)" value={params.leftSupport2 || ''} onChange={v => update({ leftSupport2: v || undefined })} placeholder="如: 2C25（留空=无二排）" error={errors.leftSupport2?.message} />
+                <Field label="左支座(二排)" value={params.leftSupport2 || ''} onChange={v => update({ leftSupport2: v || undefined })} placeholder="如: 2C25（留空=无二排）" error={errors.leftSupport2?.message}
+                  highlightKey="leftSupport2" onHover={setHoveredField} highlighted={selectedRebarType === 'leftSupport2'} />
               )}
               {(params.spanCount || 1) > 1 && (
-                <Field label="中间支座负筋" value={params.innerSupport || ''} onChange={v => update({ innerSupport: v || undefined })} placeholder="如: 4C25（贯通中间柱，两侧各 ln/3）" />
+                <Field label="中间支座负筋" value={params.innerSupport || ''} onChange={v => update({ innerSupport: v || undefined })} placeholder="如: 4C25（贯通中间柱，两侧各 ln/3）"
+                  highlightKey="innerSupport" onHover={setHoveredField} highlighted={selectedRebarType === 'innerSupport'} />
               )}
-              <Field label="右支座负筋" value={params.rightSupport || ''} onChange={v => update({ rightSupport: v })} placeholder="如: 4C25" error={errors.rightSupport?.message} />
+              <Field label="右支座负筋" value={params.rightSupport || ''} onChange={v => update({ rightSupport: v })} placeholder="如: 4C25" error={errors.rightSupport?.message}
+                highlightKey="rightSupport" onHover={setHoveredField} highlighted={selectedRebarType === 'rightSupport'}
+                complianceStatus={complianceByField.rightSupport?.status} complianceMessage={complianceByField.rightSupport?.message} />
               {params.rightSupport && (
-                <Field label="右支座(二排)" value={params.rightSupport2 || ''} onChange={v => update({ rightSupport2: v || undefined })} placeholder="如: 2C25（留空=无二排）" error={errors.rightSupport2?.message} />
+                <Field label="右支座(二排)" value={params.rightSupport2 || ''} onChange={v => update({ rightSupport2: v || undefined })} placeholder="如: 2C25（留空=无二排）" error={errors.rightSupport2?.message}
+                  highlightKey="rightSupport2" onHover={setHoveredField} highlighted={selectedRebarType === 'rightSupport2'} />
               )}
             </Section>
 
             <Section title="架立筋">
               <p className="text-[11px] text-muted -mt-1">留空时按规范自动确定（有支座负筋时: 净跨≤4m用2Φ10，&gt;4m用2Φ12）</p>
-              <Field label="架立筋" value={params.erectionBar || ''} onChange={v => update({ erectionBar: v || undefined })} placeholder="如: 2C12（留空=自动）" />
+              <Field label="架立筋" value={params.erectionBar || ''} onChange={v => update({ erectionBar: v || undefined })} placeholder="如: 2C12（留空=自动）"
+                highlightKey="erection" onHover={setHoveredField} highlighted={selectedRebarType === 'erection'} />
             </Section>
 
             <Section title="腰筋/抗扭筋">
               <p className="text-[11px] text-muted -mt-1">G前缀=构造腰筋，N前缀=抗扭筋，留空表示无</p>
-              <Field label="腰筋/抗扭筋" value={params.sideBar || ''} onChange={v => update({ sideBar: v || undefined })} placeholder="如: G4C12 或 N2C16" />
+              <Field label="腰筋/抗扭筋" value={params.sideBar || ''} onChange={v => update({ sideBar: v || undefined })} placeholder="如: G4C12 或 N2C16"
+                highlightKey="sideBar" onHover={setHoveredField} highlighted={selectedRebarType === 'sideBar'} />
               {params.sideBar && (
                 <Field label="拉筋" value={params.tieBar || ''} onChange={v => update({ tieBar: v || undefined })} placeholder="如: A6（留空自动确定）" />
               )}
@@ -418,7 +449,8 @@ export function BeamPageClient() {
         {/* 中栏：3D模型 + 数据 tab */}
         <div className={`${showAI ? 'lg:col-span-6' : 'lg:col-span-9'} space-y-4 min-w-0 transition-all`}>
           <BeamViewer params={params} cutPosition={cutPosition} showCut={showCut}
-            onCutPositionChange={setCutPosition} onShowCutChange={setShowCut} />
+            onCutPositionChange={setCutPosition} onShowCutChange={setShowCut}
+            highlightedType={hoveredField} onSelectedChange={setSelectedRebarType} />
 
           {/* Data tabs */}
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
