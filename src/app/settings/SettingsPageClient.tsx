@@ -32,6 +32,30 @@ const PROVIDER_META: Record<string, { color: string; bg: string; url: string; de
     url: 'https://platform.openai.com/api-keys',
     desc: 'OpenAI GPT-4o，最强 Vision 图纸识别',
   },
+  mimo: {
+    color: 'text-orange-700',
+    bg: 'bg-orange-50',
+    url: 'https://platform.xiaomimimo.com/',
+    desc: '小米 MiMo 按量付费 API，key 格式 sk-xxxxx',
+  },
+  'mimo-cn': {
+    color: 'text-orange-700',
+    bg: 'bg-orange-50',
+    url: 'https://platform.xiaomimimo.com/',
+    desc: '小米 MiMo Token Plan 中国集群，key 格式 tp-xxxxx',
+  },
+  'mimo-sgp': {
+    color: 'text-orange-700',
+    bg: 'bg-orange-50',
+    url: 'https://platform.xiaomimimo.com/',
+    desc: '小米 MiMo Token Plan 新加坡集群，key 格式 tp-xxxxx',
+  },
+  'mimo-ams': {
+    color: 'text-orange-700',
+    bg: 'bg-orange-50',
+    url: 'https://platform.xiaomimimo.com/',
+    desc: '小米 MiMo Token Plan 欧洲集群，key 格式 tp-xxxxx',
+  },
 };
 
 export function SettingsPageClient() {
@@ -76,18 +100,23 @@ export function SettingsPageClient() {
       const provider = AI_PROVIDERS.find(p => p.id === providerId);
       if (!provider) throw new Error('Unknown provider');
 
+      const authHeaders: Record<string, string> = provider.authHeader === 'api-key'
+        ? { 'api-key': key }
+        : { 'Authorization': `Bearer ${key}` };
+      const payload: Record<string, unknown> = {
+        model: provider.defaultModel,
+        messages: [{ role: 'user', content: '你好，请用一句话回复' }],
+        stream: true,
+      };
+      payload[provider.maxTokensParam ?? 'max_tokens'] = 50;
+
       const res = await fetch(`${provider.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${key}`,
+          ...authHeaders,
         },
-        body: JSON.stringify({
-          model: provider.defaultModel,
-          messages: [{ role: 'user', content: '你好，请用一句话回复' }],
-          stream: true,
-          max_tokens: 50,
-        }),
+        body: JSON.stringify(payload),
       });
 
       if (res.ok) {

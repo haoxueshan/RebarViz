@@ -102,9 +102,9 @@ async function directFetch(opts: AIFetchOptions): Promise<Response> {
     ],
     stream,
     temperature,
-    max_tokens,
     ...(provider.extraParams ?? {}),
   };
+  payload[provider.maxTokensParam ?? 'max_tokens'] = max_tokens;
 
   if (tools && tools.length > 0) {
     payload.tools = tools;

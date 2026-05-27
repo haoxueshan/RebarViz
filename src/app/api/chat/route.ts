@@ -85,9 +85,9 @@ export async function POST(req: NextRequest) {
       ],
       stream,
       temperature: effectiveTemperature,
-      max_tokens,
       ...(provider.extraParams ?? {}),
     };
+    payload[provider.maxTokensParam ?? 'max_tokens'] = max_tokens;
 
     if (tools && tools.length > 0) {
       payload.tools = tools;

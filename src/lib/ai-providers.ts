@@ -14,6 +14,7 @@ export interface AIProvider {
   temperature?: number;  // provider-level override; some models only accept specific values
   extraParams?: Record<string, unknown>;  // merged into every API request payload
   authHeader?: 'bearer' | 'api-key';  // auth header style; default 'bearer' (Authorization: Bearer)
+  maxTokensParam?: 'max_tokens' | 'max_completion_tokens';  // default 'max_tokens'
 }
 
 export const AI_PROVIDERS: AIProvider[] = [
@@ -62,6 +63,7 @@ export const AI_PROVIDERS: AIProvider[] = [
     models: ['mimo-v2.5-pro', 'mimo-v2.5', 'mimo-v2.5-flash'],
     envKey: 'MIMO_API_KEY',
     authHeader: 'api-key',
+    maxTokensParam: 'max_completion_tokens',
   },
   {
     id: 'mimo-cn',
@@ -71,6 +73,7 @@ export const AI_PROVIDERS: AIProvider[] = [
     models: ['mimo-v2.5-pro', 'mimo-v2.5', 'mimo-v2.5-flash'],
     envKey: 'MIMO_TOKEN_KEY',
     authHeader: 'api-key',
+    maxTokensParam: 'max_completion_tokens',
   },
   {
     id: 'mimo-sgp',
@@ -80,6 +83,7 @@ export const AI_PROVIDERS: AIProvider[] = [
     models: ['mimo-v2.5-pro', 'mimo-v2.5', 'mimo-v2.5-flash'],
     envKey: 'MIMO_TOKEN_KEY',
     authHeader: 'api-key',
+    maxTokensParam: 'max_completion_tokens',
   },
   {
     id: 'mimo-ams',
@@ -89,6 +93,7 @@ export const AI_PROVIDERS: AIProvider[] = [
     models: ['mimo-v2.5-pro', 'mimo-v2.5', 'mimo-v2.5-flash'],
     envKey: 'MIMO_TOKEN_KEY',
     authHeader: 'api-key',
+    maxTokensParam: 'max_completion_tokens',
   },
 ];
 
