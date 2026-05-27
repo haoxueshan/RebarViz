@@ -111,11 +111,15 @@ async function directFetch(opts: AIFetchOptions): Promise<Response> {
     if (tool_choice) payload.tool_choice = tool_choice;
   }
 
+  const authHeaders: Record<string, string> = provider.authHeader === 'api-key'
+    ? { 'api-key': apiKey }
+    : { 'Authorization': `Bearer ${apiKey}` };
+
   return fetch(`${provider.baseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
+      ...authHeaders,
     },
     body: JSON.stringify(payload),
     signal,

@@ -11,6 +11,10 @@ export interface ApiKeyStore {
   qwen?: string;
   kimi?: string;
   openai?: string;
+  mimo?: string;
+  'mimo-cn'?: string;
+  'mimo-sgp'?: string;
+  'mimo-ams'?: string;
 }
 
 export function getApiKeys(): ApiKeyStore {

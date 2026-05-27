@@ -13,6 +13,7 @@ export interface AIProvider {
   envKey: string; // env variable name for API key
   temperature?: number;  // provider-level override; some models only accept specific values
   extraParams?: Record<string, unknown>;  // merged into every API request payload
+  authHeader?: 'bearer' | 'api-key';  // auth header style; default 'bearer' (Authorization: Bearer)
 }
 
 export const AI_PROVIDERS: AIProvider[] = [
@@ -52,6 +53,42 @@ export const AI_PROVIDERS: AIProvider[] = [
     models: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1'],
     visionModel: 'gpt-4o',
     envKey: 'OPENAI_API_KEY',
+  },
+  {
+    id: 'mimo',
+    name: 'MiMo 按量付费',
+    baseUrl: 'https://api.xiaomimimo.com/v1',
+    defaultModel: 'mimo-v2.5-pro',
+    models: ['mimo-v2.5-pro', 'mimo-v2.5', 'mimo-v2.5-flash'],
+    envKey: 'MIMO_API_KEY',
+    authHeader: 'api-key',
+  },
+  {
+    id: 'mimo-cn',
+    name: 'MiMo Token Plan (中国)',
+    baseUrl: 'https://token-plan-cn.xiaomimimo.com/v1',
+    defaultModel: 'mimo-v2.5-pro',
+    models: ['mimo-v2.5-pro', 'mimo-v2.5', 'mimo-v2.5-flash'],
+    envKey: 'MIMO_TOKEN_KEY',
+    authHeader: 'api-key',
+  },
+  {
+    id: 'mimo-sgp',
+    name: 'MiMo Token Plan (新加坡)',
+    baseUrl: 'https://token-plan-sgp.xiaomimimo.com/v1',
+    defaultModel: 'mimo-v2.5-pro',
+    models: ['mimo-v2.5-pro', 'mimo-v2.5', 'mimo-v2.5-flash'],
+    envKey: 'MIMO_TOKEN_KEY',
+    authHeader: 'api-key',
+  },
+  {
+    id: 'mimo-ams',
+    name: 'MiMo Token Plan (欧洲)',
+    baseUrl: 'https://token-plan-ams.xiaomimimo.com/v1',
+    defaultModel: 'mimo-v2.5-pro',
+    models: ['mimo-v2.5-pro', 'mimo-v2.5', 'mimo-v2.5-flash'],
+    envKey: 'MIMO_TOKEN_KEY',
+    authHeader: 'api-key',
   },
 ];
 

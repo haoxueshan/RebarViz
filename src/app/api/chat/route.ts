@@ -94,11 +94,15 @@ export async function POST(req: NextRequest) {
       if (tool_choice) payload.tool_choice = tool_choice;
     }
 
+    const authHeaders: Record<string, string> = provider.authHeader === 'api-key'
+      ? { 'api-key': apiKey }
+      : { 'Authorization': `Bearer ${apiKey}` };
+
     const response = await fetch(`${provider.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
+        ...authHeaders,
       },
       body: JSON.stringify(payload),
     });
