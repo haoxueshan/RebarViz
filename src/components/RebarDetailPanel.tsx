@@ -13,6 +13,11 @@ interface RebarDetailPanelProps {
     lapLength?: number;   // 搭接长度 mm
     spacing?: number;     // 间距 mm
     hint?: string;        // 多跨提示
+    groupLabel?: string;  // 钢筋组
+    groupCount?: number;  // 组内数量
+    distributionRange?: string; // 分布范围
+    instanceIndex?: number; // 当前序号
+    relatedGroups?: string[]; // 关联钢筋组
   };
 }
 
@@ -20,6 +25,10 @@ export function RebarDetailPanel({ info, onClose, additionalData }: RebarDetailP
   const colorMap: Record<string, { bg: string; border: string; text: string; icon: string }> = {
     top: { bg: 'bg-red-50', border: 'border-red-200', text: 'text-red-800', icon: 'text-red-500' },
     bottom: { bg: 'bg-red-50', border: 'border-red-200', text: 'text-red-800', icon: 'text-red-500' },
+    main: { bg: 'bg-red-50', border: 'border-red-200', text: 'text-red-800', icon: 'text-red-500' },
+    corner: { bg: 'bg-red-50', border: 'border-red-200', text: 'text-red-800', icon: 'text-red-500' },
+    bMiddle: { bg: 'bg-orange-50', border: 'border-orange-200', text: 'text-orange-800', icon: 'text-orange-500' },
+    hMiddle: { bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-800', icon: 'text-purple-500' },
     stirrup: { bg: 'bg-green-50', border: 'border-green-200', text: 'text-green-800', icon: 'text-green-500' },
     leftSupport: { bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-800', icon: 'text-purple-500' },
     rightSupport: { bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-800', icon: 'text-purple-500' },
@@ -59,6 +68,34 @@ export function RebarDetailPanel({ info, onClose, additionalData }: RebarDetailP
         {/* 详细参数 */}
         {additionalData && (
           <div className="space-y-2 pt-2 border-t border-gray-200/50">
+            {(additionalData.groupLabel || info.groupLabel) && (
+              <DetailRow
+                icon={<Info className="w-3.5 h-3.5" />}
+                label="钢筋组"
+                value={additionalData.groupLabel || info.groupLabel || ''}
+              />
+            )}
+            {(additionalData.groupCount ?? info.groupCount) != null && (
+              <DetailRow
+                icon={<BarChart3 className="w-3.5 h-3.5" />}
+                label="组内数量"
+                value={`${additionalData.groupCount ?? info.groupCount} 根/道`}
+              />
+            )}
+            {(additionalData.distributionRange || info.distributionRange) && (
+              <DetailRow
+                icon={<Ruler className="w-3.5 h-3.5" />}
+                label="分布范围"
+                value={additionalData.distributionRange || info.distributionRange || ''}
+              />
+            )}
+            {(additionalData.instanceIndex ?? info.instanceIndex) != null && (
+              <DetailRow
+                icon={<Info className="w-3.5 h-3.5" />}
+                label="当前序号"
+                value={`#${additionalData.instanceIndex ?? info.instanceIndex}`}
+              />
+            )}
             {additionalData.length != null && (
               <DetailRow 
                 icon={<Ruler className="w-3.5 h-3.5" />}
@@ -101,6 +138,13 @@ export function RebarDetailPanel({ info, onClose, additionalData }: RebarDetailP
                 value={additionalData.hint}
               />
             )}
+            {(additionalData.relatedGroups?.length || info.relatedSetIds?.length) ? (
+              <DetailRow
+                icon={<Info className="w-3.5 h-3.5" />}
+                label="关联组"
+                value={(additionalData.relatedGroups || info.relatedSetIds || []).join(' / ')}
+              />
+            ) : null}
           </div>
         )}
 

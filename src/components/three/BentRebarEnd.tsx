@@ -3,8 +3,10 @@
 import { useMemo, useState, useCallback } from 'react';
 import { ThreeEvent } from '@react-three/fiber';
 import * as THREE from 'three';
-import type { RebarMeshInfo } from '@/lib/types';
+import type { RebarMeshInfo, RebarRenderMode } from '@/lib/types';
 import { S, REBAR_MATERIAL } from '@/lib/constants';
+
+const MIN_HIT_RADIUS = 0.055;
 
 export interface BentRebarEndProps {
   position: [number, number, number];
@@ -17,8 +19,10 @@ export interface BentRebarEndProps {
   hiColor?: string;
   info?: RebarMeshInfo;
   selected?: boolean;
+  highlighted?: boolean;
   onSelect?: (info: RebarMeshInfo | null) => void;
   xDir?: number; // 1 = 向右伸入右柱, -1 = 向左伸入左柱
+  renderMode?: RebarRenderMode;
 }
 
 /**
@@ -36,8 +40,10 @@ export function BentRebarEnd({
   hiColor,
   info,
   selected = false,
+  highlighted = false,
   onSelect,
   xDir = 1,
+  renderMode = 'solid',
 }: BentRebarEndProps) {
   const [hovered, setHovered] = useState(false);
   const r = (diameter * S) / 2;
@@ -50,8 +56,8 @@ export function BentRebarEnd({
     [selected, info, onSelect],
   );
 
-  const activeColor = selected && hiColor ? hiColor : hovered && hiColor ? hiColor : color;
-  const radiusScale = selected ? 1.3 : hovered ? 1.15 : 1;
+  const activeColor = (selected || hovered || highlighted) && hiColor ? hiColor : color;
+  const radiusScale = selected ? 1.3 : hovered ? 1.15 : highlighted ? 1.08 : 1;
 
   const curve = useMemo(() => {
     const bendRadius = Math.max(Math.min(4 * diameter * S, Math.max(straightLen, 4 * diameter * S) * 0.3), 2 * diameter * S, 0.006);
@@ -86,8 +92,13 @@ export function BentRebarEnd({
     return new THREE.CatmullRomCurve3(pts, false);
   }, [straightLen, bendLen, diameter, direction, xDir, horizontalAxis]);
 
+  const hitRadius = Math.max(r * 5, MIN_HIT_RADIUS);
+  const showSolid = renderMode === 'solid' || (renderMode === 'hybrid' && (selected || hovered || highlighted));
+  const showCenterline = renderMode === 'centerline' || !showSolid;
+  const lineGeometry = useMemo(() => new THREE.BufferGeometry().setFromPoints(curve.getPoints(48)), [curve]);
+
   return (
-    <mesh
+    <group
       position={position}
       onClick={onSelect ? handleClick : undefined}
       onPointerOver={hiColor ? (e) => {
@@ -100,14 +111,29 @@ export function BentRebarEnd({
         document.body.style.cursor = 'auto';
       } : undefined}
     >
-      <tubeGeometry args={[curve, 32, r * radiusScale, 8, false]} />
-      <meshStandardMaterial
-        color={activeColor}
-        roughness={REBAR_MATERIAL.roughness}
-        metalness={REBAR_MATERIAL.metalness}
-        emissive={selected && hiColor ? hiColor : '#000000'}
-        emissiveIntensity={selected ? 0.3 : 0}
-      />
-    </mesh>
+      {showSolid && (
+        <mesh>
+          <tubeGeometry args={[curve, 32, r * radiusScale, 8, false]} />
+          <meshStandardMaterial
+            color={activeColor}
+            roughness={REBAR_MATERIAL.roughness}
+            metalness={REBAR_MATERIAL.metalness}
+            emissive={(selected || highlighted) && hiColor ? hiColor : '#000000'}
+            emissiveIntensity={selected ? 0.3 : highlighted ? 0.16 : 0}
+          />
+        </mesh>
+      )}
+      {showCenterline && (
+        <lineSegments geometry={lineGeometry}>
+          <lineBasicMaterial color={activeColor} transparent opacity={selected || highlighted ? 0.95 : 0.58} />
+        </lineSegments>
+      )}
+      {onSelect && info && (
+        <mesh>
+          <tubeGeometry args={[curve, 32, hitRadius, 6, false]} />
+          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+        </mesh>
+      )}
+    </group>
   );
 }

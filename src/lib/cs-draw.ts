@@ -66,9 +66,10 @@ export function drawRebarCross(
   ctx.stroke();
 }
 
-// ─── 箍筋（封闭矩形 + 135°弯钩） ──────────────────────────────
+// ─── 箍筋（圆角闭合中心线 + 135°弯钩） ──────────────────────────────
 /**
- * 绘制箍筋：封闭矩形 + 四角各一个 135° 弯钩
+ * 绘制箍筋截面符号：圆角闭合中心线 + 同一搭接角的双 135° 弯钩。
+ * 截面图表达的是箍筋形状语义，不在四个角重复画弯钩。
  * @param x  矩形左上角 x
  * @param y  矩形左上角 y
  * @param w  矩形宽
@@ -82,30 +83,56 @@ export function drawStirrup(
   color: string,
   hookLen = 8,
 ) {
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1.5;
-  ctx.setLineDash([]);
+  const r = Math.min(Math.max(Math.min(w, h) * 0.08, 4), Math.min(w, h) * 0.22);
+  const hook = Math.min(Math.max(hookLen, 14), Math.min(w, h) * 0.36);
+  const tail = hook * 0.9;
+  const lapOffset = Math.max(r + hook * 0.45, 12);
+  const sq = Math.SQRT1_2;
 
-  // 封闭矩形
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.7;
+  ctx.setLineDash([]);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  // 圆角闭合箍筋中心线
   ctx.beginPath();
-  ctx.rect(x, y, w, h);
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
   ctx.stroke();
 
-  // 135° 弯钩 — 四个角
-  // 钩子方向: 从角点沿对角线向截面内部延伸
-  const hooks: [number, number, number, number][] = [
-    // [hookStartX, hookStartY, dx, dy]
-    [x, y, hookLen, hookLen],           // 左上 → 右下
-    [x + w, y, -hookLen, hookLen],      // 右上 → 左下
-    [x + w, y + h, -hookLen, -hookLen], // 右下 → 左上
-    [x, y + h, hookLen, -hookLen],      // 左下 → 右上
-  ];
-  for (const [hx, hy, dx, dy] of hooks) {
-    ctx.beginPath();
-    ctx.moveTo(hx, hy);
-    ctx.lineTo(hx + dx, hy + dy);
-    ctx.stroke();
-  }
+  // 双 135°弯钩：避开角筋点位，分别从上边、左边转入截面内侧。
+  const topHookX = x + lapOffset;
+  const topHookY = y;
+  const sideHookX = x;
+  const sideHookY = y + lapOffset;
+  ctx.save();
+  ctx.lineWidth = 2.2;
+  ctx.strokeStyle = color;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  ctx.beginPath();
+  ctx.moveTo(topHookX + hook * 0.7, topHookY);
+  ctx.lineTo(topHookX, topHookY);
+  ctx.quadraticCurveTo(topHookX - hook * 0.25, topHookY, topHookX - hook * 0.25, topHookY + hook * 0.35);
+  ctx.lineTo(topHookX - hook * 0.25 + tail * sq, topHookY + hook * 0.35 + tail * sq);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(sideHookX, sideHookY + hook * 0.7);
+  ctx.lineTo(sideHookX, sideHookY);
+  ctx.quadraticCurveTo(sideHookX, sideHookY - hook * 0.25, sideHookX + hook * 0.35, sideHookY - hook * 0.25);
+  ctx.lineTo(sideHookX + hook * 0.35 + tail * sq, sideHookY - hook * 0.25 + tail * sq);
+  ctx.stroke();
+  ctx.restore();
 }
 
 // ─── 柱复合箍筋 — 内箍/拉筋 ────────────────────────────────────

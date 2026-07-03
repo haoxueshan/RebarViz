@@ -3,14 +3,15 @@
 import { useState, useMemo } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
-import type { ColumnParams, ComponentType } from '@/lib/types';
+import type { ColumnParams, ComponentType, RebarMeshInfo } from '@/lib/types';
 import { COLUMN_PRESETS, parseRebar, STIRRUP_TYPES } from '@/lib/rebar';
-import { calcColumn } from '@/lib/calc';
+import { calcColumn, calcColumnBarShapes, type BarShape } from '@/lib/calc';
 import { validateRebar, validateStirrup, validateDimension } from '@/lib/validate';
 import { ColumnCrossSection } from '@/components/CrossSection';
 import { ColumnExplain } from '@/components/NotationExplain';
 import { WeightCalc } from '@/components/WeightCalc';
 import { ConcreteCalc } from '@/components/ConcreteCalc';
+import { BarBendingSchedule } from '@/components/BarBendingSchedule';
 import { calcColumnConcrete } from '@/lib/calc-concrete';
 import { ShareButton } from '@/components/ShareButton';
 import { Field, NumField, Legend, ResetButton, SelectField, Section } from '@/components/FormControls';
@@ -27,6 +28,7 @@ const DATA_TABS = [
   { key: 'guide', label: '识图说明' },
   { key: 'weight', label: '用量估算' },
   { key: 'concrete', label: '混凝土量' },
+  { key: 'bbs', label: '弯折详图' },
 ] as const;
 
 const ColumnViewer = dynamic(() => import('@/components/ColumnViewer'), {
@@ -55,6 +57,7 @@ export function ColumnPageClient() {
   const [cutPosition, setCutPosition] = useState<number | null>(null);
   const [showCut, setShowCut] = useState(false);
   const [dataTab, setDataTab] = useState<typeof DATA_TABS[number]['key']>('section');
+  const [selectedRebarInfo, setSelectedRebarInfo] = useState<RebarMeshInfo | null>(null);
   const aiMessage = searchParams.get('ai') || undefined;
   const [showAI, setShowAI] = useState(!!aiMessage);
 
@@ -74,6 +77,7 @@ export function ColumnPageClient() {
   }, [params]);
 
   const calcResult = useMemo(() => calcColumn(effectiveParams), [effectiveParams]);
+  const barShapes = useMemo(() => calcColumnBarShapes(effectiveParams), [effectiveParams]);
   const concreteResult = useMemo(() => calcColumnConcrete(effectiveParams), [effectiveParams]);
   const aiContext = useMemo(() => buildColumnContext(effectiveParams), [effectiveParams]);
 
@@ -219,7 +223,9 @@ export function ColumnPageClient() {
         {/* 中栏：3D模型 + 数据 tab */}
         <div className={`${showAI ? 'lg:col-span-6' : 'lg:col-span-9'} space-y-4 min-w-0 transition-all`}>
           <ColumnViewer params={effectiveParams} cutPosition={cutPosition} showCut={showCut}
-            onCutPositionChange={setCutPosition} onShowCutChange={setShowCut} />
+            onCutPositionChange={setCutPosition} onShowCutChange={setShowCut}
+            selectedInfo={selectedRebarInfo}
+            onSelectedInfoChange={setSelectedRebarInfo} />
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
             <div className="flex items-center gap-1 px-3 py-2 border-b border-gray-100">
               <div className="flex items-center gap-1 bg-gray-100/80 rounded-lg p-0.5">
@@ -251,6 +257,28 @@ export function ColumnPageClient() {
               {dataTab === 'guide' && <ColumnExplain params={effectiveParams} />}
               {dataTab === 'weight' && <WeightCalc result={calcResult} />}
               {dataTab === 'concrete' && <ConcreteCalc result={concreteResult} />}
+              {dataTab === 'bbs' && (
+                <BarBendingSchedule
+                  shapes={barShapes}
+                  title="柱钢筋弯折详图 (BBS)"
+                  selectedSetId={selectedRebarInfo?.setId}
+                  onSelectShape={(shape: BarShape) => {
+                    if (!shape.setId) return;
+                    const type = shape.setId === 'column.stirrup'
+                      ? 'stirrup'
+                      : shape.setId.replace('column.', '') as RebarMeshInfo['type'];
+                    setSelectedRebarInfo({
+                      type,
+                      label: shape.name,
+                      detail: `${shape.spec} · BBS下料长度 ${Math.round(shape.totalLen)}mm`,
+                      setId: shape.setId,
+                      groupLabel: shape.name,
+                      groupCount: shape.count > 0 ? shape.count : undefined,
+                      relatedSetIds: shape.relatedSetIds,
+                    });
+                  }}
+                />
+              )}
             </div>
           </div>
         </div>

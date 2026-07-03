@@ -2,13 +2,13 @@
 
 import { useMemo, useState, useCallback, useEffect } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
-import { OrbitControls, Grid } from '@react-three/drei';
+import { Html, OrbitControls, Grid } from '@react-three/drei';
 import { Camera, Maximize2, Minimize2 } from 'lucide-react';
 import { useFullscreen } from '@/lib/useFullscreen';
 import * as THREE from 'three';
-import type { BeamParams, RebarMeshInfo } from '@/lib/types';
+import type { BeamParams, RebarMeshInfo, RebarRenderMode } from '@/lib/types';
 import { parseRebar, parseRebarBottom, parseStirrup, parseSideBar, parseTieBar, autoTieBar, tieBarToString, gradeLabel } from '@/lib/rebar';
-import { calcSupportRebarLength, calcBeamEndAnchor, calcLaE } from '@/lib/anchor';
+import { calcSupportRebarLength, calcBeamEndAnchor, calcBeamSideBarAnchor, calcLaE } from '@/lib/anchor';
 import { beamDenseZoneLength } from '@/lib/construction-rules';
 import { RebarDetailPanel } from './RebarDetailPanel';
 import {
@@ -38,6 +38,8 @@ import {
 } from './three';
 import { useKeyboard, createViewerBindings } from '@/lib/useKeyboard';
 import { KeyboardHelp } from './KeyboardHelp';
+import { createStirrupShapeSpec, createTieBarHookPoints, createTieBarShapeSpec, resolveTieSideOffsetMm } from '@/lib/rebar-shapes';
+import { formatDistributionRange, isRelatedRebarSet, rebarGroupDataFromInfo } from '@/lib/rebar-semantics';
 
 /* Haunch (加腋) concrete geometry */
 function HaunchShape({ beamLen, beamH, beamB, haunchLen, haunchH, haunchType, side, opacity }: {
@@ -164,10 +166,17 @@ function CameraController({ targetPosition }: { targetPosition: [number, number,
   return null;
 }
 
-function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, showDimensions, visibleGroups }: {
+function formatSideBarAnchorDesc(prefix: 'G' | 'N', anchor: ReturnType<typeof calcBeamSideBarAnchor>): string {
+  if (prefix === 'G') {
+    return `构造直锚 15d=${anchor.straightLen}mm`;
+  }
+  return formatAnchorDesc(anchor);
+}
+
+function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, showDimensions, visibleGroups, renderMode }: {
   params: BeamParams; selected: RebarMeshInfo | null;
   onSelect: (info: RebarMeshInfo | null) => void; cutPosition: number | null; concreteOpacity: number;
-  showDimensions: boolean; visibleGroups?: Set<string>;
+  showDimensions: boolean; visibleGroups?: Set<string>; renderMode: RebarRenderMode;
 }) {
   const bm = params.b * S;
   const hm = params.h * S;
@@ -213,7 +222,9 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
   const rightR = params.rightSupport ? parseRebar(params.rightSupport) : null;
   const leftR2 = params.leftSupport2 ? parseRebar(params.leftSupport2) : null;
   const rightR2 = params.rightSupport2 ? parseRebar(params.rightSupport2) : null;
-  const innerR = (spanCount > 1 && params.innerSupport) ? parseRebar(params.innerSupport) : null;
+  const explicitInnerR = (spanCount > 1 && params.innerSupport) ? parseRebar(params.innerSupport) : null;
+  const innerR = spanCount > 1 ? (explicitInnerR ?? rightR ?? leftR) : null;
+  const innerSupportSpec = params.innerSupport || params.rightSupport || params.leftSupport || '';
   const STIR_D = stir.diameter * S; // 箍筋直径
 
   // 箍筋中心线尺寸（保护层外皮→箍筋中心）
@@ -251,18 +262,21 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
     const h0 = hm - COVER - (botDiaBase * S / 2);
     const hbCoeff = seismicGrade === '一级' ? 2.0 : 1.5;
 
-    return spanLayouts.map((span, si) => {
+    return spanLayouts.map((span) => {
       const positions: { x: number; zone: 'dense' | 'normal' }[] = [];
       const halfLen = span.lenS / 2;
       const haunchDense1 = haunchType !== 'none'
         ? Math.max(hbCoeff * beamH * S, 0.5, (haunchLen + 0.5 * h0))
         : 0;
-      const leftSkip = (si === 0 && hasLeftHaunch) ? haunchDense1 : 0;
-      const rightSkip = (si === spanLayouts.length - 1 && hasRightHaunch) ? haunchDense1 : 0;
+      const haunchStirZone = haunchType === 'horizontal' ? haunchDense1 : haunchLen;
+      const leftSkip = hasLeftHaunch ? haunchStirZone : 0;
+      const rightSkip = hasRightHaunch ? haunchStirZone : 0;
 
       const leftStart = -halfLen + leftSkip + 0.05;
       for (let x = leftStart; x < -halfLen + denseZone; x += denseS) positions.push({ x, zone: 'dense' });
-      for (let x = -halfLen + denseZone; x < halfLen - denseZone; x += normalS) positions.push({ x, zone: 'normal' });
+      const normalStart = -halfLen + Math.max(denseZone, leftSkip);
+      const normalEnd = halfLen - Math.max(denseZone, rightSkip);
+      for (let x = normalStart; x < normalEnd; x += normalS) positions.push({ x, zone: 'normal' });
       const rightEnd = halfLen - rightSkip - 0.05;
       for (let x = halfLen - denseZone; x < rightEnd; x += denseS) positions.push({ x, zone: 'dense' });
       return positions;
@@ -305,7 +319,7 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
   })();
 
   // 支座负筋 Y: 在上部通长筋下方（紧贴，实际施工中钢筋紧挨绑扎）
-  const supportDia = (leftR?.diameter || rightR?.diameter || topR.diameter) * S;
+  const supportDia = (leftR?.diameter || rightR?.diameter || innerR?.diameter || topR.diameter) * S;
   // 贴合间距: 仅留半径和，不加额外净距（搅接区钢筋紧贴）
   const supportBarY1 = topBarY1 - topR.diameter * S / 2 - supportDia / 2;
   const supportBarY2 = supportBarY1 - supportDia / 2 - Math.max(supportDia, 25 * S) - supportDia / 2;
@@ -318,8 +332,6 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
 
   const botBars = layoutBars(botR, botBarZRange, botBarYPositions);
 
-  const supportLenMm = calcSupportRebarLength(spanLengthsMm[0]);
-  const supportLen = supportLenMm * S;
   const leftBars = useMemo(() => {
     if (!leftR) return [];
     const range = stirCenterW - STIR_D - leftR.diameter * S;
@@ -358,7 +370,17 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
   const leftAnchorDesc = leftAnchor ? formatAnchorDesc(leftAnchor) : '';
   const rightAnchorDesc = rightAnchor ? formatAnchorDesc(rightAnchor) : '';
 
-  const isSelected = (type: string) => selected?.type === type;
+  const isSelected = (type: string, setId?: string) => {
+    if (setId && selected?.setId) {
+      return selected.setId === setId || (selected.setId === 'beam.stirrup' && setId.startsWith('beam.stirrup.'));
+    }
+    return selected?.type === type;
+  };
+  const sideBarSetId = 'beam.sideBar';
+  const tieBarSetId = 'beam.tieBar';
+  const sideBarSelected = isSelected('sideBar', sideBarSetId);
+  const tieBarSelected = isSelected('tieBar', tieBarSetId);
+  const isRelated = (setId?: string) => isRelatedRebarSet(setId, selected);
   const gv = (g: string) => !visibleGroups || visibleGroups.has(g);
 
   // 收集所有纵筋 Z 坐标，供多肢箍拉筋避让
@@ -374,67 +396,23 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
 
   // 拉筋曲线缓存（参数不随跨变化，提到循环外）
   // 22G101: 拉筋两端135°弯钩勾住腰筋
-  // 用折线点数组(polyline)代替 CatmullRomCurve3，弯折处用小弧线离散化
   const memoTiePoints = useMemo((): THREE.Vector3[] | null => {
     if (!sideInfo) return null;
-    const sideZ = stirCenterW / 2 - STIR_D / 2;  // 拉筋端点对齐腰筋中心线(箍筋内皮)，弯钩从腰筋处向外弯出
+    const sideBarZ = resolveTieSideOffsetMm({
+      sectionWidthMm: params.b,
+      coverMm: params.cover || 25,
+      stirrupDiameterMm: stir.diameter,
+      sideBarDiameterMm: sideInfo.diameter,
+    }) * S;
     const tieInfo = params.tieBar ? parseTieBar(params.tieBar) : autoTieBar(params.b, stir.grade, stir.diameter);
     if (!tieInfo) return null;
-    const tieDiaS = tieInfo.diameter * S;
-    const sideDiaS = sideInfo.diameter * S;
-    // 弯折内半径: 规范要求 ≥ 2.5d(拉筋), 取 max(3d, 腰筋半径+拉筋直径)
-    const bendR = Math.max(sideDiaS / 2 + tieDiaS, tieDiaS * 3);
-    const hookLen = Math.max(10 * tieDiaS, bendR * 1.5);
-
-    // 135° 弯钩: 弧转角 = 3π/4
-    // 弯钩方向: 从水平向下弯，尾端朝混凝土核心方向
-    const bendAngle = Math.PI * 3 / 4;
-    const arcSegs = 8;
-
-    const pts: THREE.Vector3[] = [];
-
-    // ── 左侧 135° 弯钩 ──
-    // 22G101: 弯钩尾端应朝向混凝土核心(+Z方向)
-    // 弧心在直线段端点正下方: (0, -bendR, -sideZ)
-    // 弧从 π/2(顶部=直线段端点) 逆时针转 3π/4 到 5π/4
-    // 注意: 逆时针反向遍历(从5π/4→π/2)保证与直线段的切线连续(DZ=+1)
-    const leftCy = -bendR, leftCz = -sideZ;
-    const leftEndAngle = Math.PI / 2 + bendAngle; // 5π/4
-    const leftArcEndY = leftCy + bendR * Math.sin(leftEndAngle);
-    const leftArcEndZ = leftCz + bendR * Math.cos(leftEndAngle);
-    // 逆时针弧末端切线方向(CCW tangent): (cos(a), -sin(a))
-    const leftTailDY = Math.cos(leftEndAngle);
-    const leftTailDZ = -Math.sin(leftEndAngle);
-    pts.push(new THREE.Vector3(0, leftArcEndY + hookLen * leftTailDY, leftArcEndZ + hookLen * leftTailDZ));
-    // 弧线: 从末端(5π/4)→起点(π/2)（反向遍历保持点序从尾→头）
-    for (let i = arcSegs; i >= 0; i--) {
-      const a = Math.PI / 2 + (i / arcSegs) * bendAngle;
-      pts.push(new THREE.Vector3(0, leftCy + bendR * Math.sin(a), leftCz + bendR * Math.cos(a)));
-    }
-    // 弧在 i=0 处 a=π/2: y=0, z=-sideZ，与直线段左端重合
-
-    // ── 中间直线段 ──
-    pts.push(new THREE.Vector3(0, 0, sideZ));
-
-    // ── 右侧 135° 弯钩 (镜像) ──
-    // 弧心: (0, -bendR, +sideZ)
-    // 弧从 π/2(顶部) 顺时针转 3π/4 到 -π/4
-    // 注意: 顺时针正向遍历(从π/2→-π/4)保证与直线段的切线连续(DZ=+1)
-    const rightCy = -bendR, rightCz = sideZ;
-    const rightEndAngle = Math.PI / 2 - bendAngle; // -π/4
-    for (let i = 0; i <= arcSegs; i++) {
-      const a = Math.PI / 2 - (i / arcSegs) * bendAngle;
-      pts.push(new THREE.Vector3(0, rightCy + bendR * Math.sin(a), rightCz + bendR * Math.cos(a)));
-    }
-    // 顺时针弧末端切线方向(CW tangent): (-cos(a), sin(a))
-    const rightArcEndY = rightCy + bendR * Math.sin(rightEndAngle);
-    const rightArcEndZ = rightCz + bendR * Math.cos(rightEndAngle);
-    const rightTailDY = -Math.cos(rightEndAngle);
-    const rightTailDZ = Math.sin(rightEndAngle);
-    pts.push(new THREE.Vector3(0, rightArcEndY + hookLen * rightTailDY, rightArcEndZ + hookLen * rightTailDZ));
-
-    return pts;
-  }, [sideInfo, params.tieBar, params.b, stir.grade, stir.diameter, stirCenterW, STIR_D]);
+    return createTieBarHookPoints({
+      sideOffset: sideBarZ,
+      tieDiameter: tieInfo.diameter,
+      sideBarDiameter: sideInfo.diameter,
+      hookVisualScale: 0.45,
+    });
+  }, [sideInfo, params.tieBar, params.b, params.cover, stir.grade, stir.diameter]);
 
   return (
     <>
@@ -496,7 +474,7 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
         <RebarBar key={`t${i}`} position={[0, bar.y, bar.z]} length={TOTAL_NET} diameter={d}
           color={COLOR_REBAR} hiColor={COLOR_REBAR_HI}
           info={{ type: 'top', label: '上部通长筋', detail: `${params.top} · ${topR.count}根 ${topR.segments ? '混合直径' : `${gradeLabel(topR.grade)} Φ${topR.diameter}`}，端锚: ${topAnchorDesc}` }}
-          selected={isSelected('top')} onSelect={onSelect} />
+          selected={isSelected('top')} onSelect={onSelect} renderMode={renderMode} />
         );
       })}
 
@@ -516,6 +494,7 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
             hiColor={COLOR_REBAR_HI}
             info={{ type: 'top', label: '上部筋弯锚', detail: topAnchorDesc }}
             selected={isSelected('top')} onSelect={onSelect}
+                  renderMode={renderMode}
             xDir={-1} />
           <BentRebarEnd
             position={[TOTAL_NET / 2, bar.y, bar.z]}
@@ -525,6 +504,7 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
             hiColor={COLOR_REBAR_HI}
             info={{ type: 'top', label: '上部筋弯锚', detail: topAnchorDesc }}
             selected={isSelected('top')} onSelect={onSelect}
+                  renderMode={renderMode}
             xDir={1} />
         </group>
         );
@@ -542,12 +522,12 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
             length={barAnchor.straightLen * S} diameter={d}
             color={COLOR_REBAR} hiColor={COLOR_REBAR_HI}
             info={{ type: 'top', label: '上部筋直锚', detail: topAnchorDesc }}
-            selected={isSelected('top')} onSelect={onSelect} />
+            selected={isSelected('top')} onSelect={onSelect} renderMode={renderMode} />
           <RebarBar position={[TOTAL_NET / 2 + barAnchor.straightLen * S / 2, bar.y, bar.z]}
             length={barAnchor.straightLen * S} diameter={d}
             color={COLOR_REBAR} hiColor={COLOR_REBAR_HI}
             info={{ type: 'top', label: '上部筋直锚', detail: topAnchorDesc }}
-            selected={isSelected('top')} onSelect={onSelect} />
+            selected={isSelected('top')} onSelect={onSelect} renderMode={renderMode} />
         </group>
         );
       })}
@@ -562,7 +542,7 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
         <RebarBar key={`b${i}`} position={[0, bar.y, bar.z]} length={TOTAL_NET} diameter={d}
           color={COLOR_REBAR} hiColor={COLOR_REBAR_HI}
           info={{ type: 'bottom', label: '下部通长筋', detail: `${params.bottom} · ${botR.count}根 ${botR.segments ? '混合直径' : `${gradeLabel(botR.grade)} Φ${botR.diameter}`}，端锚: ${botAnchorDesc}` }}
-          selected={isSelected('bottom')} onSelect={onSelect} />
+          selected={isSelected('bottom')} onSelect={onSelect} renderMode={renderMode} />
         );
       })}
 
@@ -582,6 +562,7 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
             hiColor={COLOR_REBAR_HI}
             info={{ type: 'bottom', label: '下部筋弯锚', detail: botAnchorDesc }}
             selected={isSelected('bottom')} onSelect={onSelect}
+                  renderMode={renderMode}
             xDir={-1} />
           <BentRebarEnd
             position={[TOTAL_NET / 2, bar.y, bar.z]}
@@ -591,6 +572,7 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
             hiColor={COLOR_REBAR_HI}
             info={{ type: 'bottom', label: '下部筋弯锚', detail: botAnchorDesc }}
             selected={isSelected('bottom')} onSelect={onSelect}
+                  renderMode={renderMode}
             xDir={1} />
         </group>
         );
@@ -608,12 +590,12 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
             length={barAnchor.straightLen * S} diameter={d}
             color={COLOR_REBAR} hiColor={COLOR_REBAR_HI}
             info={{ type: 'bottom', label: '下部筋直锚', detail: botAnchorDesc }}
-            selected={isSelected('bottom')} onSelect={onSelect} />
+            selected={isSelected('bottom')} onSelect={onSelect} renderMode={renderMode} />
           <RebarBar position={[TOTAL_NET / 2 + barAnchor.straightLen * S / 2, bar.y, bar.z]}
             length={barAnchor.straightLen * S} diameter={d}
             color={COLOR_REBAR} hiColor={COLOR_REBAR_HI}
             info={{ type: 'bottom', label: '下部筋直锚', detail: botAnchorDesc }}
-            selected={isSelected('bottom')} onSelect={onSelect} />
+            selected={isSelected('bottom')} onSelect={onSelect} renderMode={renderMode} />
         </group>
         );
       })}
@@ -628,16 +610,24 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
         const supportLenMmI = calcSupportRebarLength(spanLenMmI);
         const supportLen2I = calcSupportRebarLength(spanLenMmI, 2) * S;
         const supportLenMm2I = calcSupportRebarLength(spanLenMmI, 2);
+        const isFirstSpan = si === 0;
+        const isLastSpan = si === spanCount - 1;
+        const hasLeftEndSupport = isFirstSpan && !!leftR;
+        const hasRightEndSupport = isLastSpan && !!rightR;
+        const hasLeftEndSupport2 = isFirstSpan && !!leftR2;
+        const hasRightEndSupport2 = isLastSpan && !!rightR2;
+        const hasInnerLeftSupport = si > 0 && !!innerR;
+        const hasInnerRightSupport = si < spanCount - 1 && !!innerR;
         return (
         <group key={`span-se-${si}`} position={[span.center, 0, 0]} visible={gv('support')}>
           {/* Left support rebars (ln/3 from column face) */}
-          {leftR && leftBars.map((bar, i) => (
+          {hasLeftEndSupport && leftR && leftBars.map((bar, i) => (
             <RebarBar key={`ls${i}`} position={[-span.lenS / 2 + supportLenI / 2, bar.y, bar.z]} length={supportLenI} diameter={leftR.diameter}
               color={COLOR_SUPPORT} hiColor={COLOR_SUPPORT_HI}
               info={{ type: 'leftSupport', label: '左支座负筋(第一排)', detail: `${params.leftSupport} · ${leftR.count}根 ${gradeLabel(leftR.grade)} Φ${leftR.diameter}，伸入跨内 ln/3=${supportLenMmI}mm，端锚: ${leftAnchorDesc}` }}
-              selected={isSelected('leftSupport')} onSelect={onSelect} />
+              selected={isSelected('leftSupport')} onSelect={onSelect} renderMode={renderMode} />
           ))}
-          {leftR && leftAnchor && !leftAnchor.canStraight && leftBars.map((bar, i) => (
+          {hasLeftEndSupport && leftR && leftAnchor && !leftAnchor.canStraight && leftBars.map((bar, i) => (
             <BentRebarEnd key={`lsa-b${i}`}
               position={[-span.lenS / 2, bar.y, bar.z]}
               straightLen={leftAnchor.bentStraightPart * S}
@@ -646,25 +636,26 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
               hiColor={COLOR_SUPPORT_HI}
               info={{ type: 'leftSupport', label: '左支座负筋弯锚', detail: leftAnchorDesc }}
               selected={isSelected('leftSupport')} onSelect={onSelect}
+                  renderMode={renderMode}
               xDir={-1} />
           ))}
-          {leftR && leftAnchor && leftAnchor.canStraight && leftBars.map((bar, i) => (
+          {hasLeftEndSupport && leftR && leftAnchor && leftAnchor.canStraight && leftBars.map((bar, i) => (
             <RebarBar key={`lsa-s${i}`}
               position={[-span.lenS / 2 - leftAnchor.straightLen * S / 2, bar.y, bar.z]}
               length={leftAnchor.straightLen * S} diameter={leftR.diameter}
               color={COLOR_SUPPORT} hiColor={COLOR_SUPPORT_HI}
               info={{ type: 'leftSupport', label: '左支座负筋直锚', detail: leftAnchorDesc }}
-              selected={isSelected('leftSupport')} onSelect={onSelect} />
+              selected={isSelected('leftSupport')} onSelect={onSelect} renderMode={renderMode} />
           ))}
 
           {/* Right support rebars */}
-          {rightR && rightBars.map((bar, i) => (
+          {hasRightEndSupport && rightR && rightBars.map((bar, i) => (
             <RebarBar key={`rs${i}`} position={[span.lenS / 2 - supportLenI / 2, bar.y, bar.z]} length={supportLenI} diameter={rightR.diameter}
               color={COLOR_SUPPORT} hiColor={COLOR_SUPPORT_HI}
               info={{ type: 'rightSupport', label: '右支座负筋(第一排)', detail: `${params.rightSupport} · ${rightR.count}根 ${gradeLabel(rightR.grade)} Φ${rightR.diameter}，伸入跨内 ln/3=${supportLenMmI}mm，端锚: ${rightAnchorDesc}` }}
-              selected={isSelected('rightSupport')} onSelect={onSelect} />
+              selected={isSelected('rightSupport')} onSelect={onSelect} renderMode={renderMode} />
           ))}
-          {rightR && rightAnchor && !rightAnchor.canStraight && rightBars.map((bar, i) => (
+          {hasRightEndSupport && rightR && rightAnchor && !rightAnchor.canStraight && rightBars.map((bar, i) => (
             <BentRebarEnd key={`rsa-b${i}`}
               position={[span.lenS / 2, bar.y, bar.z]}
               straightLen={rightAnchor.bentStraightPart * S}
@@ -673,25 +664,26 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
               hiColor={COLOR_SUPPORT_HI}
               info={{ type: 'rightSupport', label: '右支座负筋弯锚', detail: rightAnchorDesc }}
               selected={isSelected('rightSupport')} onSelect={onSelect}
+                  renderMode={renderMode}
               xDir={1} />
           ))}
-          {rightR && rightAnchor && rightAnchor.canStraight && rightBars.map((bar, i) => (
+          {hasRightEndSupport && rightR && rightAnchor && rightAnchor.canStraight && rightBars.map((bar, i) => (
             <RebarBar key={`rsa-s${i}`}
               position={[span.lenS / 2 + rightAnchor.straightLen * S / 2, bar.y, bar.z]}
               length={rightAnchor.straightLen * S} diameter={rightR.diameter}
               color={COLOR_SUPPORT} hiColor={COLOR_SUPPORT_HI}
               info={{ type: 'rightSupport', label: '右支座负筋直锚', detail: rightAnchorDesc }}
-              selected={isSelected('rightSupport')} onSelect={onSelect} />
+              selected={isSelected('rightSupport')} onSelect={onSelect} renderMode={renderMode} />
           ))}
 
           {/* Left support rebars row 2 (ln/4 from column face) */}
-          {leftR2 && leftBars2.map((bar, i) => (
+          {hasLeftEndSupport2 && leftR2 && leftBars2.map((bar, i) => (
             <RebarBar key={`ls2-${i}`} position={[-span.lenS / 2 + supportLen2I / 2, bar.y, bar.z]} length={supportLen2I} diameter={leftR2.diameter}
               color={COLOR_SUPPORT} hiColor={COLOR_SUPPORT_HI}
               info={{ type: 'leftSupport2', label: '左支座负筋(第二排)', detail: `${params.leftSupport2} · ${leftR2.count}根 ${gradeLabel(leftR2.grade)} Φ${leftR2.diameter}，伸入跨内 ln/4=${supportLenMm2I}mm，端锚: ${leftAnchorDesc2}` }}
-              selected={isSelected('leftSupport2')} onSelect={onSelect} />
+              selected={isSelected('leftSupport2')} onSelect={onSelect} renderMode={renderMode} />
           ))}
-          {leftR2 && leftAnchor2 && !leftAnchor2.canStraight && leftBars2.map((bar, i) => (
+          {hasLeftEndSupport2 && leftR2 && leftAnchor2 && !leftAnchor2.canStraight && leftBars2.map((bar, i) => (
             <BentRebarEnd key={`ls2a-b${i}`}
               position={[-span.lenS / 2, bar.y, bar.z]}
               straightLen={leftAnchor2.bentStraightPart * S}
@@ -700,25 +692,26 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
               hiColor={COLOR_SUPPORT_HI}
               info={{ type: 'leftSupport2', label: '左支座负筋(二排)弯锚', detail: leftAnchorDesc2 }}
               selected={isSelected('leftSupport2')} onSelect={onSelect}
+                  renderMode={renderMode}
               xDir={-1} />
           ))}
-          {leftR2 && leftAnchor2 && leftAnchor2.canStraight && leftBars2.map((bar, i) => (
+          {hasLeftEndSupport2 && leftR2 && leftAnchor2 && leftAnchor2.canStraight && leftBars2.map((bar, i) => (
             <RebarBar key={`ls2a-s${i}`}
               position={[-span.lenS / 2 - leftAnchor2.straightLen * S / 2, bar.y, bar.z]}
               length={leftAnchor2.straightLen * S} diameter={leftR2.diameter}
               color={COLOR_SUPPORT} hiColor={COLOR_SUPPORT_HI}
               info={{ type: 'leftSupport2', label: '左支座负筋(二排)直锚', detail: leftAnchorDesc2 }}
-              selected={isSelected('leftSupport2')} onSelect={onSelect} />
+              selected={isSelected('leftSupport2')} onSelect={onSelect} renderMode={renderMode} />
           ))}
 
           {/* Right support rebars row 2 */}
-          {rightR2 && rightBars2.map((bar, i) => (
+          {hasRightEndSupport2 && rightR2 && rightBars2.map((bar, i) => (
             <RebarBar key={`rs2-${i}`} position={[span.lenS / 2 - supportLen2I / 2, bar.y, bar.z]} length={supportLen2I} diameter={rightR2.diameter}
               color={COLOR_SUPPORT} hiColor={COLOR_SUPPORT_HI}
               info={{ type: 'rightSupport2', label: '右支座负筋(第二排)', detail: `${params.rightSupport2} · ${rightR2.count}根 ${gradeLabel(rightR2.grade)} Φ${rightR2.diameter}，伸入跨内 ln/4=${supportLenMm2I}mm，端锚: ${rightAnchorDesc2}` }}
-              selected={isSelected('rightSupport2')} onSelect={onSelect} />
+              selected={isSelected('rightSupport2')} onSelect={onSelect} renderMode={renderMode} />
           ))}
-          {rightR2 && rightAnchor2 && !rightAnchor2.canStraight && rightBars2.map((bar, i) => (
+          {hasRightEndSupport2 && rightR2 && rightAnchor2 && !rightAnchor2.canStraight && rightBars2.map((bar, i) => (
             <BentRebarEnd key={`rs2a-b${i}`}
               position={[span.lenS / 2, bar.y, bar.z]}
               straightLen={rightAnchor2.bentStraightPart * S}
@@ -727,32 +720,33 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
               hiColor={COLOR_SUPPORT_HI}
               info={{ type: 'rightSupport2', label: '右支座负筋(二排)弯锚', detail: rightAnchorDesc2 }}
               selected={isSelected('rightSupport2')} onSelect={onSelect}
+                  renderMode={renderMode}
               xDir={1} />
           ))}
-          {rightR2 && rightAnchor2 && rightAnchor2.canStraight && rightBars2.map((bar, i) => (
+          {hasRightEndSupport2 && rightR2 && rightAnchor2 && rightAnchor2.canStraight && rightBars2.map((bar, i) => (
             <RebarBar key={`rs2a-s${i}`}
               position={[span.lenS / 2 + rightAnchor2.straightLen * S / 2, bar.y, bar.z]}
               length={rightAnchor2.straightLen * S} diameter={rightR2.diameter}
               color={COLOR_SUPPORT} hiColor={COLOR_SUPPORT_HI}
               info={{ type: 'rightSupport2', label: '右支座负筋(二排)直锚', detail: rightAnchorDesc2 }}
-              selected={isSelected('rightSupport2')} onSelect={onSelect} />
+              selected={isSelected('rightSupport2')} onSelect={onSelect} renderMode={renderMode} />
           ))}
 
           {/* Erection bars (架立筋) */}
-          {(leftR || rightR || params.erectionBar) && (() => {
+          {(leftR || rightR || innerR || params.erectionBar) && (() => {
             const erUser = params.erectionBar ? parseRebar(params.erectionBar) : null;
             const LAP_LEN = 150 * S;
-            const leftSupportLen = leftR ? supportLenI : 0;
-            const rightSupportLen = rightR ? supportLenI : 0;
+            const leftSupportLen = (hasLeftEndSupport || hasInnerLeftSupport) ? supportLenI : 0;
+            const rightSupportLen = (hasRightEndSupport || hasInnerRightSupport) ? supportLenI : 0;
             let erectionLen: number;
             let erectionX: number;
-            if (leftR && rightR) {
+            if (leftSupportLen > 0 && rightSupportLen > 0) {
               erectionLen = span.lenS - leftSupportLen - rightSupportLen + 2 * LAP_LEN;
               erectionX = 0;
-            } else if (leftR) {
+            } else if (leftSupportLen > 0) {
               erectionLen = span.lenS - leftSupportLen + LAP_LEN;
               erectionX = (-span.lenS / 2 + leftSupportLen - LAP_LEN + span.lenS / 2) / 2;
-            } else if (rightR) {
+            } else if (rightSupportLen > 0) {
               erectionLen = span.lenS - rightSupportLen + LAP_LEN;
               erectionX = (-span.lenS / 2 + span.lenS / 2 - rightSupportLen + LAP_LEN) / 2;
             } else {
@@ -793,7 +787,7 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
             const LAP_LEN_VIS = lapLenMm * S;
             const lapHeight = Math.max(supportDia * 4, 0.018);
             const lapZones: React.ReactNode[] = [];
-            if (leftR) {
+            if (leftSupportLen > 0) {
               const lapCenterX = -span.lenS / 2 + leftSupportLen - LAP_LEN_VIS / 2;
               lapZones.push(
                 <mesh key="lap-zone-l" position={[lapCenterX, supportBarY1, 0]}>
@@ -808,7 +802,7 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
                 </lineSegments>
               );
             }
-            if (rightR) {
+            if (rightSupportLen > 0) {
               const lapCenterX = span.lenS / 2 - rightSupportLen + LAP_LEN_VIS / 2;
               lapZones.push(
                 <mesh key="lap-zone-r" position={[lapCenterX, supportBarY1, 0]}>
@@ -827,8 +821,8 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
               ...finalErZs.map((erZ, idx) => (
                 <RebarBar key={`erection-${idx}`} position={[erectionX, supportBarY1, erZ]} length={erectionLen} diameter={erectionDia}
                   color={COLOR_ERECTION} hiColor={COLOR_ERECTION_HI}
-                  info={{ type: 'erection', label: '架立筋', detail: `${params.erectionBar || `${erectionCount}Φ${erectionDia}`}${(leftR || rightR) ? `，与支座负筋搭接${lapLenMm}mm(≥150mm)${leftR && rightR ? '，连接两侧支座负筋' : '，延伸至对侧柱面'}` : '，通长布置'}` }}
-                  selected={isSelected('erection')} onSelect={onSelect} />
+                  info={{ type: 'erection', label: '架立筋', detail: `${params.erectionBar || `${erectionCount}Φ${erectionDia}`}，第${si + 1}跨，与相邻支座负筋搭接${lapLenMm}mm(≥150mm)` }}
+                  selected={isSelected('erection')} onSelect={onSelect} renderMode={renderMode} />
               )),
               ...lapZones,
             ];
@@ -858,8 +852,8 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
                 length={barTotalLen}
                 diameter={innerR.diameter}
                 color={COLOR_SUPPORT} hiColor={COLOR_SUPPORT_HI}
-                info={{ type: 'innerSupport', label: `中间支座负筋(第${ci + 1}内柱)`, detail: `${params.innerSupport} · ${innerR.count}根 ${gradeLabel(innerR.grade)} Φ${innerR.diameter}，左跨 ln/3=${leftLenMm}mm，右跨 ln/3=${rightLenMm}mm，贯通柱 hc=${params.hc || 500}mm` }}
-                selected={isSelected('innerSupport')} onSelect={onSelect} />
+                info={{ type: 'innerSupport', label: `中间支座负筋(第${ci + 1}内柱)`, detail: `${innerSupportSpec} · ${innerR.count}根 ${gradeLabel(innerR.grade)} Φ${innerR.diameter}，左跨 ln/3=${leftLenMm}mm，右跨 ln/3=${rightLenMm}mm，贯通柱 hc=${params.hc || 500}mm${params.innerSupport ? '' : '（未填中间支座，按端支座筋兜底表达）'}` }}
+                selected={isSelected('innerSupport')} onSelect={onSelect} renderMode={renderMode} />
             );
           });
         }
@@ -881,22 +875,42 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
           yPositions.push(yBot + (yTop - yBot) * (i + 1) / (perSide + 1));
         }
         // Z 坐标: 紧贴箍筋内侧，梁两侧面
-        const sideZ = (stirCenterW / 2) - STIR_D / 2;
+        const sideZ = resolveTieSideOffsetMm({
+          sectionWidthMm: params.b,
+          coverMm: params.cover || 25,
+          stirrupDiameterMm: stir.diameter,
+          sideBarDiameterMm: sideDia,
+        }) * S;
         const prefixLabel = sideInfo.prefix === 'G' ? '构造腰筋' : '抗扭筋';
         // 22G101: 腰筋锚固 — G构造腰筋锚固15d, N抗扭筋同纵筋(laE)
-        const sideAnchor = calcBeamEndAnchor(sideInfo.grade, sideDia, params.concreteGrade, params.seismicGrade, params.hc || 500, params.cover || 25);
-        const sideAnchorDesc = formatAnchorDesc(sideAnchor);
+        const sideAnchor = calcBeamSideBarAnchor(sideInfo.prefix, sideInfo.grade, sideDia, params.concreteGrade, params.seismicGrade, params.hc || 500, params.cover || 25);
+        const sideAnchorDesc = formatSideBarAnchorDesc(sideInfo.prefix, sideAnchor);
         const bars: React.ReactNode[] = [];
         const zSides = [sideZ, -sideZ];
+        const sideGroupCount = yPositions.length * zSides.length;
+        const sideGroupRange = formatDistributionRange(0, Math.round(TOTAL_NET / S));
         yPositions.forEach((y, yi) => {
           zSides.forEach((z, zi) => {
             const sideKey = zi === 0 ? 'f' : 'b';
+            const instanceIndex = yi * zSides.length + zi + 1;
+            const sideBarInfo: RebarMeshInfo = {
+              type: 'sideBar',
+              label: prefixLabel,
+              detail: `${params.sideBar} · ${sideInfo.count}根(每侧${perSide}根) ${gradeLabel(sideInfo.grade)} Φ${sideDia}，端锚: ${sideAnchorDesc}`,
+              setId: sideBarSetId,
+              instanceIndex,
+              groupLabel: prefixLabel,
+              groupCount: sideGroupCount,
+              distributionRange: sideGroupRange,
+              relatedSetIds: [tieBarSetId],
+            };
             // 梁内主体
             bars.push(
               <RebarBar key={`side-${sideKey}-${yi}`} position={[0, y, z]} length={TOTAL_NET} diameter={sideDia}
                 color={COLOR_SIDEBAR} hiColor={COLOR_SIDEBAR_HI}
-                info={{ type: 'sideBar', label: prefixLabel, detail: `${params.sideBar} · ${sideInfo.count}根(每侧${perSide}根) ${gradeLabel(sideInfo.grade)} Φ${sideDia}，端锚: ${sideAnchorDesc}` }}
-                selected={isSelected('sideBar')} onSelect={onSelect} />
+                info={sideBarInfo}
+                selected={isSelected('sideBar', sideBarSetId)} highlighted={tieBarSelected || isRelated(sideBarSetId)} onSelect={onSelect} renderMode={renderMode}
+                activeScale={1.08} highlightScale={1.03} />
             );
             // 左端锚固
             if (sideAnchor.canStraight) {
@@ -905,8 +919,9 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
                   position={[-TOTAL_NET / 2 - sideAnchor.straightLen * S / 2, y, z]}
                   length={sideAnchor.straightLen * S} diameter={sideDia}
                   color={COLOR_SIDEBAR} hiColor={COLOR_SIDEBAR_HI}
-                  info={{ type: 'sideBar', label: `${prefixLabel}直锚`, detail: sideAnchorDesc }}
-                  selected={isSelected('sideBar')} onSelect={onSelect} />
+                  info={{ ...sideBarInfo, label: `${prefixLabel}直锚`, detail: sideAnchorDesc }}
+                  selected={isSelected('sideBar', sideBarSetId)} highlighted={tieBarSelected || isRelated(sideBarSetId)} onSelect={onSelect} renderMode={renderMode}
+                  activeScale={1.08} highlightScale={1.03} />
               );
             } else {
               bars.push(
@@ -916,8 +931,9 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
                   bendLen={sideAnchor.bentBendPart * S}
                   diameter={sideDia} direction="down" color={COLOR_SIDEBAR}
                   hiColor={COLOR_SIDEBAR_HI}
-                  info={{ type: 'sideBar', label: `${prefixLabel}弯锚`, detail: sideAnchorDesc }}
-                  selected={isSelected('sideBar')} onSelect={onSelect}
+                  info={{ ...sideBarInfo, label: `${prefixLabel}弯锚`, detail: sideAnchorDesc }}
+                  selected={isSelected('sideBar', sideBarSetId)} highlighted={tieBarSelected || isRelated(sideBarSetId)} onSelect={onSelect}
+                  renderMode={renderMode}
                   xDir={-1} />
               );
             }
@@ -928,8 +944,9 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
                   position={[TOTAL_NET / 2 + sideAnchor.straightLen * S / 2, y, z]}
                   length={sideAnchor.straightLen * S} diameter={sideDia}
                   color={COLOR_SIDEBAR} hiColor={COLOR_SIDEBAR_HI}
-                  info={{ type: 'sideBar', label: `${prefixLabel}直锚`, detail: sideAnchorDesc }}
-                  selected={isSelected('sideBar')} onSelect={onSelect} />
+                  info={{ ...sideBarInfo, label: `${prefixLabel}直锚`, detail: sideAnchorDesc }}
+                  selected={isSelected('sideBar', sideBarSetId)} highlighted={tieBarSelected || isRelated(sideBarSetId)} onSelect={onSelect} renderMode={renderMode}
+                  activeScale={1.08} highlightScale={1.03} />
               );
             } else {
               bars.push(
@@ -939,8 +956,9 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
                   bendLen={sideAnchor.bentBendPart * S}
                   diameter={sideDia} direction="down" color={COLOR_SIDEBAR}
                   hiColor={COLOR_SIDEBAR_HI}
-                  info={{ type: 'sideBar', label: `${prefixLabel}弯锚`, detail: sideAnchorDesc }}
-                  selected={isSelected('sideBar')} onSelect={onSelect}
+                  info={{ ...sideBarInfo, label: `${prefixLabel}弯锚`, detail: sideAnchorDesc }}
+                  selected={isSelected('sideBar', sideBarSetId)} highlighted={tieBarSelected || isRelated(sideBarSetId)} onSelect={onSelect}
+                  renderMode={renderMode}
                   xDir={1} />
               );
             }
@@ -955,7 +973,7 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
       {spanLayouts.map((span, si) => (
         <group key={`span-ts-${si}`} position={[span.center, 0, 0]}>
           {/* Tie bars (拉筋) */}
-          <group visible={gv('sideBar')}>
+          <group visible={gv('tieBar')}>
           {sideInfo && memoTiePoints && (() => {
             const perSide = Math.ceil(sideInfo.count / 2);
             const sideDia = sideInfo.diameter;
@@ -973,16 +991,39 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
             const tieDetail = `${tieLabel} · ${gradeLabel(tieInfo.grade)} Φ${tieDia}，间距${stir.spacingNormal}mm(同箍筋非加密区)，两端135°弯钩`;
             const tieSpacing = stir.spacingNormal * S;
             const tieBars: React.ReactNode[] = [];
+            const tieXs: number[] = [];
             for (let sx = -span.lenS / 2 + tieSpacing * 1.5; sx < span.lenS / 2 - tieSpacing * 0.5; sx += tieSpacing) {
+              tieXs.push(sx);
+            }
+            const tieGroupCount = tieXs.length * tieYPositions.length;
+            const tieRange = tieXs.length > 0
+              ? formatDistributionRange(
+                  Math.round((span.center + tieXs[0] + TOTAL_NET / 2) / S),
+                  Math.round((span.center + tieXs[tieXs.length - 1] + TOTAL_NET / 2) / S),
+                  stir.spacingNormal,
+                )
+              : formatDistributionRange(0, Math.round(span.lenS / S), stir.spacingNormal);
+            tieXs.forEach((sx, xi) => {
               tieYPositions.forEach((y, yi) => {
+                const instanceIndex = xi * tieYPositions.length + yi + 1;
                 tieBars.push(
                   <TieBarMesh key={`tie-${si}-${yi}-${sx.toFixed(4)}`}
                     position={[sx, y, 0]} points={memoTiePoints} radius={tieDiaS / 2}
-                    info={{ type: 'tieBar', label: '拉筋', detail: tieDetail }}
-                    selected={isSelected('tieBar')} onSelect={onSelect} />
+                    info={{
+                      type: 'tieBar',
+                      label: '拉筋',
+                      detail: tieDetail,
+                      setId: tieBarSetId,
+                      instanceIndex,
+                      groupLabel: '梁拉筋',
+                      groupCount: tieGroupCount,
+                      distributionRange: tieRange,
+                      relatedSetIds: [sideBarSetId],
+                    }}
+                    selected={isSelected('tieBar', tieBarSetId)} highlighted={sideBarSelected || isRelated(tieBarSetId)} onSelect={onSelect} renderMode={renderMode} />
                 );
               });
-            }
+            });
             return tieBars;
           })()}
 
@@ -993,12 +1034,35 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
             const zoneColor = s.zone === 'dense' ? COLOR_STIRRUP_DENSE : COLOR_STIRRUP_NORMAL;
             const zoneHiColor = s.zone === 'dense' ? COLOR_STIRRUP_DENSE_HI : COLOR_STIRRUP_NORMAL_HI;
             const zoneLabel = s.zone === 'dense' ? '箍筋(加密区)' : '箍筋(非加密区)';
+            const zoneKey = s.zone === 'normal' ? 'normal' : (s.x < 0 ? 'dense-left' : 'dense-right');
+            const setId = `beam.stirrup.span-${si}.${zoneKey}`;
+            const groupStirrups = (stirrupsPerSpan[si] || []).filter((item) => {
+              const itemZoneKey = item.zone === 'normal' ? 'normal' : (item.x < 0 ? 'dense-left' : 'dense-right');
+              return itemZoneKey === zoneKey;
+            });
+            const instanceIndex = groupStirrups.findIndex((item) => item.x === s.x && item.zone === s.zone) + 1;
+            const groupStart = groupStirrups[0]?.x ?? s.x;
+            const groupEnd = groupStirrups[groupStirrups.length - 1]?.x ?? s.x;
+            const spacingMm = s.zone === 'dense' ? stir.spacingDense : stir.spacingNormal;
             return (
               <StirrupRing key={`s${si}-${i}`} x={s.x} width={span.bS - 2 * COVER - STIR_D} height={stirCenterH} diameter={stir.diameter}
                 color={zoneColor} hiColor={zoneHiColor} cover={COVER + STIR_D / 2} legs={stir.legs}
                 barZPositions={allBarZPositions}
-                info={{ type: 'stirrup', label: zoneLabel, detail: `${params.stirrup} · ${gradeLabel(stir.grade)} Φ${stir.diameter} 加密区${denseZoneMm}mm(=max(2h,500))/${stir.spacingDense} 非加密区/${stir.spacingNormal} ${stir.legs}肢箍` }}
-                selected={isSelected('stirrup')} onSelect={onSelect} />
+                info={{
+                  type: 'stirrup',
+                  label: zoneLabel,
+                  detail: `${params.stirrup} · ${gradeLabel(stir.grade)} Φ${stir.diameter} 加密区${denseZoneMm}mm(=max(2h,500))/${stir.spacingDense} 非加密区/${stir.spacingNormal} ${stir.legs}肢箍`,
+                  setId,
+                  instanceIndex,
+                  groupLabel: `第${si + 1}跨${zoneKey === 'normal' ? '非加密区箍筋' : zoneKey === 'dense-left' ? '左加密区箍筋' : '右加密区箍筋'}`,
+                  groupCount: groupStirrups.length,
+                  distributionRange: formatDistributionRange(
+                    Math.round((span.center + groupStart + TOTAL_NET / 2) / S),
+                    Math.round((span.center + groupEnd + TOTAL_NET / 2) / S),
+                    spacingMm,
+                  ),
+                }}
+                selected={isSelected('stirrup', setId)} onSelect={onSelect} renderMode={renderMode} />
             );
           })}
           </group>
@@ -1063,7 +1127,7 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
                 color={COLOR_HAUNCH} hiColor={COLOR_HAUNCH_HI}
                 renderOrder={2}
                 info={{ type: 'bottom', label: '附加筋(柱内锚固)', detail: `伸入柱内${Math.round(anchorInCol / S)}mm(≥laE=${haunchLaE}mm)，Φ${botR.diameter}` }}
-                selected={isSelected('bottom')} onSelect={onSelect} />
+                selected={isSelected('bottom')} onSelect={onSelect} renderMode={renderMode} />
             );
             // 斜面段: 从柱面沿斜面穿过梁底纵筋延伸入梁内
             haunchBars.push(
@@ -1073,7 +1137,7 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
                 diameter={botR.diameter}
                 color={COLOR_HAUNCH} hiColor={COLOR_HAUNCH_HI}
                 info={{ type: 'bottom', label: '附加筋(斜面)', detail: `沿加腋斜面延伸入梁内，斜面长≥laE=${haunchLaE}mm，Φ${botR.diameter}` }}
-                selected={isSelected('bottom')} onSelect={onSelect} />
+                selected={isSelected('bottom')} onSelect={onSelect} renderMode={renderMode} />
             );
           }
 
@@ -1099,7 +1163,7 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
                 color={COLOR_STIRRUP} hiColor={COLOR_STIRRUP_HI}
                 cover={-localDepth + COVER} legs={stir.legs}
                 info={{ type: 'stirrup', label: '加腋区箍筋', detail: `加密区1=${Math.round(denseZone1mm)}mm，间距${stir.spacingDense}mm${inHaunchZone ? '，高度含加腋' : ''}` }}
-                selected={isSelected('stirrup')} onSelect={onSelect} />
+                selected={isSelected('stirrup')} onSelect={onSelect} renderMode={renderMode} />
             );
           }
         });
@@ -1134,7 +1198,7 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
                 color={COLOR_HAUNCH} hiColor={COLOR_HAUNCH_HI}
                 renderOrder={2}
                 info={{ type: 'bottom', label: '附加筋(柱内)', detail: `竖向加腋，伸入柱内${Math.round(anchorInCol / S)}mm(≥laE)` }}
-                selected={isSelected('bottom')} onSelect={onSelect} />
+                selected={isSelected('bottom')} onSelect={onSelect} renderMode={renderMode} />
             );
             haunchBars.push(
               <SlopedRebarBar key={`vbs-${sd}-${zi}`}
@@ -1143,7 +1207,7 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
                 diameter={botR.diameter}
                 color={COLOR_HAUNCH} hiColor={COLOR_HAUNCH_HI}
                 info={{ type: 'bottom', label: '下部附加筋(斜面)', detail: '竖向加腋，沿斜面' }}
-                selected={isSelected('bottom')} onSelect={onSelect} />
+                selected={isSelected('bottom')} onSelect={onSelect} renderMode={renderMode} />
             );
             // 上部
             haunchBars.push(
@@ -1153,7 +1217,7 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
                 color={COLOR_HAUNCH} hiColor={COLOR_HAUNCH_HI}
                 renderOrder={2}
                 info={{ type: 'top', label: '附加筋(柱内)', detail: `竖向加腋，伸入柱内${Math.round(anchorInCol / S)}mm(≥laE)` }}
-                selected={isSelected('top')} onSelect={onSelect} />
+                selected={isSelected('top')} onSelect={onSelect} renderMode={renderMode} />
             );
             haunchBars.push(
               <SlopedRebarBar key={`vts-${sd}-${zi}`}
@@ -1162,7 +1226,7 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
                 diameter={topR.diameter}
                 color={COLOR_HAUNCH} hiColor={COLOR_HAUNCH_HI}
                 info={{ type: 'top', label: '上部附加筋(斜面)', detail: '竖向加腋，沿斜面' }}
-                selected={isSelected('top')} onSelect={onSelect} />
+                selected={isSelected('top')} onSelect={onSelect} renderMode={renderMode} />
             );
           });
 
@@ -1178,7 +1242,7 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
                 height={innerH + stir.diameter * S} diameter={stir.diameter}
                 color={COLOR_STIRRUP} hiColor={COLOR_STIRRUP_HI} cover={COVER} legs={stir.legs}
                 info={{ type: 'stirrup', label: '加腋区箍筋', detail: `加密区2，间距${stir.spacingDense}mm` }}
-                selected={isSelected('stirrup')} onSelect={onSelect} />
+                selected={isSelected('stirrup')} onSelect={onSelect} renderMode={renderMode} />
             );
           }
         });
@@ -1194,6 +1258,8 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
           {spanLayouts.map((span, si) => {
             const dimSupportLenI = calcSupportRebarLength(spanLengthsMm[si]) * S;
             const dimSupportLenMmI = calcSupportRebarLength(spanLengthsMm[si]);
+            const hasLeftDimSupport = (si === 0 && !!leftR) || (si > 0 && !!innerR);
+            const hasRightDimSupport = (si === spanCount - 1 && !!rightR) || (si < spanCount - 1 && !!innerR);
             return (
             <group key={`dim-span-${si}`} position={[span.center, 0, 0]}>
               <DenseZoneMark x={-span.lenS / 2 + denseZone} beamH={hm} />
@@ -1216,19 +1282,19 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
                 label={`ln=${spanLengthsMm[si]}mm${spanCount > 1 ? ` (跨${si + 1})` : ''}`}
                 color="#2563EB"
               />
-              {leftR && (
+              {hasLeftDimSupport && (
                 <DimLine
                   start={-span.lenS / 2} end={-span.lenS / 2 + dimSupportLenI}
                   offset={hm + hm * 0.2}
-                  label={`ln/3=${dimSupportLenMmI}`}
+                  label={`${si === 0 && leftR ? '端支座' : '内支座'} ln/3=${dimSupportLenMmI}`}
                   color="#7C3AED"
                 />
               )}
-              {rightR && (
+              {hasRightDimSupport && (
                 <DimLine
                   start={span.lenS / 2 - dimSupportLenI} end={span.lenS / 2}
                   offset={hm + hm * 0.2}
-                  label={`ln/3=${dimSupportLenMmI}`}
+                  label={`${si === spanCount - 1 && rightR ? '端支座' : '内支座'} ln/3=${dimSupportLenMmI}`}
                   color="#7C3AED"
                 />
               )}
@@ -1260,6 +1326,21 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
             label={`h=${params.h}`}
             color="#475569"
           />
+
+          <Html position={[-TOTAL_NET / 2 + Math.min(TOTAL_NET * 0.22, 1.2), hm + hm * 0.62, -bm * 0.6]} center distanceFactor={8}>
+            <div style={{
+              color: '#0F766E',
+              fontSize: 8,
+              fontWeight: 700,
+              lineHeight: 1.25,
+              letterSpacing: 0,
+              whiteSpace: 'nowrap',
+              pointerEvents: 'none',
+              textShadow: '0 0 3px #fff, 0 0 6px rgba(255,255,255,0.85)',
+            }}>
+              箍筋中心线 {Math.round(stirCenterW / S)}×{Math.round(stirCenterH / S)} · 拉筋@{stir.spacingNormal}
+            </div>
+          </Html>
 
           {/* ====== 锚固长度标注 (z 偏移到前立面) ====== */}
           {(() => {
@@ -1372,11 +1453,14 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
             {
               const lapMm = 150;
               const lapLen = lapMm * S;
-              const s0 = spanLayouts[0];
+              const firstSpan = spanLayouts[0];
+              const lastSpan = spanLayouts[spanLayouts.length - 1];
+              const firstSupportLen = calcSupportRebarLength(spanLengthsMm[0]) * S;
+              const lastSupportLen = calcSupportRebarLength(spanLengthsMm[spanLengthsMm.length - 1]) * S;
               if (leftR) {
                 nodes.push(
                   <DimLine key="dim-lap-l"
-                    start={s0.leftFace + supportLen - lapLen} end={s0.leftFace + supportLen}
+                    start={firstSpan.leftFace + firstSupportLen - lapLen} end={firstSpan.leftFace + firstSupportLen}
                     offset={hm + hm * 0.42}
                     label={`搭接${lapMm}mm(≥150)`}
                     color="#D97706" z={zFront} />
@@ -1385,7 +1469,7 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
               if (rightR) {
                 nodes.push(
                   <DimLine key="dim-lap-r"
-                    start={s0.rightFace - supportLen} end={s0.rightFace - supportLen + lapLen}
+                    start={lastSpan.rightFace - lastSupportLen} end={lastSpan.rightFace - lastSupportLen + lapLen}
                     offset={hm + hm * 0.42}
                     label={`搭接${lapMm}mm(≥150)`}
                     color="#D97706" z={zFront} />
@@ -1484,13 +1568,15 @@ function BeamScene({ params, selected, onSelect, cutPosition, concreteOpacity, s
   );
 }
 
-export default function BeamViewer({ params, cutPosition, showCut, onCutPositionChange, onShowCutChange, highlightedType, onSelectedChange }: {
+export default function BeamViewer({ params, cutPosition, showCut, onCutPositionChange, onShowCutChange, highlightedType, selectedInfo, onSelectedInfoChange, onSelectedChange }: {
   params: BeamParams;
   cutPosition: number | null;
   showCut: boolean;
   onCutPositionChange: (v: number | null) => void;
   onShowCutChange: (v: boolean) => void;
   highlightedType?: string | null;
+  selectedInfo?: RebarMeshInfo | null;
+  onSelectedInfoChange?: (info: RebarMeshInfo | null) => void;
   onSelectedChange?: (type: string | null) => void;
 }) {
   const hm = params.h * S;
@@ -1504,20 +1590,29 @@ export default function BeamViewer({ params, cutPosition, showCut, onCutPosition
   const camScale = Math.max(TOTAL_NET_EXT / 4, 1); // 基准: 4m 梁
   const gridSize = Math.max(Math.ceil(TOTAL_NET_EXT * 2.5), 10);
   const [selected, setSelected] = useState<RebarMeshInfo | null>(null);
+  const [renderMode, setRenderMode] = useState<RebarRenderMode>('solid');
+  const currentSelected = selectedInfo !== undefined ? selectedInfo : selected;
+  const setCurrentSelected = useCallback((info: RebarMeshInfo | null) => {
+    if (selectedInfo !== undefined) {
+      onSelectedInfoChange?.(info);
+    } else {
+      setSelected(info);
+    }
+  }, [selectedInfo, onSelectedInfoChange]);
   const [concreteOpacity, setConcreteOpacity] = useState(0.15);
   const [showDimensions, setShowDimensions] = useState(false);
 
   // Notify parent of selection changes for bidirectional highlight
   useEffect(() => {
-    onSelectedChange?.(selected?.type ?? null);
-  }, [selected, onSelectedChange]);
+    onSelectedChange?.(currentSelected?.type ?? null);
+  }, [currentSelected, onSelectedChange]);
 
   // Merge external highlight with user selection for BeamScene
   const effectiveSelected = useMemo<RebarMeshInfo | null>(() => {
-    if (selected) return selected;
+    if (currentSelected) return currentSelected;
     if (highlightedType) return { type: highlightedType as RebarMeshInfo['type'], label: '', detail: '' };
     return null;
-  }, [selected, highlightedType]);
+  }, [currentSelected, highlightedType]);
   const [cameraTarget, setCameraTarget] = useState<[number, number, number] | null>(null);
   const [animating, setAnimating] = useState(false);
   const [step, setStep] = useState(BEAM_CONSTRUCTION_STEPS.length - 1);
@@ -1578,7 +1673,9 @@ export default function BeamViewer({ params, cutPosition, showCut, onCutPosition
 
   // 根据选中钢筋类型计算附加数据
   const selectedAdditionalData = useMemo(() => {
-    if (!selected) return undefined;
+    if (!currentSelected) return undefined;
+    const selected = currentSelected;
+    const groupData = rebarGroupDataFromInfo(selected);
     const topR = parseRebar(params.top);
     const botR = parseRebar(params.bottom);
     const stir = parseStirrup(params.stirrup);
@@ -1591,7 +1688,6 @@ export default function BeamViewer({ params, cutPosition, showCut, onCutPosition
     const spanLens: number[] = (params.spanLengths && params.spanLengths.length === sc)
       ? params.spanLengths
       : Array(sc).fill(params.spanLength || 4000);
-    const beamSpan = spanLens[0];
     const totalNetMm = spanLens.reduce((s, l) => s + l, 0) + (sc - 1) * (params.hc || 500);
 
     switch (selected.type) {
@@ -1599,6 +1695,7 @@ export default function BeamViewer({ params, cutPosition, showCut, onCutPosition
         const anchorLen = topAnchor.canStraight ? topAnchor.straightLen : topAnchor.bentStraightPart + topAnchor.bentBendPart;
         const totalLen = totalNetMm + anchorLen * 2;
         return {
+          ...groupData,
           length: totalLen,
           weight: totalLen * linearWeight(topR.diameter),
           anchorLength: topAnchor.canStraight ? topAnchor.straightLen : topAnchor.bentStraightPart,
@@ -1608,60 +1705,89 @@ export default function BeamViewer({ params, cutPosition, showCut, onCutPosition
         const anchorLen = botAnchor.canStraight ? botAnchor.straightLen : botAnchor.bentStraightPart + botAnchor.bentBendPart;
         const totalLen = totalNetMm + anchorLen * 2;
         return {
+          ...groupData,
           length: totalLen,
           weight: totalLen * linearWeight(botR.diameter),
           anchorLength: botAnchor.canStraight ? botAnchor.straightLen : botAnchor.bentStraightPart,
         };
       }
       case 'stirrup': {
-        const perimeter = 2 * ((params.b - (params.cover || 25) * 2) + (params.h - (params.cover || 25) * 2)) + stir.diameter * 2 * 1.9 * 2;
+        const stirCenterWidthMm = params.b - 2 * (params.cover || 25) - stir.diameter;
+        const stirCenterHeightMm = params.h - 2 * (params.cover || 25) - stir.diameter;
+        const stirrupSpec = createStirrupShapeSpec({
+          widthMm: stirCenterWidthMm,
+          heightMm: stirCenterHeightMm,
+          diameterMm: stir.diameter,
+        });
         return {
-          length: Math.round(perimeter),
-          weight: perimeter * linearWeight(stir.diameter),
+          ...groupData,
+          length: stirrupSpec.lengthMm,
+          weight: stirrupSpec.lengthMm * linearWeight(stir.diameter),
           spacing: stir.spacingDense,
           ...(sc > 1 ? { hint: `×${sc}跨` } : {}),
         };
       }
       case 'leftSupport':
       case 'rightSupport': {
-        const supportLenMm = calcSupportRebarLength(beamSpan);
-        const r = parseRebar(selected.type === 'leftSupport' ? (params.leftSupport || '') : (params.rightSupport || ''));
+        const isRightSupport = selected.type === 'rightSupport';
+        const supportSpec = isRightSupport ? params.rightSupport : params.leftSupport;
+        if (!supportSpec) return undefined;
+        const supportSpan = isRightSupport ? spanLens[sc - 1] : spanLens[0];
+        const supportLenMm = calcSupportRebarLength(supportSpan);
+        const r = parseRebar(supportSpec);
+        const supportAnchor = calcBeamEndAnchor(r.grade, r.diameter, params.concreteGrade, params.seismicGrade, params.hc || 500, params.cover || 25);
+        const anchorLen = supportAnchor.canStraight ? supportAnchor.straightLen : supportAnchor.bentStraightPart + supportAnchor.bentBendPart;
+        const totalLen = supportLenMm + anchorLen;
         return {
-          length: supportLenMm,
-          weight: supportLenMm * linearWeight(r.diameter),
-          ...(sc > 1 ? { hint: `×${sc}跨` } : {}),
+          ...groupData,
+          length: totalLen,
+          weight: totalLen * linearWeight(r.diameter),
+          anchorLength: supportAnchor.canStraight ? supportAnchor.straightLen : supportAnchor.bentStraightPart,
         };
       }
       case 'leftSupport2':
       case 'rightSupport2': {
-        const supportLenMm2 = calcSupportRebarLength(beamSpan, 2);
-        const r2 = parseRebar(selected.type === 'leftSupport2' ? (params.leftSupport2 || '') : (params.rightSupport2 || ''));
+        const isRightSupport2 = selected.type === 'rightSupport2';
+        const supportSpec2 = isRightSupport2 ? params.rightSupport2 : params.leftSupport2;
+        if (!supportSpec2) return undefined;
+        const supportSpan2 = isRightSupport2 ? spanLens[sc - 1] : spanLens[0];
+        const supportLenMm2 = calcSupportRebarLength(supportSpan2, 2);
+        const r2 = parseRebar(supportSpec2);
+        const supportAnchor2 = calcBeamEndAnchor(r2.grade, r2.diameter, params.concreteGrade, params.seismicGrade, params.hc || 500, params.cover || 25);
+        const anchorLen2 = supportAnchor2.canStraight ? supportAnchor2.straightLen : supportAnchor2.bentStraightPart + supportAnchor2.bentBendPart;
+        const totalLen2 = supportLenMm2 + anchorLen2;
         return {
-          length: supportLenMm2,
-          weight: supportLenMm2 * linearWeight(r2.diameter),
-          ...(sc > 1 ? { hint: `×${sc}跨` } : {}),
+          ...groupData,
+          length: totalLen2,
+          weight: totalLen2 * linearWeight(r2.diameter),
+          anchorLength: supportAnchor2.canStraight ? supportAnchor2.straightLen : supportAnchor2.bentStraightPart,
         };
       }
       case 'innerSupport': {
-        if (!params.innerSupport || sc < 2) return undefined;
-        const ir = parseRebar(params.innerSupport);
-        const leftLenMm = calcSupportRebarLength(beamSpan);
-        const rightLenMm = calcSupportRebarLength(beamSpan);
-        const innerBarLen = leftLenMm + (params.hc || 500) + rightLenMm;
+        const innerSpec = params.innerSupport || params.rightSupport || params.leftSupport;
+        if (!innerSpec || sc < 2) return undefined;
+        const ir = parseRebar(innerSpec);
+        let totalInnerLen = 0;
+        for (let i = 0; i < sc - 1; i++) {
+          totalInnerLen += calcSupportRebarLength(spanLens[i]) + (params.hc || 500) + calcSupportRebarLength(spanLens[i + 1]);
+        }
+        const innerBarLen = Math.round(totalInnerLen / (sc - 1));
         return {
+          ...groupData,
           length: innerBarLen,
           weight: innerBarLen * linearWeight(ir.diameter),
-          hint: `×${sc - 1}内柱`,
+          hint: `×${sc - 1}内柱${params.innerSupport ? '' : '，按端支座筋兜底'}`,
         };
       }
       case 'sideBar': {
         if (!params.sideBar) return undefined;
         const si = parseSideBar(params.sideBar);
         if (!si) return undefined;
-        const sideAnchorCalc = calcBeamEndAnchor(si.grade, si.diameter, params.concreteGrade, params.seismicGrade, params.hc || 500, params.cover || 25);
+        const sideAnchorCalc = calcBeamSideBarAnchor(si.prefix, si.grade, si.diameter, params.concreteGrade, params.seismicGrade, params.hc || 500, params.cover || 25);
         const sideAnchorLen = sideAnchorCalc.canStraight ? sideAnchorCalc.straightLen : sideAnchorCalc.bentStraightPart + sideAnchorCalc.bentBendPart;
         const sideTotalLen = totalNetMm + sideAnchorLen * 2;
         return {
+          ...groupData,
           length: sideTotalLen,
           weight: sideTotalLen * linearWeight(si.diameter),
           anchorLength: sideAnchorCalc.canStraight ? sideAnchorCalc.straightLen : sideAnchorCalc.bentStraightPart,
@@ -1670,21 +1796,52 @@ export default function BeamViewer({ params, cutPosition, showCut, onCutPosition
       case 'tieBar': {
         const tieInfo = params.tieBar ? parseTieBar(params.tieBar) : autoTieBar(params.b, stir.grade, stir.diameter);
         if (!tieInfo) return undefined;
-        const tieLen = params.b - 2 * (params.cover || 25) - stir.diameter; // 拉筋净长
-        const hookLen = Math.max(10 * tieInfo.diameter, 75);
-        const totalTieLen = tieLen + 2 * hookLen;
+        const sideInfoForTie = params.sideBar ? parseSideBar(params.sideBar) : null;
+        const sideBarDiameter = sideInfoForTie?.diameter ?? stir.diameter;
+        const sideOffsetMm = resolveTieSideOffsetMm({
+          sectionWidthMm: params.b,
+          coverMm: params.cover || 25,
+          stirrupDiameterMm: stir.diameter,
+          sideBarDiameterMm: sideBarDiameter,
+        });
+        const tieSpec = createTieBarShapeSpec({
+          sideOffsetMm,
+          tieDiameterMm: tieInfo.diameter,
+          sideBarDiameterMm: sideBarDiameter,
+        });
         return {
-          length: Math.round(totalTieLen),
-          weight: totalTieLen * linearWeight(tieInfo.diameter),
+          ...groupData,
+          length: tieSpec.lengthMm,
+          weight: tieSpec.lengthMm * linearWeight(tieInfo.diameter),
           spacing: stir.spacingNormal,
           ...(sc > 1 ? { hint: `×${sc}跨` } : {}),
         };
       }
       case 'erection': {
-        const erDia = beamSpan <= 4000 ? 10 : 12;
-        const erLen = beamSpan * 0.8; // approximate
+        const erUser = params.erectionBar ? parseRebar(params.erectionBar) : null;
+        const avgSpanLen = Math.round(spanLens.reduce((sum, len) => sum + len, 0) / sc);
+        const erDia = erUser ? erUser.diameter : (avgSpanLen <= 4000 ? 10 : 12);
+        const hasInnerSupport = sc > 1 && !!(params.innerSupport || params.rightSupport || params.leftSupport);
+        const lap = 150;
+        let erTotalLen = 0;
+        for (let i = 0; i < sc; i++) {
+          const spanLen = spanLens[i];
+          const leftSupportLen = ((i === 0 && params.leftSupport) || (i > 0 && hasInnerSupport)) ? calcSupportRebarLength(spanLen) : 0;
+          const rightSupportLen = ((i === sc - 1 && params.rightSupport) || (i < sc - 1 && hasInnerSupport)) ? calcSupportRebarLength(spanLen) : 0;
+          if (leftSupportLen > 0 && rightSupportLen > 0) {
+            erTotalLen += Math.max(spanLen - leftSupportLen - rightSupportLen + 2 * lap, 0);
+          } else if (leftSupportLen > 0) {
+            erTotalLen += Math.max(spanLen - leftSupportLen + lap, 0);
+          } else if (rightSupportLen > 0) {
+            erTotalLen += Math.max(spanLen - rightSupportLen + lap, 0);
+          } else {
+            erTotalLen += spanLen;
+          }
+        }
+        const erLen = Math.round(erTotalLen / sc);
         return {
-          length: Math.round(erLen),
+          ...groupData,
+          length: erLen,
           weight: erLen * linearWeight(erDia),
           ...(sc > 1 ? { hint: `×${sc}跨` } : {}),
         };
@@ -1692,7 +1849,7 @@ export default function BeamViewer({ params, cutPosition, showCut, onCutPosition
       default:
         return undefined;
     }
-  }, [selected, params]);
+  }, [currentSelected, params]);
 
   return (
     <div className="space-y-2" data-viewer="beam">
@@ -1722,9 +1879,24 @@ export default function BeamViewer({ params, cutPosition, showCut, onCutPosition
           <Camera className="w-3.5 h-3.5" />
           截图
         </button>
+        <div className="inline-flex items-center gap-0.5 rounded-lg border border-gray-200 bg-white p-0.5">
+          {([
+            ['solid', '实体'],
+            ['centerline', '中心线'],
+            ['hybrid', '混合'],
+          ] as const).map(([mode, label]) => (
+            <button
+              key={mode}
+              onClick={() => setRenderMode(mode)}
+              className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${renderMode === mode ? 'bg-accent text-white' : 'text-muted hover:bg-gray-50'}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <KeyboardHelp bindings={keyBindings} />
-        {selected && (
-          <button onClick={() => setSelected(null)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-100 text-muted cursor-pointer hover:bg-gray-200 transition-colors">
+        {currentSelected && (
+          <button onClick={() => setCurrentSelected(null)} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-100 text-muted cursor-pointer hover:bg-gray-200 transition-colors">
             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
             取消选中
           </button>
@@ -1757,7 +1929,7 @@ export default function BeamViewer({ params, cutPosition, showCut, onCutPosition
       )}
 
       <div ref={fsContainerRef} className={`relative w-full bg-surface overflow-hidden ${fsClass}`}>
-        {selected && <RebarDetailPanel info={selected} onClose={() => setSelected(null)} additionalData={selectedAdditionalData} />}
+        {currentSelected && <RebarDetailPanel info={currentSelected} onClose={() => setCurrentSelected(null)} additionalData={selectedAdditionalData} />}
 
         {/* Toolbar overlay */}
         <div className="absolute top-3 left-3 z-10 flex items-center gap-1.5">
@@ -1788,7 +1960,7 @@ export default function BeamViewer({ params, cutPosition, showCut, onCutPosition
           <CameraController targetPosition={cameraTarget} />
           <ambientLight intensity={0.6} />
           <directionalLight position={[5 * camScale, 8, 5 * camScale]} intensity={0.8} castShadow />
-          <BeamScene params={params} selected={effectiveSelected} onSelect={setSelected} cutPosition={cutPosition} concreteOpacity={concreteOpacity} showDimensions={showDimensions} visibleGroups={visibleGroups} />
+          <BeamScene params={params} selected={effectiveSelected} onSelect={setCurrentSelected} cutPosition={cutPosition} concreteOpacity={concreteOpacity} showDimensions={showDimensions} visibleGroups={visibleGroups} renderMode={renderMode} />
           <Grid args={[gridSize, gridSize]} position={[0, -0.01, 0]} cellColor="#E2E8F0" sectionColor="#E2E8F0" fadeDistance={gridSize * 1.5} />
           <axesHelper args={[1]} />
           <OrbitControls target={[0, hm / 2, 0]} enableDamping dampingFactor={0.1} />

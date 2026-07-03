@@ -398,6 +398,7 @@ export interface RaftFoundationParams {
 }
 
 export type ComponentType = 'beam' | 'column' | 'slab' | 'joint' | 'shearwall' | 'stair' | 'foundation' | 'stripfoundation' | 'pilecap' | 'raft';
+export type RebarRenderMode = 'solid' | 'centerline' | 'hybrid';
 
 export interface RebarMeshInfo {
   type: 'top' | 'bottom' | 'stirrup' | 'leftSupport' | 'rightSupport' | 'leftSupport2' | 'rightSupport2' | 'main'
@@ -419,4 +420,10 @@ export interface RebarMeshInfo {
     | 'raftBeamBottom' | 'raftBeamTop' | 'raftBeamStirrup' | 'raftColStrip';
   label: string;
   detail: string;
+  setId?: string;
+  instanceIndex?: number;
+  groupLabel?: string;
+  groupCount?: number;
+  distributionRange?: string;
+  relatedSetIds?: string[];
 }

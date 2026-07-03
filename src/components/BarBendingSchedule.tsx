@@ -126,14 +126,14 @@ function allocSegs(segs: number[], totalPx: number): number[] {
 /*                        SHAPE DRAWING                              */
 /* ================================================================= */
 
-function drawShape(ctx: CanvasRenderingContext2D, shape: BarShape, ox: number, oy: number, cw: number) {
+function drawShape(ctx: CanvasRenderingContext2D, shape: BarShape, ox: number, oy: number, cw: number, selected = false) {
   const area = { x: ox + PAD, y: oy + 48, w: cw - PAD * 2, h: CARD_H - 66 };
 
   // ── Card ──
   ctx.save();
   rrect(ctx, ox + 3, oy + 3, cw - 6, CARD_H - 6, 8);
-  ctx.fillStyle = CARD_BG; ctx.fill();
-  ctx.strokeStyle = CARD_BORDER; ctx.lineWidth = 1; ctx.stroke();
+  ctx.fillStyle = selected ? '#ECFDF5' : CARD_BG; ctx.fill();
+  ctx.strokeStyle = selected ? '#10B981' : CARD_BORDER; ctx.lineWidth = selected ? 2 : 1; ctx.stroke();
   ctx.restore();
 
   // ── Header ──
@@ -320,8 +320,15 @@ function drawShape(ctx: CanvasRenderingContext2D, shape: BarShape, ox: number, o
       ctx.fillStyle = shape.color; ctx.fill();
 
       // Dims
-      dimH(ctx, cx - sw / 2, cx + sw / 2, cy + sh / 2 + 16, `${w}`, true);
-      dimV(ctx, cx + sw / 2 + 12, cy - sh / 2, cy + sh / 2, `${h}`);
+      dimH(ctx, cx - sw / 2, cx + sw / 2, cy + sh / 2 + 16, `中心线b=${Math.round(w)}`, true);
+      dimV(ctx, cx + sw / 2 + 12, cy - sh / 2, cy + sh / 2, `h=${Math.round(h)}`);
+      ctx.save();
+      ctx.fillStyle = DIM_COLOR;
+      ctx.font = DIM_FONT;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillText(`135°弯钩 ${Math.round(hook)}mm · R=${Math.round(shape.bendRadius || 0)}mm`, cx, area.y + area.h - 20);
+      ctx.restore();
       break;
     }
 
@@ -331,51 +338,40 @@ function drawShape(ctx: CanvasRenderingContext2D, shape: BarShape, ox: number, o
       const hook = shape.hookLen || 75;
       if (body <= 0) break;
 
-      // 拉筋形状: 水平主体, 两端90°向下弯折, 末端135°弯钩向内
-      //   ┌══════════════┐   ← 水平主体(body)
-      //   │              │   ← 90°弯折段(leg)
-      //   ╱              ╲   ← 135°弯钩(tail, 向内45°)
-      const bodyPx = area.w * 0.65;
+      // 拉筋形状: 水平主体 + 两端 135°短弯钩。
+      // BBS 里表达下料形状，不画成门字形箍筋，避免和箍筋语义混淆。
+      const bodyPx = area.w * 0.68;
       const cx = area.x + area.w / 2;
-      const topY = area.y + area.h * 0.18;
+      const cy = area.y + area.h * 0.44;
       const xL = cx - bodyPx / 2;
       const xR = cx + bodyPx / 2;
+      const hookPx = Math.min(Math.max(hook * 0.18, 18), area.h * 0.28, bodyPx * 0.16);
+      const hookIn = hookPx * Math.SQRT1_2;
+      const hookDrop = hookPx * Math.SQRT1_2;
 
-      // 90° leg and 135° tail proportions
-      const legH = Math.min(area.h * 0.35, 38);
-      const tailL = Math.min(legH * 0.6, 22);
-      const sq = Math.SQRT1_2;
-
-      // Draw complete bar path: left-tail → left-leg → body → right-leg → right-tail
+      // Draw complete bar path: left 135° tail → horizontal body → right 135° tail.
       ctx.beginPath();
-      // left 135° hook tail (tip, going inward = right)
-      ctx.moveTo(xL + sq * tailL, topY + legH + sq * tailL);
-      // left leg bottom
-      ctx.lineTo(xL, topY + legH);
-      // left leg top = body left
-      ctx.lineTo(xL, topY);
-      // body right
-      ctx.lineTo(xR, topY);
-      // right leg bottom
-      ctx.lineTo(xR, topY + legH);
-      // right 135° hook tail (tip, going inward = left)
-      ctx.lineTo(xR - sq * tailL, topY + legH + sq * tailL);
+      ctx.moveTo(xL + hookIn, cy + hookDrop);
+      ctx.quadraticCurveTo(xL + hookIn * 0.18, cy + hookDrop * 0.18, xL, cy);
+      ctx.lineTo(xR, cy);
+      ctx.quadraticCurveTo(xR - hookIn * 0.18, cy + hookDrop * 0.18, xR - hookIn, cy + hookDrop);
       ctx.stroke();
 
-      // Dots at bend points
+      // Bend points
       ctx.fillStyle = shape.color;
-      [xL, xR].forEach(bx => {
-        ctx.beginPath(); ctx.arc(bx, topY, 2, 0, Math.PI * 2); ctx.fill();
-        ctx.beginPath(); ctx.arc(bx, topY + legH, 2, 0, Math.PI * 2); ctx.fill();
-      });
+      ctx.beginPath(); ctx.arc(xL, cy, 2.3, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(xR, cy, 2.3, 0, Math.PI * 2); ctx.fill();
 
       // Dims
-      dimH(ctx, xL, xR, topY - 16, `${Math.round(body)}`);
-      const totalPx = Math.max(xR + sq * tailL + 4, xR + 8);
-      const totalPxL = Math.min(xL - sq * tailL - 4, xL - 8);
-      dimH(ctx, totalPxL, totalPx, topY + legH + sq * tailL + 18,
-        `L=${Math.round(shape.totalLen)}`, true);
-      dimV(ctx, xR + 14, topY, topY + legH, `${Math.round(hook)}弯钩`);
+      dimH(ctx, xL, xR, cy - 18, `主体=${Math.round(body)}`);
+      dimH(ctx, xL + hookIn, xR - hookIn, cy + hookDrop + 20, `L=${Math.round(shape.totalLen)}`, true);
+      ctx.save();
+      ctx.fillStyle = DIM_COLOR;
+      ctx.font = DIM_FONT;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillText(`两端135°弯钩 ${Math.round(hook)}mm · R=${Math.round(shape.bendRadius || 0)}mm`, cx, area.y + area.h - 24);
+      ctx.restore();
       break;
     }
   }
@@ -386,8 +382,20 @@ function drawShape(ctx: CanvasRenderingContext2D, shape: BarShape, ox: number, o
 /*                        COMPONENT                                  */
 /* ================================================================= */
 
-export function BarBendingSchedule({ params }: { params: BeamParams }) {
-  const shapes = useMemo(() => calcBarShapes(params), [params]);
+export function BarBendingSchedule({
+  params,
+  shapes: shapesProp,
+  selectedSetId,
+  onSelectShape,
+  title = '钢筋弯折详图 (BBS)',
+}: {
+  params?: BeamParams;
+  shapes?: BarShape[];
+  selectedSetId?: string | null;
+  onSelectShape?: (shape: BarShape) => void;
+  title?: string;
+}) {
+  const shapes = useMemo(() => shapesProp ?? (params ? calcBarShapes(params) : []), [params, shapesProp]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [containerW, setContainerW] = useState(0);
@@ -424,9 +432,14 @@ export function BarBendingSchedule({ params }: { params: BeamParams }) {
     ctx.scale(DPR, DPR);
     ctx.clearRect(0, 0, totalW, totalH);
     shapes.forEach((shape, i) => {
-      drawShape(ctx, shape, (i % cols) * cardW, Math.floor(i / cols) * CARD_H, cardW);
+      const selected = !!shape.setId && (
+        selectedSetId === shape.setId
+        || (shape.setId === 'beam.stirrup' && selectedSetId?.startsWith('beam.stirrup.'))
+        || (shape.setId === 'column.stirrup' && selectedSetId?.startsWith('column.stirrup.'))
+      );
+      drawShape(ctx, shape, (i % cols) * cardW, Math.floor(i / cols) * CARD_H, cardW, selected);
     });
-  }, [shapes, totalW, totalH, cols, cardW]);
+  }, [shapes, totalW, totalH, cols, cardW, selectedSetId]);
 
   useEffect(draw, [draw]);
 
@@ -434,9 +447,23 @@ export function BarBendingSchedule({ params }: { params: BeamParams }) {
 
   return (
     <div ref={wrapRef}>
-      <h2 className="text-sm font-semibold text-primary mb-3">钢筋弯折详图 (BBS)</h2>
+      <h2 className="text-sm font-semibold text-primary mb-3">{title}</h2>
       <div className="overflow-x-auto">
-        <canvas ref={canvasRef} className="mx-auto" />
+        <canvas
+          ref={canvasRef}
+          className={onSelectShape ? 'mx-auto cursor-pointer' : 'mx-auto'}
+          onClick={(event) => {
+            if (!onSelectShape || totalW === 0) return;
+            const rect = event.currentTarget.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+            const col = Math.floor(x / cardW);
+            const row = Math.floor(y / CARD_H);
+            const index = row * cols + col;
+            const shape = shapes[index];
+            if (shape) onSelectShape(shape);
+          }}
+        />
       </div>
     </div>
   );

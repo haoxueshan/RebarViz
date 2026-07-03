@@ -3,9 +3,9 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
-import type { BeamParams, HaunchType } from '@/lib/types';
+import type { BeamParams, HaunchType, RebarMeshInfo } from '@/lib/types';
 import { BEAM_PRESETS } from '@/lib/rebar';
-import { calcBeam, calcBeamRebarRatios } from '@/lib/calc';
+import { calcBeam, calcBeamRebarRatios, type BarShape } from '@/lib/calc';
 import { validateRebar, validateStirrup, validateDimension } from '@/lib/validate';
 import { BeamCrossSection } from '@/components/CrossSection';
 import { BeamExplain } from '@/components/NotationExplain';
@@ -177,6 +177,7 @@ export function BeamPageClient() {
   // ─── Bidirectional highlight: form ↔ 3D ───
   const [hoveredField, setHoveredField] = useState<string | null>(null);
   const [selectedRebarType, setSelectedRebarType] = useState<string | null>(null);
+  const [selectedRebarInfo, setSelectedRebarInfo] = useState<RebarMeshInfo | null>(null);
 
   const handleAIApply = (p: Partial<BeamParams>) => {
     setParams(current => applySpanCountPatch(current, p));
@@ -463,7 +464,10 @@ export function BeamPageClient() {
         <div className={`${showAI ? 'lg:col-span-6' : 'lg:col-span-9'} space-y-4 min-w-0 transition-all`}>
           <BeamViewer params={params} cutPosition={cutPosition} showCut={showCut}
             onCutPositionChange={setCutPosition} onShowCutChange={setShowCut}
-            highlightedType={hoveredField} onSelectedChange={setSelectedRebarType} />
+            highlightedType={hoveredField}
+            selectedInfo={selectedRebarInfo}
+            onSelectedInfoChange={setSelectedRebarInfo}
+            onSelectedChange={setSelectedRebarType} />
 
           {/* Data tabs */}
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
@@ -500,7 +504,29 @@ export function BeamPageClient() {
               {dataTab === 'compliance' && <CompliancePanel results={complianceResults} />}
               {dataTab === 'weight' && <WeightCalc result={calcResult} beamId={params.id} />}
               {dataTab === 'concrete' && <ConcreteCalc result={concreteResult} />}
-              {dataTab === 'bbs' && <BarBendingSchedule params={params} />}
+              {dataTab === 'bbs' && (
+                <BarBendingSchedule
+                  params={params}
+                  selectedSetId={selectedRebarInfo?.setId ?? (selectedRebarType ? `beam.${selectedRebarType}` : null)}
+                  onSelectShape={(shape: BarShape) => {
+                    if (!shape.setId) return;
+                    const type = shape.setId === 'beam.stirrup'
+                      ? 'stirrup'
+                      : shape.setId === 'beam.tieBar'
+                        ? 'tieBar'
+                        : shape.setId.replace('beam.', '') as RebarMeshInfo['type'];
+                    setSelectedRebarInfo({
+                      type,
+                      label: shape.name,
+                      detail: `${shape.spec} · BBS下料长度 ${Math.round(shape.totalLen)}mm`,
+                      setId: shape.setId,
+                      groupLabel: shape.name,
+                      groupCount: shape.count > 0 ? shape.count : undefined,
+                      relatedSetIds: shape.relatedSetIds,
+                    });
+                  }}
+                />
+              )}
               {dataTab === 'compare' && (
                 <div className="space-y-4">
                   {compareParams ? (

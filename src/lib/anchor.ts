@@ -151,6 +151,8 @@ export interface BeamEndAnchor {
   hc: number;               // 柱截面宽度
 }
 
+export type BeamSideBarPrefix = 'G' | 'N';
+
 export function calcBeamEndAnchor(
   rebarGrade: string, diameter: number,
   concreteGrade: ConcreteGrade, seismicGrade: SeismicGrade,
@@ -165,6 +167,35 @@ export function calcBeamEndAnchor(
   const bentBendPart = BENT_ANCHOR_FACTOR * diameter;
 
   return { canStraight, straightLen, bentStraightPart, bentBendPart, laE, hc };
+}
+
+/**
+ * 梁腰筋/抗扭筋端部锚固
+ * G 构造腰筋按 15d 直锚表达，避免误画成梁主筋 90°弯锚；
+ * N 抗扭筋受扭纵筋按梁纵筋锚固规则处理。
+ */
+export function calcBeamSideBarAnchor(
+  prefix: BeamSideBarPrefix,
+  rebarGrade: string,
+  diameter: number,
+  concreteGrade: ConcreteGrade,
+  seismicGrade: SeismicGrade,
+  hc: number,
+  cover: number,
+): BeamEndAnchor {
+  if (prefix === 'G') {
+    const straightLen = Math.max(15 * diameter, 150);
+    return {
+      canStraight: true,
+      straightLen,
+      bentStraightPart: 0,
+      bentBendPart: 0,
+      laE: straightLen,
+      hc,
+    };
+  }
+
+  return calcBeamEndAnchor(rebarGrade, diameter, concreteGrade, seismicGrade, hc, cover);
 }
 
 /**

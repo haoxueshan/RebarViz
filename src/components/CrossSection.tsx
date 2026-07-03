@@ -3,11 +3,12 @@
 import { useRef, useEffect, useState, useCallback, type RefObject } from 'react';
 import { Download } from 'lucide-react';
 import type { BeamParams, ColumnParams, SlabParams, ShearWallParams, StairParams, FoundationParams, StripFoundationParams, PileCapParams, RaftFoundationParams } from '@/lib/types';
-import { parseRebar, parseRebarBottom, parseStirrup, parseSlabRebar, parseSideBar, resolveColumnBars } from '@/lib/rebar';
+import { parseRebar, parseRebarBottom, parseStirrup, parseSlabRebar, parseSideBar, parseTieBar, autoTieBar, tieBarToString, resolveColumnBars } from '@/lib/rebar';
 import {
   setupHiDPI, drawConcreteSection, drawRebarDot, drawRebarCross,
-  drawStirrup, drawInnerTies, drawDimLine, drawCoverDim, drawLabel,
+  drawStirrup, drawDimLine, drawCoverDim, drawLabel,
 } from '@/lib/cs-draw';
+import { createStirrupShapeSpec, createTieBarShapeSpec, resolveInnerLegPositions, resolveTieSideOffsetMm } from '@/lib/rebar-shapes';
 
 // ─── 响应式 canvas 容器 hook ─────────────────────────────────────
 function useContainerWidth(containerRef: RefObject<HTMLDivElement | null>, fallback: number) {
@@ -48,6 +49,60 @@ function ExportButton({ canvasRef, filename = 'cross-section.png' }: { canvasRef
       <Download className="w-3.5 h-3.5 text-gray-500" />
     </button>
   );
+}
+
+function drawTieBarSymbol(
+  ctx: CanvasRenderingContext2D,
+  x1: number,
+  x2: number,
+  y: number,
+  color: string,
+  hookPx: number,
+) {
+  const hook = Math.max(5, Math.min(hookPx, Math.abs(x2 - x1) * 0.18));
+  const drop = hook * 0.72;
+  const tail = hook * 0.62;
+  const sq = Math.SQRT1_2;
+
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.4;
+  ctx.setLineDash([]);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(x1 + sq * tail, y + drop + sq * tail);
+  ctx.lineTo(x1, y + drop);
+  ctx.lineTo(x1, y);
+  ctx.lineTo(x2, y);
+  ctx.lineTo(x2, y + drop);
+  ctx.lineTo(x2 - sq * tail, y + drop + sq * tail);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawVerticalTieSymbol(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y1: number,
+  y2: number,
+  color: string,
+  hookPx: number,
+) {
+  const hook = Math.max(5, Math.min(hookPx, Math.abs(y2 - y1) * 0.16));
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.3;
+  ctx.setLineDash([]);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(x + hook * 0.7, y1 + hook);
+  ctx.lineTo(x, y1);
+  ctx.lineTo(x, y2);
+  ctx.lineTo(x - hook * 0.7, y2 - hook);
+  ctx.stroke();
+  ctx.restore();
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -95,8 +150,12 @@ export function BeamCrossSection({ params, cutPosition }: { params: BeamParams; 
     const leftR2 = params.leftSupport2 ? parseRebar(params.leftSupport2) : null;
     const rightR2 = params.rightSupport2 ? parseRebar(params.rightSupport2) : null;
     const sideInfo = params.sideBar ? parseSideBar(params.sideBar) : null;
+    const stirSpec = createStirrupShapeSpec({
+      widthMm: params.b - 2 * coverMm - stir.diameter,
+      heightMm: params.h - 2 * coverMm - stir.diameter,
+      diameterMm: stir.diameter,
+    });
 
-    const innerW = dw - 2 * cover;
     const sectionLeft = cx - dw / 2;
     const sectionTop = cy - dh / 2;
     const sectionRight = cx + dw / 2;
@@ -106,14 +165,25 @@ export function BeamCrossSection({ params, cutPosition }: { params: BeamParams; 
     drawConcreteSection(ctx, cx, cy, dw, dh);
 
     // ── Stirrup with hooks ──
-    const stirX = sectionLeft + cover / 2;
-    const stirY = sectionTop + cover / 2;
-    const stirW = dw - cover;
-    const stirH = dh - cover;
-    drawStirrup(ctx, stirX, stirY, stirW, stirH, '#27AE60', 8);
+    const stirW = Math.max(stirSpec.widthMm * scale, 4);
+    const stirH = Math.max(stirSpec.heightMm * scale, 4);
+    const stirX = cx - stirW / 2;
+    const stirY = cy - stirH / 2;
+    const stirLeft = stirX;
+    const stirRight = stirX + stirW;
+    const stirTop = stirY;
+    const stirBottom = stirY + stirH;
+    const rebarInset = Math.max((stir.diameter * scale) / 2 + 4, 7);
+    const barLeft = stirLeft + rebarInset;
+    const barRight = stirRight - rebarInset;
+    const barTop = stirTop + rebarInset;
+    const barBottom = stirBottom - rebarInset;
+    const barW = Math.max(barRight - barLeft, 1);
+    const stirColor = hasCut ? (inDenseZone ? '#1E8449' : '#7DCEA0') : '#27AE60';
+    drawStirrup(ctx, stirX, stirY, stirW, stirH, stirColor, Math.max(stirSpec.hookLenMm * scale * 0.35, 6));
 
     // ── Top rebars (through bars, multi-row support, mixed diameter) ──
-    const topY = sectionTop + cover;
+    const topY = barTop;
     const topRowCount = topR.rows || (topR.perRow ? topR.perRow.length : 1);
     const topPerRow: number[] = topR.perRow && topR.perRow.length >= 2
       ? topR.perRow
@@ -130,9 +200,9 @@ export function BeamCrossSection({ params, cutPosition }: { params: BeamParams; 
         topCurY += prevDia * scale / 2 + clearV + rowDia * scale / 2;
       }
       const rowCount = topPerRow[row];
-      const rowSpacing = innerW / Math.max(rowCount - 1, 1);
+      const rowSpacing = barW / Math.max(rowCount - 1, 1);
       for (let i = 0; i < rowCount; i++) {
-        const x = sectionLeft + cover + i * rowSpacing;
+        const x = barLeft + i * rowSpacing;
         drawRebarDot(ctx, x, topCurY, Math.max(rowDia * scale / 2, 4), '#C0392B');
       }
     }
@@ -145,9 +215,9 @@ export function BeamCrossSection({ params, cutPosition }: { params: BeamParams; 
 
     if (supportR && (showLeftSupport || showRightSupport)) {
       const supportY = topLastRowY + topR.diameter * scale * 1.2;
-      const supportSpacing = innerW / Math.max(supportR.count - 1, 1);
+      const supportSpacing = barW / Math.max(supportR.count - 1, 1);
       for (let i = 0; i < supportR.count; i++) {
-        const x = sectionLeft + cover + i * supportSpacing;
+        const x = barLeft + i * supportSpacing;
         drawRebarDot(ctx, x, supportY, Math.max(supportR.diameter * scale / 2, 4), '#8E44AD');
       }
 
@@ -160,9 +230,9 @@ export function BeamCrossSection({ params, cutPosition }: { params: BeamParams; 
     const support2R = showLeftSupport ? leftR2 : showRightSupport ? rightR2 : null;
     if (support2R && supportR) {
       const row2Y = topLastRowY + topR.diameter * scale * 1.2 + supportR.diameter * scale * 1.2;
-      const row2Spacing = innerW / Math.max(support2R.count - 1, 1);
+      const row2Spacing = barW / Math.max(support2R.count - 1, 1);
       for (let i = 0; i < support2R.count; i++) {
-        const x = sectionLeft + cover + i * row2Spacing;
+        const x = barLeft + i * row2Spacing;
         drawRebarDot(ctx, x, row2Y, Math.max(support2R.diameter * scale / 2, 3.5), '#A569BD');
       }
       const row2Label = showLeftSupport ? `左支座②: ${params.leftSupport2}` : `右支座②: ${params.rightSupport2}`;
@@ -170,7 +240,7 @@ export function BeamCrossSection({ params, cutPosition }: { params: BeamParams; 
     }
 
     // ── Bottom rebars (multi-row support, mixed diameter) ──
-    const botY = sectionBottom - cover;
+    const botY = barBottom;
     const botRowCount = botR.rows || (botR.perRow ? botR.perRow.length : 1);
     const botPerRow: number[] = botR.perRow && botR.perRow.length >= 2
       ? botR.perRow
@@ -187,9 +257,9 @@ export function BeamCrossSection({ params, cutPosition }: { params: BeamParams; 
         botCurY -= prevDia * scale / 2 + clearV + rowDia * scale / 2;
       }
       const rowCount = botPerRow[row];
-      const rowSpacing = innerW / Math.max(rowCount - 1, 1);
+      const rowSpacing = barW / Math.max(rowCount - 1, 1);
       for (let i = 0; i < rowCount; i++) {
-        const x = sectionLeft + cover + i * rowSpacing;
+        const x = barLeft + i * rowSpacing;
         drawRebarDot(ctx, x, botCurY, Math.max(rowDia * scale / 2, 4), '#C0392B');
       }
     }
@@ -202,22 +272,32 @@ export function BeamCrossSection({ params, cutPosition }: { params: BeamParams; 
       const sideYBot = botY - botR.diameter * scale * 0.8 - sideR;
       for (let i = 0; i < perSide; i++) {
         const y = sideYTop + (sideYBot - sideYTop) * (i + 1) / (perSide + 1);
-        drawRebarDot(ctx, sectionLeft + cover, y, sideR, '#2980B9');
-        drawRebarDot(ctx, sectionRight - cover, y, sideR, '#2980B9');
+        drawRebarDot(ctx, barLeft, y, sideR, '#2980B9');
+        drawRebarDot(ctx, barRight, y, sideR, '#2980B9');
       }
 
-      // Tie bars (拉筋)
-      ctx.strokeStyle = '#1ABC9C';
-      ctx.lineWidth = 1.2;
-      ctx.setLineDash([3, 3]);
+      const tieInfo = params.tieBar ? parseTieBar(params.tieBar) : autoTieBar(params.b, stir.grade, stir.diameter);
+      const tieSpec = tieInfo ? createTieBarShapeSpec({
+        sideOffsetMm: resolveTieSideOffsetMm({
+          sectionWidthMm: params.b,
+          coverMm,
+          stirrupDiameterMm: stir.diameter,
+          sideBarDiameterMm: sideInfo.diameter,
+        }),
+        tieDiameterMm: tieInfo.diameter,
+        sideBarDiameterMm: sideInfo.diameter,
+      }) : null;
       for (let i = 0; i < perSide; i++) {
         const y = sideYTop + (sideYBot - sideYTop) * (i + 1) / (perSide + 1);
-        ctx.beginPath();
-        ctx.moveTo(sectionLeft + cover, y);
-        ctx.lineTo(sectionRight - cover, y);
-        ctx.stroke();
+        drawTieBarSymbol(
+          ctx,
+          barLeft,
+          barRight,
+          y,
+          '#1ABC9C',
+          (tieSpec?.hookLenMm ?? 75) * scale * 0.35,
+        );
       }
-      ctx.setLineDash([]);
     }
 
     // ── Cover dimension ──
@@ -235,12 +315,25 @@ export function BeamCrossSection({ params, cutPosition }: { params: BeamParams; 
     const stirLabel = hasCut
       ? `箍: Φ${stir.diameter}@${inDenseZone ? stir.spacingDense : stir.spacingNormal} (${inDenseZone ? '加密区' : '非加密区'})`
       : `箍: ${params.stirrup}`;
-    drawLabel(ctx, stirLabel, labelX, cy + 4, '#27AE60', LW);
+    drawLabel(ctx, stirLabel, labelX, cy + 4, stirColor, LW);
+    drawLabel(ctx, `中心线: ${Math.round(stirSpec.widthMm)}×${Math.round(stirSpec.heightMm)} L=${stirSpec.lengthMm}`, labelX, cy + 18, stirColor, LW);
 
     if (sideInfo) {
       const prefixLabel = sideInfo.prefix === 'G' ? '腰' : '抗扭';
-      drawLabel(ctx, `${prefixLabel}: ${params.sideBar}`, labelX, cy + 18, '#2980B9', LW);
-      drawLabel(ctx, `拉: ${params.tieBar || 'A6(自动)'}`, labelX, cy + 32, '#1ABC9C', LW);
+      const tieInfo = params.tieBar ? parseTieBar(params.tieBar) : autoTieBar(params.b, stir.grade, stir.diameter);
+      const tieLabel = tieInfo ? (params.tieBar || `${tieBarToString(tieInfo)}(自动)`) : (params.tieBar || 'A6(自动)');
+      const tieSpec = tieInfo ? createTieBarShapeSpec({
+        sideOffsetMm: resolveTieSideOffsetMm({
+          sectionWidthMm: params.b,
+          coverMm,
+          stirrupDiameterMm: stir.diameter,
+          sideBarDiameterMm: sideInfo.diameter,
+        }),
+        tieDiameterMm: tieInfo.diameter,
+        sideBarDiameterMm: sideInfo.diameter,
+      }) : null;
+      drawLabel(ctx, `${prefixLabel}: ${params.sideBar}`, labelX, cy + 34, '#2980B9', LW);
+      drawLabel(ctx, `拉: ${tieLabel}${tieSpec ? ` L=${tieSpec.lengthMm}` : ''}`, labelX, cy + 48, '#1ABC9C', LW);
     }
 
     // ── Cut position ──
@@ -291,6 +384,11 @@ export function ColumnCrossSection({ params, cutPosition }: { params: ColumnPara
     const stir = parseStirrup(params.stirrup);
     const innerW = dw - 2 * cover;
     const innerH = dh - 2 * cover;
+    const stirSpec = createStirrupShapeSpec({
+      widthMm: params.b - 2 * coverMm - stir.diameter,
+      heightMm: params.h - 2 * coverMm - stir.diameter,
+      diameterMm: stir.diameter,
+    });
 
     const resolved = resolveColumnBars(params.main, params.cornerMain, params.bMiddleMain, params.hMiddleMain, innerW, innerH);
 
@@ -303,14 +401,22 @@ export function ColumnCrossSection({ params, cutPosition }: { params: ColumnPara
     drawConcreteSection(ctx, cx, cy, dw, dh);
 
     // ── Stirrup with hooks ──
-    const stirX = sectionLeft + cover / 2;
-    const stirY = sectionTop + cover / 2;
-    const stirW = dw - cover;
-    const stirH = dh - cover;
-    drawStirrup(ctx, stirX, stirY, stirW, stirH, '#27AE60', 8);
+    const stirW = Math.max(stirSpec.widthMm * scale, 4);
+    const stirH = Math.max(stirSpec.heightMm * scale, 4);
+    const stirX = cx - stirW / 2;
+    const stirY = cy - stirH / 2;
+    const stirColor = hasCut ? (inDenseZone ? '#1E8449' : '#7DCEA0') : '#27AE60';
+    drawStirrup(ctx, stirX, stirY, stirW, stirH, stirColor, Math.max(stirSpec.hookLenMm * scale * 0.35, 6));
 
     // ── Inner ties (composite stirrup) ──
-    drawInnerTies(ctx, stir.legs, stirX, stirY, stirW, stirH, '#27AE60', 6);
+    const innerLegXs = resolveInnerLegPositions({
+      legs: stir.legs,
+      width: stirW,
+      barPositions: resolved.bars.map((bar) => bar.x),
+    });
+    innerLegXs.forEach((x) => {
+      drawVerticalTieSymbol(ctx, cx + x, stirY, stirY + stirH, stirColor, Math.max(stirSpec.hookLenMm * scale * 0.28, 5));
+    });
 
     // ── Main rebars (using resolveColumnBars) ──
     const roleColor: Record<string, string> = { corner: '#C0392B', bMiddle: '#E67E22', hMiddle: '#8E44AD' };
@@ -342,10 +448,11 @@ export function ColumnCrossSection({ params, cutPosition }: { params: ColumnPara
     const stirLabel = hasCut
       ? `箍: Φ${stir.diameter}@${inDenseZone ? stir.spacingDense : stir.spacingNormal} (${inDenseZone ? '加密区' : '非加密区'})${typeInfo}`
       : `箍筋: ${params.stirrup}${typeInfo}`;
-    drawLabel(ctx, stirLabel, labelX, labelY, '#27AE60', LW); labelY += 16;
+    drawLabel(ctx, stirLabel, labelX, labelY, stirColor, LW); labelY += 16;
+    drawLabel(ctx, `中心线: ${Math.round(stirSpec.widthMm)}×${Math.round(stirSpec.heightMm)} L=${stirSpec.lengthMm}`, labelX, labelY, stirColor, LW); labelY += 16;
 
     if (stir.legs > 2) {
-      drawLabel(ctx, `${stir.legs}肢箍（含拉筋）`, labelX, labelY, '#27AE60', LW); labelY += 16;
+      drawLabel(ctx, `${stir.legs}肢箍（中间肢${innerLegXs.length}根）`, labelX, labelY, stirColor, LW); labelY += 16;
     }
 
     if (hasCut) {

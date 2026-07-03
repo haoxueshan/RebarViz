@@ -79,8 +79,9 @@ export const BEAM_CONSTRUCTION_STEPS: ConstructionStep[] = [
   { groups: new Set(['concrete', 'stirrup', 'bottom']), label: '+下部纵筋' },
   { groups: new Set(['concrete', 'stirrup', 'bottom', 'top']), label: '+上部纵筋' },
   { groups: new Set(['concrete', 'stirrup', 'bottom', 'top', 'support']), label: '+支座负筋/架立筋' },
-  { groups: new Set(['concrete', 'stirrup', 'bottom', 'top', 'support', 'sideBar']), label: '+腰筋/拉筋' },
-  { groups: new Set(['concrete', 'stirrup', 'bottom', 'top', 'support', 'sideBar', 'haunch']), label: '+加腋附加筋' },
+  { groups: new Set(['concrete', 'stirrup', 'bottom', 'top', 'support', 'sideBar']), label: '+腰筋/抗扭筋' },
+  { groups: new Set(['concrete', 'stirrup', 'bottom', 'top', 'support', 'sideBar', 'tieBar']), label: '+拉筋' },
+  { groups: new Set(['concrete', 'stirrup', 'bottom', 'top', 'support', 'sideBar', 'tieBar', 'haunch']), label: '+加腋附加筋' },
 ];
 
 /** 柱施工步骤 */
