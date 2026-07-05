@@ -52,7 +52,7 @@ export function ContactModal({ onClose }: { onClose: () => void }) {
 
           <div className="rounded-xl overflow-hidden border border-gray-100 mb-4">
             <Image
-              src="/wechat-qr.jpg"
+              src="/wechat-qr-clean.jpg"
               alt="微信二维码"
               width={280}
               height={280}

@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Box, Columns3, LayoutGrid, GitMerge, Menu, X, Wallpaper, Footprints } from 'lucide-react';
+import { Box, Columns3, LayoutGrid, GitMerge, Menu, X, Wallpaper, Footprints, Sparkles, Github } from 'lucide-react';
 
 const NAV = [
   { href: '/beam', label: '梁 KL', icon: Columns3 },
@@ -25,7 +25,7 @@ export function Header() {
         ? 'bg-[#0a0f1a]/80 border-white/5'
         : 'bg-white/80 border-gray-200'
     }`}>
-      <div className="max-w-[1600px] mx-auto px-4 h-14 flex items-center justify-between">
+      <div className={`${isLanding ? 'w-full' : 'max-w-[1600px] mx-auto'} px-4 h-14 flex items-center justify-between`}>
         <Link href="/" className="flex items-center gap-2.5 group" onClick={() => setMobileOpen(false)}>
           <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-gradient-to-br from-blue-500 to-cyan-400">
             <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -38,7 +38,7 @@ export function Header() {
           </div>
         </Link>
 
-        <nav className="hidden sm:flex items-center gap-1">
+        <nav className="hidden md:flex items-center gap-1">
           {NAV.map(({ href, label, icon: Icon }) => {
             const active = pathname === href;
             return (
@@ -59,13 +59,37 @@ export function Header() {
         </nav>
 
         {isLanding && (
-          <button
-            className="sm:hidden p-2 rounded-lg cursor-pointer transition-colors text-gray-400 hover:bg-white/10"
-            onClick={() => setMobileOpen(!mobileOpen)}
-            aria-label={mobileOpen ? '关闭菜单' : '打开菜单'}
-          >
-            {mobileOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-          </button>
+          <div className="flex items-center gap-2">
+            <a
+              href="#features"
+              className="hidden lg:inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-medium text-gray-300 transition-colors hover:bg-white/[0.08] hover:text-white"
+            >
+              <Sparkles className="h-4 w-4 text-blue-300" />
+              AI 助手
+            </a>
+            <a
+              href="https://github.com/BruceLee1024/RebarViz"
+              target="_blank"
+              rel="noreferrer"
+              className="hidden lg:inline-flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] text-gray-300 transition-colors hover:bg-white/[0.08] hover:text-white"
+              aria-label="GitHub"
+            >
+              <Github className="h-4 w-4" />
+            </a>
+            <Link
+              href="/beam"
+              className="hidden sm:inline-flex items-center rounded-xl bg-blue-500 px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-cyan-400"
+            >
+              开始学习
+            </Link>
+            <button
+              className="md:hidden p-2 rounded-lg cursor-pointer transition-colors text-gray-400 hover:bg-white/10"
+              onClick={() => setMobileOpen(!mobileOpen)}
+              aria-label={mobileOpen ? '关闭菜单' : '打开菜单'}
+            >
+              {mobileOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+            </button>
+          </div>
         )}
       </div>
 

@@ -1,11 +1,12 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import Image from 'next/image';
 import Link from 'next/link';
 import {
   ArrowRight, Columns3, Box, LayoutGrid, GitMerge, Wallpaper, Landmark,
   RotateCcw, MousePointerClick, Scissors, BookOpen, Sparkles, Layers,
-  ChevronDown, Zap, Eye, Brain, Camera,
+  ChevronDown, Zap, Eye, Brain, Camera, Footprints, ShieldCheck,
 } from 'lucide-react';
 import { GlobalAIInput } from '@/components/GlobalAIInput';
 import { ContactModal } from '@/components/ContactAuthor';
@@ -177,12 +178,12 @@ function Reveal({ children, className = '', delay = 0 }: { children: React.React
 /* ─── Data ─── */
 const FEATURES = [
   { icon: RotateCcw, title: '3D 交互查看', desc: '旋转、缩放、平移，从任意角度观察配筋构造', color: 'from-blue-500 to-cyan-400', bg: 'bg-blue-50' },
-  { icon: MousePointerClick, title: '点击识别', desc: '点击任意钢筋，即时显示该钢筋的详细信息', color: 'from-violet-500 to-purple-400', bg: 'bg-violet-50' },
+  { icon: MousePointerClick, title: '点击识别', desc: '点击任意钢筋，即时显示该钢筋的详细信息', color: 'from-sky-500 to-blue-400', bg: 'bg-sky-50' },
   { icon: Scissors, title: '剖切视图', desc: '沿构件任意位置剖切，查看截面配筋详情', color: 'from-orange-500 to-amber-400', bg: 'bg-orange-50' },
   { icon: BookOpen, title: '标注自动解读', desc: '输入平法标注，自动解析钢筋等级、直径、间距', color: 'from-emerald-500 to-green-400', bg: 'bg-emerald-50' },
-  { icon: Sparkles, title: 'AI 平法助手', desc: '接入 DeepSeek / Qwen / Kimi，随时提问构造问题', color: 'from-pink-500 to-rose-400', bg: 'bg-pink-50' },
-  { icon: Layers, title: '截面配筋图', desc: '同步生成 2D 截面示意，对照理解更直观', color: 'from-indigo-500 to-blue-400', bg: 'bg-indigo-50' },
-  { icon: Camera, title: '图纸扫描建模', desc: '上传施工图，AI 自动识别平法标注并生成 3D 配筋模型', color: 'from-fuchsia-500 to-cyan-400', bg: 'bg-fuchsia-50' },
+  { icon: Sparkles, title: 'AI 平法助手', desc: '接入 DeepSeek / Qwen / Kimi，随时提问构造问题', color: 'from-cyan-500 to-blue-400', bg: 'bg-cyan-50' },
+  { icon: Layers, title: '截面配筋图', desc: '同步生成 2D 截面示意，对照理解更直观', color: 'from-slate-500 to-blue-400', bg: 'bg-slate-50' },
+  { icon: Camera, title: '图纸扫描建模', desc: '上传施工图，AI 自动识别平法标注并生成 3D 配筋模型', color: 'from-blue-500 to-orange-400', bg: 'bg-blue-50' },
 ];
 
 const COMPONENTS = [
@@ -249,101 +250,184 @@ const STATS = [
   { value: 100, suffix: '%', label: '免费开源' },
 ];
 
+const HERO_CAPABILITIES = [
+  { icon: BookOpen, title: '基于图集', desc: '22G101-1 / 2 / 3' },
+  { icon: ShieldCheck, title: '构造详录', desc: '锚固、加密区、搭接等' },
+  { icon: RotateCcw, title: '3D 交互', desc: '旋转、缩放、剖切查看' },
+  { icon: MousePointerClick, title: '点击识别', desc: '钢筋信息一目了然' },
+  { icon: Brain, title: 'AI 助手', desc: '三大模型随时答疑' },
+];
+
+const HERO_COMPONENTS = [
+  { href: '/beam', icon: Columns3, title: '梁 KL', desc: '框架梁、连梁等', image: '/landing-beam.webp' },
+  { href: '/column', icon: Box, title: '柱 KZ', desc: '框架柱、构造柱等', image: '/landing-column.webp' },
+  { href: '/shearwall', icon: Wallpaper, title: '墙 Q', desc: '剪力墙、挡土墙等', image: '/landing-wall.webp' },
+  { href: '/slab', icon: LayoutGrid, title: '板 LB', desc: '楼板、基础底板等', image: '/landing-slab.webp' },
+  { href: '/joint', icon: GitMerge, title: '节点', desc: '梁柱节点、节点区', image: '/landing-joint.webp' },
+  { href: '/stair', icon: Footprints, title: '楼梯 LT', desc: '板式楼梯、梯梁等', image: '/landing-stair.webp' },
+];
+
 /* ─── Main Landing Page ─── */
 export function LandingPage() {
   const [contactOpen, setContactOpen] = useState(false);
 
   return (
-    <main className="bg-[#0a0f1a] text-white overflow-hidden">
+    <main className="w-full bg-[#0a0f1a] text-white overflow-hidden">
 
-      {/* ═══════ HERO — full viewport, cinematic ═══════ */}
-      <section className="relative min-h-screen flex items-center justify-center">
+      {/* ═══════ HERO — immersive model first ═══════ */}
+      <section className="relative overflow-hidden lg:min-h-[720px] xl:min-h-[760px]">
         <MeshBackground />
 
-        {/* Large gradient orbs */}
-        <div className="absolute top-[-10%] left-[-5%] w-[700px] h-[700px] rounded-full bg-blue-500/[0.07] blur-[150px] pointer-events-none" />
-        <div className="absolute bottom-[-10%] right-[-5%] w-[600px] h-[600px] rounded-full bg-purple-500/[0.06] blur-[130px] pointer-events-none" />
-        <div className="absolute top-[40%] left-[50%] w-[400px] h-[400px] rounded-full bg-cyan-400/[0.05] blur-[100px] pointer-events-none" />
+        <Image
+          src="/landing-rebar-hero.webp"
+          alt="梁柱节点钢筋 3D 可视化模型"
+          fill
+          priority
+          sizes="100vw"
+          className="object-cover object-[64%_50%] opacity-80"
+        />
+        <div className="absolute inset-0 bg-[linear-gradient(90deg,#08111f_0%,rgba(8,17,31,0.92)_30%,rgba(8,17,31,0.38)_62%,rgba(8,17,31,0.76)_100%)]" />
+        <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(10,15,26,0.08)_0%,rgba(10,15,26,0.05)_58%,#0a0f1a_100%)]" />
 
-        <div className="relative z-10 max-w-6xl mx-auto px-6 text-center">
-          {/* Badge */}
-          <Reveal>
-            <div className="inline-flex items-center gap-2.5 px-5 py-2 rounded-full bg-white/[0.06] border border-white/[0.08] text-sm mb-10 backdrop-blur-sm">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-green-400" />
-              </span>
-              <span className="text-gray-300">基于 22G101 图集</span>
+        <div className="pointer-events-none absolute right-[8%] top-[15%] hidden text-sm text-slate-200/85 lg:block">
+          <div className="border-l border-t border-white/30 pl-4 pt-2">上部通长筋<br /><span className="font-mono text-cyan-200">4Φ25</span></div>
+        </div>
+        <div className="pointer-events-none absolute right-[16%] top-[45%] hidden text-sm text-slate-200/85 lg:block">
+          <div className="border-l border-t border-white/25 pl-4 pt-2">箍筋加密区<br /><span className="font-mono text-cyan-200">@100/200</span></div>
+        </div>
+
+        <div className="pointer-events-none absolute right-8 top-[48%] z-20 hidden -translate-y-1/2 overflow-hidden rounded-2xl border border-white/15 bg-slate-950/45 backdrop-blur-xl xl:block">
+          {[
+            { icon: Box, label: '默认视角' },
+            { icon: Scissors, label: '剖切' },
+            { icon: MousePointerClick, label: '选中钢筋' },
+            { icon: Eye, label: '测量标注' },
+          ].map(({ icon: Icon, label }) => (
+            <div key={label} className="flex w-[72px] flex-col items-center gap-1 border-b border-white/10 px-3 py-3 text-center text-[11px] text-slate-300 last:border-b-0">
+              <Icon className="h-5 w-5 text-slate-100" strokeWidth={1.8} />
+              {label}
             </div>
-          </Reveal>
+          ))}
+        </div>
 
-          {/* Title — large and cinematic */}
-          <Reveal delay={100}>
-            <h1 className="text-6xl sm:text-8xl lg:text-9xl font-black tracking-tighter leading-[0.95] mb-8">
-              <span className="block bg-clip-text text-transparent bg-gradient-to-b from-white via-white to-gray-500">
-                钢筋平法识图
-              </span>
-              <span className="block bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-cyan-300 to-blue-500 mt-2">
-                3D 可视化学习
-              </span>
-            </h1>
-          </Reveal>
+        <div className="relative z-10 flex min-h-[720px] w-full flex-col justify-end px-5 pb-0 pt-12 sm:px-8 lg:px-12 lg:pt-16 xl:min-h-[760px]">
+          <div className="grid flex-1 items-center gap-10 lg:grid-cols-[minmax(0,680px)_1fr]">
+            <div className="max-w-3xl">
+              <Reveal>
+                <div className="mb-6 inline-flex items-center gap-2.5 rounded-full border border-white/12 bg-slate-950/45 px-4 py-2 text-sm text-slate-200 backdrop-blur-md">
+                  <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_18px_rgba(52,211,153,0.7)]" />
+                  基于 22G101 图集
+                </div>
+              </Reveal>
 
-          <Reveal delay={200}>
-            <p className="text-lg sm:text-xl lg:text-2xl text-gray-400 max-w-3xl mx-auto mb-10 leading-relaxed font-light">
-              输入平法标注，即时生成三维配筋模型
-              <br className="hidden sm:block" />
-              旋转查看构造细节，AI 助手随时答疑
-            </p>
-          </Reveal>
+              <Reveal delay={100}>
+                <h1 className="max-w-3xl text-5xl font-black leading-[0.98] tracking-tight sm:text-6xl lg:text-7xl xl:text-[86px]">
+                  <span className="block text-white drop-shadow-[0_10px_30px_rgba(0,0,0,0.45)]">钢筋平法识图</span>
+                  <span className="mt-2 block bg-gradient-to-r from-blue-400 via-cyan-300 to-sky-500 bg-clip-text text-transparent">3D 可视化学习</span>
+                </h1>
+              </Reveal>
 
-          {/* Global AI Input — describe to generate */}
-          <Reveal delay={280}>
-            <GlobalAIInput />
-          </Reveal>
+              <Reveal delay={200}>
+                <p className="mt-6 max-w-xl text-base leading-8 text-slate-300 sm:text-lg">
+                  输入平法标注，即时生成三维配筋模型。旋转查看构造细节，AI 助手随时答疑。
+                </p>
+              </Reveal>
 
-          {/* CTA — prominent */}
-          <Reveal delay={360}>
-            <div className="flex flex-col sm:flex-row gap-5 justify-center mt-10">
-              <Link
-                href="/beam"
-                className="group relative inline-flex items-center justify-center gap-3 px-10 py-5 text-lg font-bold rounded-2xl overflow-hidden transition-all hover:shadow-[0_0_60px_rgba(59,130,246,0.3)] cursor-pointer bg-gradient-to-r from-blue-500 to-cyan-400 text-white"
-              >
-                <span className="absolute inset-0 bg-gradient-to-r from-blue-400 to-cyan-300 opacity-0 group-hover:opacity-100 transition-opacity" />
-                <span className="relative flex items-center gap-2">
-                  开始学习
-                  <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-                </span>
-              </Link>
-              <a
-                href="#features"
-                className="inline-flex items-center justify-center gap-2 px-10 py-5 text-lg border border-white/15 rounded-2xl text-gray-300 hover:bg-white/5 hover:border-white/25 transition-all cursor-pointer backdrop-blur-sm"
-              >
-                了解更多
-                <ChevronDown className="w-5 h-5" />
-              </a>
+              <Reveal delay={280}>
+                <div className="mt-7 max-w-[820px] [&>div]:mx-0">
+                  <GlobalAIInput />
+                </div>
+              </Reveal>
+
+              <Reveal delay={360}>
+                <div className="mt-7 flex flex-col gap-3 sm:flex-row">
+                  <Link
+                    href="/beam"
+                    className="group inline-flex items-center justify-center gap-2 rounded-xl bg-blue-500 px-8 py-4 text-base font-bold text-white shadow-[0_20px_55px_rgba(37,99,235,0.28)] transition-all hover:bg-cyan-400 active:scale-[0.98]"
+                  >
+                    开始学习
+                    <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" />
+                  </Link>
+                  <a
+                    href="#features"
+                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/15 bg-slate-950/30 px-8 py-4 text-base font-semibold text-slate-200 backdrop-blur-md transition-all hover:border-white/25 hover:bg-white/[0.08]"
+                  >
+                    了解更多
+                    <ChevronDown className="h-5 w-5" />
+                  </a>
+                </div>
+              </Reveal>
+            </div>
+
+            <div className="hidden min-h-[460px] lg:block" />
+          </div>
+
+          <Reveal delay={420}>
+            <div className="mt-7 grid border-y border-white/10 bg-slate-950/60 backdrop-blur-md md:grid-cols-5">
+              {HERO_CAPABILITIES.map(({ icon: Icon, title, desc }) => (
+                <div key={title} className="flex items-center gap-4 border-white/10 px-5 py-5 md:border-r last:md:border-r-0">
+                  <Icon className="h-7 w-7 shrink-0 text-cyan-300" strokeWidth={1.8} />
+                  <div>
+                    <p className="text-sm font-semibold text-white">{title}</p>
+                    <p className="mt-0.5 text-xs leading-5 text-slate-400">{desc}</p>
+                  </div>
+                </div>
+              ))}
             </div>
           </Reveal>
         </div>
+      </section>
 
-        {/* Scroll indicator */}
-        <div className="absolute bottom-10 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2">
-          <span className="text-[11px] text-gray-500 tracking-widest uppercase">Scroll</span>
-          <div className="w-px h-10 bg-gradient-to-b from-gray-500 to-transparent animate-pulse" />
+      <section className="relative border-b border-white/[0.06] bg-[#07111d] py-8">
+        <div className="w-full px-5 sm:px-8 lg:px-12">
+          <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 className="text-2xl font-bold text-white sm:text-3xl">选择构件，开始学习</h2>
+              <p className="mt-2 text-sm text-slate-400">覆盖常见结构构件，配筋要点一目了然</p>
+            </div>
+            <Link href="#features" className="inline-flex items-center gap-2 text-sm font-semibold text-slate-300 transition-colors hover:text-white">
+              查看全部构件
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
+            {HERO_COMPONENTS.map(({ href, icon: Icon, title, desc, image }) => (
+              <Link
+                key={href}
+                href={href}
+                className="group overflow-hidden rounded-xl border border-white/10 bg-white/[0.035] transition-all hover:-translate-y-0.5 hover:border-blue-300/45 hover:bg-white/[0.06]"
+              >
+                <div className="relative h-24 border-b border-white/10 bg-slate-950/60">
+                  <Image
+                    src={image}
+                    alt={`${title}配筋模型`}
+                    fill
+                    sizes="(min-width: 1024px) 16vw, 50vw"
+                    className="object-cover opacity-80 transition-transform duration-500 group-hover:scale-105"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 to-transparent" />
+                </div>
+                <div className="p-4">
+                  <Icon className="mb-3 h-5 w-5 text-blue-300" strokeWidth={1.8} />
+                  <h3 className="text-base font-semibold text-white">{title}</h3>
+                  <p className="mt-1 text-xs leading-5 text-slate-400">{desc}</p>
+                </div>
+              </Link>
+            ))}
+          </div>
         </div>
       </section>
 
       {/* ═══════ STATS BAR ═══════ */}
-      <section className="relative border-y border-white/[0.06]">
-        <div className="absolute inset-0 bg-gradient-to-r from-blue-500/[0.03] via-transparent to-purple-500/[0.03]" />
-        <div className="relative max-w-6xl mx-auto px-6 py-16 grid grid-cols-2 md:grid-cols-4 gap-10">
+      <section className="relative border-y border-white/[0.06] bg-[#07111d]">
+        <div className="relative grid w-full grid-cols-2 gap-px px-5 py-8 sm:px-8 md:grid-cols-4 lg:px-12">
           {STATS.map(({ value, suffix, label }, i) => (
             <Reveal key={label} delay={i * 100}>
-              <div className="text-center">
-                <div className="text-4xl sm:text-5xl font-black bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-cyan-300">
+              <div className="border border-white/10 bg-white/[0.025] px-5 py-6 text-center">
+                <div className="text-3xl font-black text-cyan-200 sm:text-4xl">
                   <AnimatedNumber target={value} suffix={suffix} />
                 </div>
-                <div className="text-sm text-gray-500 mt-2 tracking-wide">{label}</div>
+                <div className="mt-2 text-sm text-slate-400">{label}</div>
               </div>
             </Reveal>
           ))}
@@ -351,30 +435,29 @@ export function LandingPage() {
       </section>
 
       {/* ═══════ FEATURES — large cards ═══════ */}
-      <section id="features" className="relative py-28 sm:py-36">
-        <div className="max-w-6xl mx-auto px-6">
+      <section id="features" className="relative bg-[#0a0f1a] py-24 sm:py-28">
+        <div className="w-full px-5 sm:px-8 lg:px-12">
           <Reveal>
-            <div className="text-center mb-20">
-              <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-medium mb-5">
+            <div className="mb-14 max-w-2xl">
+              <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-blue-500/20 bg-blue-500/10 px-4 py-1.5 text-xs font-medium text-blue-300">
                 <Zap className="w-3.5 h-3.5" /> 核心功能
               </div>
-              <h2 className="text-4xl sm:text-5xl lg:text-6xl font-black tracking-tight">
+              <h2 className="text-4xl font-black tracking-tight sm:text-5xl">
                 为什么用 <span className="bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-cyan-300">RebarViz</span>
               </h2>
-              <p className="text-gray-500 mt-4 text-lg max-w-xl mx-auto">六大核心功能，让平法识图从此不再枯燥</p>
+              <p className="mt-4 text-lg leading-8 text-slate-400">围绕平法标注、三维模型和构造理解，把识图过程变成可操作的工程视图。</p>
             </div>
           </Reveal>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {FEATURES.map(({ icon: Icon, title, desc, color }, i) => (
               <Reveal key={title} delay={i * 80}>
-                <div className="group relative bg-white/[0.03] border border-white/[0.06] rounded-3xl p-8 hover:bg-white/[0.06] hover:border-white/[0.12] transition-all duration-300 cursor-default h-full">
-                  <div className={`absolute inset-0 rounded-3xl bg-gradient-to-br ${color} opacity-0 group-hover:opacity-[0.04] transition-opacity duration-300`} />
-                  <div className={`relative w-14 h-14 rounded-2xl bg-gradient-to-br ${color} flex items-center justify-center mb-5 shadow-lg`}>
-                    <Icon className="w-7 h-7 text-white" />
+                <div className="group relative h-full overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.035] p-6 transition-all duration-300 hover:border-blue-300/35 hover:bg-white/[0.055]">
+                  <div className={`mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br ${color}`}>
+                    <Icon className="h-6 w-6 text-white" />
                   </div>
-                  <h3 className="text-lg font-bold text-white mb-2">{title}</h3>
-                  <p className="text-gray-400 leading-relaxed">{desc}</p>
+                  <h3 className="mb-2 text-lg font-bold text-white">{title}</h3>
+                  <p className="leading-relaxed text-slate-400">{desc}</p>
                 </div>
               </Reveal>
             ))}
@@ -383,15 +466,15 @@ export function LandingPage() {
       </section>
 
       {/* ═══════ COMPONENTS — showcase cards ═══════ */}
-      <section className="relative py-28 sm:py-36">
-        <div className="max-w-6xl mx-auto px-6">
+      <section className="relative border-t border-white/[0.06] bg-[#07111d] py-24 sm:py-28">
+        <div className="w-full px-5 sm:px-8 lg:px-12">
           <Reveal>
-            <div className="text-center mb-20">
-              <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-400 text-xs font-medium mb-5">
-                <Eye className="w-3.5 h-3.5" /> 构件类型
+            <div className="mb-12 max-w-2xl">
+              <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-cyan-500/20 bg-cyan-500/10 px-4 py-1.5 text-xs font-medium text-cyan-300">
+                <Eye className="w-3.5 h-3.5" /> 完整构件库
               </div>
-              <h2 className="text-4xl sm:text-5xl lg:text-6xl font-black tracking-tight">选择构件，开始学习</h2>
-              <p className="text-gray-500 mt-4 text-lg">点击进入对应的 3D 识图学习页面</p>
+              <h2 className="text-4xl font-black tracking-tight sm:text-5xl">从常见构件进入模型</h2>
+              <p className="mt-4 text-lg leading-8 text-slate-400">梁、柱、墙、板、节点和基础体系都保留原有入口，只把视觉统一到新的模型首屏语言。</p>
             </div>
           </Reveal>
 
@@ -458,29 +541,34 @@ export function LandingPage() {
       </section>
 
       {/* ═══════ AI SECTION — cinematic card ═══════ */}
-      <section className="relative py-28 sm:py-36 border-t border-white/[0.06]">
-        <div className="max-w-6xl mx-auto px-6">
+      <section className="relative border-t border-white/[0.06] bg-[#0a0f1a] py-24 sm:py-28">
+        <div className="w-full px-5 sm:px-8 lg:px-12">
           <Reveal>
-            <div className="relative bg-gradient-to-br from-white/[0.05] to-white/[0.01] border border-white/[0.08] rounded-[2rem] p-10 sm:p-16 overflow-hidden">
-              {/* Decorative glows */}
-              <div className="absolute -top-32 -right-32 w-80 h-80 bg-pink-500/10 rounded-full blur-[100px] pointer-events-none" />
-              <div className="absolute -bottom-32 -left-32 w-80 h-80 bg-blue-500/10 rounded-full blur-[100px] pointer-events-none" />
+            <div className="relative overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.035] p-6 sm:p-10 lg:p-12">
+              <Image
+                src="/landing-rebar-hero.webp"
+                alt="AI 平法助手背景模型"
+                fill
+                sizes="100vw"
+                className="object-cover object-right opacity-20"
+              />
+              <div className="absolute inset-0 bg-[linear-gradient(90deg,#0a0f1a_0%,rgba(10,15,26,0.92)_42%,rgba(10,15,26,0.58)_100%)]" />
 
-              <div className="relative grid md:grid-cols-2 gap-12 items-center">
+              <div className="relative grid gap-10 md:grid-cols-2 md:items-center">
                 <div>
-                  <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-pink-500/10 border border-pink-500/20 text-pink-400 text-xs font-medium mb-5">
+                  <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-blue-500/20 bg-blue-500/10 px-4 py-1.5 text-xs font-medium text-blue-300">
                     <Brain className="w-3.5 h-3.5" /> AI 驱动
                   </div>
-                  <h2 className="text-4xl sm:text-5xl font-black mb-5">
-                    AI <span className="bg-clip-text text-transparent bg-gradient-to-r from-pink-400 to-purple-400">平法助手</span>
+                  <h2 className="mb-5 text-4xl font-black sm:text-5xl">
+                    AI <span className="bg-clip-text text-transparent bg-gradient-to-r from-blue-300 to-cyan-300">平法助手</span>
                   </h2>
-                  <p className="text-gray-400 leading-relaxed text-lg mb-8">
+                  <p className="mb-8 max-w-xl text-lg leading-8 text-slate-400">
                     接入 DeepSeek、通义千问、Kimi 三大模型，随时提问 22G101 图集和钢筋构造问题。
                     AI 会结合你当前查看的构件参数，给出针对性的专业解答。
                   </p>
                   <div className="flex flex-wrap gap-3">
                     {['DeepSeek', '通义千问', 'Kimi'].map(name => (
-                      <span key={name} className="px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-sm text-gray-300 font-medium">
+                      <span key={name} className="rounded-xl border border-white/10 bg-white/[0.055] px-4 py-2 text-sm font-medium text-slate-300">
                         {name}
                       </span>
                     ))}
@@ -488,20 +576,20 @@ export function LandingPage() {
                 </div>
 
                 {/* Mock chat UI */}
-                <div className="bg-[#0d1320] border border-white/10 rounded-2xl p-5 shadow-2xl">
-                  <div className="flex items-center gap-2 mb-4 pb-4 border-b border-white/5">
-                    <Sparkles className="w-5 h-5 text-pink-400" />
-                    <span className="font-medium text-gray-300">AI 平法助手</span>
-                    <span className="ml-auto text-[10px] text-gray-500 bg-white/5 px-2 py-0.5 rounded">DeepSeek</span>
+                <div className="rounded-2xl border border-white/10 bg-slate-950/65 p-5 shadow-2xl backdrop-blur-md">
+                  <div className="mb-4 flex items-center gap-2 border-b border-white/5 pb-4">
+                    <Sparkles className="h-5 w-5 text-blue-300" />
+                    <span className="font-medium text-slate-300">AI 平法助手</span>
+                    <span className="ml-auto rounded bg-white/5 px-2 py-0.5 text-[10px] text-slate-500">DeepSeek</span>
                   </div>
                   <div className="space-y-4">
                     <div className="flex justify-end">
-                      <div className="bg-blue-500 text-white text-sm px-4 py-2.5 rounded-2xl rounded-br-md max-w-[80%]">
+                      <div className="max-w-[80%] rounded-2xl rounded-br-md bg-blue-500 px-4 py-2.5 text-sm text-white">
                         梁端弯锚的弯折段长度怎么算？
                       </div>
                     </div>
                     <div className="flex justify-start">
-                      <div className="bg-white/5 border border-white/10 text-gray-300 text-sm px-4 py-3 rounded-2xl rounded-bl-md max-w-[85%] leading-relaxed">
+                      <div className="max-w-[85%] rounded-2xl rounded-bl-md border border-white/10 bg-white/5 px-4 py-3 text-sm leading-relaxed text-slate-300">
                         根据 22G101-1，梁端弯锚的弯折段长度为 <span className="text-cyan-400 font-mono font-medium">15d</span>（d 为钢筋直径）。
                         例如 Φ25 钢筋，弯折段 = 15 × 25 = <span className="text-cyan-400 font-mono font-medium">375mm</span>。
                         直段部分需 ≥ <span className="text-cyan-400 font-mono font-medium">0.4laE</span>。
@@ -518,7 +606,7 @@ export function LandingPage() {
       {/* ═══════ FINAL CTA ═══════ */}
       <section className="relative py-32 sm:py-40">
         <div className="absolute inset-0 bg-gradient-to-t from-blue-500/[0.06] to-transparent pointer-events-none" />
-        <div className="max-w-4xl mx-auto px-6 text-center">
+        <div className="w-full px-5 text-center sm:px-8 lg:px-12">
           <Reveal>
             <h2 className="text-5xl sm:text-7xl font-black tracking-tight mb-8">
               准备好了吗？
@@ -545,7 +633,7 @@ export function LandingPage() {
 
       {/* ═══════ FOOTER ═══════ */}
       <footer className="border-t border-white/[0.06]">
-        <div className="max-w-6xl mx-auto px-6 py-12">
+        <div className="w-full px-5 py-12 sm:px-8 lg:px-12">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 bg-gradient-to-br from-blue-500 to-cyan-400 rounded-xl flex items-center justify-center">
