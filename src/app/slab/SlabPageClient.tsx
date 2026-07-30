@@ -5,7 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import type { SlabParams, SlabSupportType, ComponentType } from '@/lib/types';
 import { SLAB_PRESETS } from '@/lib/rebar';
-import { calcSlab } from '@/lib/calc';
+import { calcSlab, resolveSlabAnchors } from '@/lib/calc';
 import { validateSlabRebar, validateDimension } from '@/lib/validate';
 import { SlabCrossSection } from '@/components/CrossSection';
 import { SlabExplain } from '@/components/NotationExplain';
@@ -58,8 +58,56 @@ export function SlabPageClient() {
 
   const update = (patch: Partial<SlabParams>) => setParams(p => ({ ...p, ...patch }));
   const calcResult = useMemo(() => calcSlab(params), [params]);
+  const resolvedAnchors = useMemo(() => resolveSlabAnchors(params), [params]);
   const concreteResult = useMemo(() => calcSlabConcrete(params), [params]);
   const aiContext = useMemo(() => buildSlabContext(params), [params]);
+  const hasZeroManualAnchor = resolvedAnchors.useManual && [
+    resolvedAnchors.bottomX.start,
+    resolvedAnchors.bottomX.end,
+    resolvedAnchors.bottomY.start,
+    resolvedAnchors.bottomY.end,
+    ...(params.topX ? [resolvedAnchors.topX.start, resolvedAnchors.topX.end] : []),
+    ...(params.topY ? [resolvedAnchors.topY.start, resolvedAnchors.topY.end] : []),
+  ].some(value => value === 0);
+
+  const handleAnchorModeChange = (value: string) => {
+    if (value !== 'manual') {
+      update({ manualAnchorEnabled: false });
+      return;
+    }
+
+    const standards = resolveSlabAnchors({
+      ...params,
+      manualAnchorEnabled: false,
+    });
+    update({
+      manualAnchorEnabled: true,
+      manualBottomXStartAnchor: params.manualBottomXStartAnchor
+        ?? params.manualBottomAnchorLength
+        ?? standards.bottomX.standard,
+      manualBottomXEndAnchor: params.manualBottomXEndAnchor
+        ?? params.manualBottomAnchorLength
+        ?? standards.bottomX.standard,
+      manualBottomYStartAnchor: params.manualBottomYStartAnchor
+        ?? params.manualBottomAnchorLength
+        ?? standards.bottomY.standard,
+      manualBottomYEndAnchor: params.manualBottomYEndAnchor
+        ?? params.manualBottomAnchorLength
+        ?? standards.bottomY.standard,
+      manualTopXStartAnchor: params.manualTopXStartAnchor
+        ?? params.manualTopAnchorLength
+        ?? standards.topX.standard,
+      manualTopXEndAnchor: params.manualTopXEndAnchor
+        ?? params.manualTopAnchorLength
+        ?? standards.topX.standard,
+      manualTopYStartAnchor: params.manualTopYStartAnchor
+        ?? params.manualTopAnchorLength
+        ?? standards.topY.standard,
+      manualTopYEndAnchor: params.manualTopYEndAnchor
+        ?? params.manualTopAnchorLength
+        ?? standards.topY.standard,
+    });
+  };
 
   const errors = useMemo(() => ({
     thickness: validateDimension(params.thickness, 'thickness', 60, 400),
@@ -114,48 +162,103 @@ export function SlabPageClient() {
             </Section>
 
             {params.supportType !== 'cantilever' && (
-              <Section title="锚固长度加长">
+              <Section title="底筋与面筋锚固长度">
                 <SelectField
                   label="锚固长度"
                   value={params.manualAnchorEnabled ? 'manual' : 'standard'}
-                  onChange={value => update(value === 'manual'
-                    ? {
-                        manualAnchorEnabled: true,
-                        manualBottomAnchorLength: params.manualBottomAnchorLength ?? 300,
-                        manualTopAnchorLength: params.manualTopAnchorLength ?? 300,
-                      }
-                    : { manualAnchorEnabled: false })}
+                  onChange={handleAnchorModeChange}
                   options={[
-                    { value: 'standard', label: '标准默认长度' },
-                    { value: 'manual', label: '人为加长' },
+                    { value: 'standard', label: '标准默认计算' },
+                    { value: 'manual', label: '人工分别输入' },
                   ]}
                 />
                 {params.manualAnchorEnabled && (
                   <>
+                    <p className="text-xs font-semibold text-primary">底筋锚固</p>
                     <NumField
-                      label="底筋单端锚固总长度 (mm)"
-                      value={params.manualBottomAnchorLength ?? 300}
-                      onChange={value => update({ manualBottomAnchorLength: value })}
-                      min={1}
+                      label="X向起点端（-X）锚固长度 (mm)"
+                      value={resolvedAnchors.bottomX.start}
+                      onChange={value => update({ manualBottomXStartAnchor: value })}
+                      min={0}
                       max={2000}
                     />
                     <NumField
-                      label="面筋单端锚固总长度 (mm)"
-                      value={params.manualTopAnchorLength ?? 300}
-                      onChange={value => update({ manualTopAnchorLength: value })}
-                      min={1}
+                      label="X向终点端（+X）锚固长度 (mm)"
+                      value={resolvedAnchors.bottomX.end}
+                      onChange={value => update({ manualBottomXEndAnchor: value })}
+                      min={0}
                       max={2000}
                     />
+                    <NumField
+                      label="Y向起点端（-Y）锚固长度 (mm)"
+                      value={resolvedAnchors.bottomY.start}
+                      onChange={value => update({ manualBottomYStartAnchor: value })}
+                      min={0}
+                      max={2000}
+                    />
+                    <NumField
+                      label="Y向终点端（+Y）锚固长度 (mm)"
+                      value={resolvedAnchors.bottomY.end}
+                      onChange={value => update({ manualBottomYEndAnchor: value })}
+                      min={0}
+                      max={2000}
+                    />
+                    {Boolean(params.topX) && (
+                      <>
+                        <p className="text-xs font-semibold text-primary">X向面筋锚固</p>
+                        <NumField
+                          label="X向面筋起点端（-X）锚固长度 (mm)"
+                          value={resolvedAnchors.topX.start}
+                          onChange={value => update({ manualTopXStartAnchor: value })}
+                          min={0}
+                          max={2000}
+                        />
+                        <NumField
+                          label="X向面筋终点端（+X）锚固长度 (mm)"
+                          value={resolvedAnchors.topX.end}
+                          onChange={value => update({ manualTopXEndAnchor: value })}
+                          min={0}
+                          max={2000}
+                        />
+                      </>
+                    )}
+                    {Boolean(params.topY) && (
+                      <>
+                        <p className="text-xs font-semibold text-primary">Y向面筋锚固</p>
+                        <NumField
+                          label="Y向面筋起点端（-Y）锚固长度 (mm)"
+                          value={resolvedAnchors.topY.start}
+                          onChange={value => update({ manualTopYStartAnchor: value })}
+                          min={0}
+                          max={2000}
+                        />
+                        <NumField
+                          label="Y向面筋终点端（+Y）锚固长度 (mm)"
+                          value={resolvedAnchors.topY.end}
+                          onChange={value => update({ manualTopYEndAnchor: value })}
+                          min={0}
+                          max={2000}
+                        />
+                      </>
+                    )}
                     {!params.topX && !params.topY && (
                       <p className="text-[11px] text-muted">
                         当前没有面筋，面筋锚固长度不参与计算。
                       </p>
                     )}
-                    <p className="text-[11px] text-amber-600">
-                      输入值小于标准默认长度时，系统仍采用标准长度。
+                    {hasZeroManualAnchor && (
+                      <p className="text-[11px] text-amber-600">
+                        锚固长度为0，请确认该端确实不需要计入锚固。
+                      </p>
+                    )}
+                    <p className="text-[11px] text-muted">
+                      人工模式直接采用各方向、各端输入值，不再与标准长度比较。
                     </p>
                     <p className="text-[11px] text-muted">
-                      人为锚固长度参与钢筋用量计算，三维模型保持现有构造示意。
+                      输入值为该端锚固钢筋的展开总长度，包含水平段和弯折段。
+                    </p>
+                    <p className="text-[11px] text-muted">
+                      人工锚固长度参与钢筋用量计算，三维模型保持现有构造示意。
                     </p>
                   </>
                 )}

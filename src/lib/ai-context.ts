@@ -6,6 +6,7 @@ import { parseRebar, parseStirrup, parseSlabRebar, gradeLabel, resolveColumnBars
 import { calcLaE, calcLaTable, calcLabTable, FT, FY, getPileEmbedDepth, determinePileCapRebarEnd, determineJLEndAnchor, determineLPBEdgeAnchor, determineBPBEdgeAnchor, checkJLLDirectAnchor } from './anchor';
 import type { ConcreteGrade, SeismicGrade } from './anchor';
 import { rebarArea, ANCHOR_LARGE_DIA_THRESHOLD } from './construction-rules';
+import { resolveSlabAnchors } from './calc';
 
 export function buildBeamContext(p: BeamParams): string {
   const topR = parseRebar(p.top);
@@ -76,6 +77,7 @@ ${barDesc}
 }
 
 export function buildSlabContext(p: SlabParams): string {
+  const anchors = resolveSlabAnchors(p);
   const cover = p.cover || 15;
   const h0 = p.thickness - cover - 5;
   const botX = parseSlabRebar(p.bottomX);
@@ -95,6 +97,13 @@ export function buildSlabContext(p: SlabParams): string {
   const negXDesc = p.supportNegX ? `X向支座负筋: ${p.supportNegX}，伸入跨中 ${negExtendRatio}=${negExtendX}mm` : 'X向支座负筋: 无';
   const negYDesc = p.supportNegY ? `Y向支座负筋: ${p.supportNegY}，伸入跨中 ${negExtendRatio}=${negExtendY}mm` : 'Y向支座负筋: 无';
   const negAnchorDesc = negSupportPos === 'end' ? '端支座弯折向下≥12d' : '中间支座直通过支座';
+  const anchorDesc = anchors.useManual
+    ? `锚固方式：人工分别输入
+X向底筋：起点端${anchors.bottomX.start}mm，终点端${anchors.bottomX.end}mm
+Y向底筋：起点端${anchors.bottomY.start}mm，终点端${anchors.bottomY.end}mm
+X向面筋：${p.topX ? `起点端${anchors.topX.start}mm，终点端${anchors.topX.end}mm` : '无'}
+Y向面筋：${p.topY ? `起点端${anchors.topY.start}mm，终点端${anchors.topY.end}mm` : '无'}`
+    : '锚固方式：标准默认计算';
   return `构件类型: 楼板 ${p.id}
 板厚: ${p.thickness}mm，有效高度 h₀≈${h0}mm
 板跨: X向${p.spanX}mm × Y向${p.spanY}mm，支座类型: ${supportLabel}，支座梁宽: ${p.supportBeamWidth}mm
@@ -102,6 +111,7 @@ X向底筋: ${p.bottomX} (As=${AsPerMBotX}mm²/m，ρ=${rhoBotX}%)
 Y向底筋: ${p.bottomY} (As=${AsPerMBotY}mm²/m，ρ=${rhoBotY}%)
 最小配筋率: ρmin=${rhoMin}%
 X向面筋: ${p.topX || '无'}，Y向面筋: ${p.topY || '无'}
+${anchorDesc}
 ${negXDesc}
 ${negYDesc}
 负筋锚固: ${negAnchorDesc} (22G101)

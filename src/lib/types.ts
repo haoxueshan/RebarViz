@@ -108,11 +108,27 @@ export interface SlabParams {
   // 新增
   concreteGrade: ConcreteGrade;
   cover: number;
-  /** 仅简支板和连续板可启用的人为锚固加长 */
+  /** 仅简支板和连续板可启用的人工锚固输入 */
   manualAnchorEnabled?: boolean;
-  /** 底筋加长后的单端锚固展开总长度，单位 mm */
+  /** X向底筋起点端（-X端）锚固展开总长度，单位mm */
+  manualBottomXStartAnchor?: number;
+  /** X向底筋终点端（+X端）锚固展开总长度，单位mm */
+  manualBottomXEndAnchor?: number;
+  /** Y向底筋起点端（-Y端）锚固展开总长度，单位mm */
+  manualBottomYStartAnchor?: number;
+  /** Y向底筋终点端（+Y端）锚固展开总长度，单位mm */
+  manualBottomYEndAnchor?: number;
+  /** X向面筋起点端（-X端）锚固展开总长度，单位mm */
+  manualTopXStartAnchor?: number;
+  /** X向面筋终点端（+X端）锚固展开总长度，单位mm */
+  manualTopXEndAnchor?: number;
+  /** Y向面筋起点端（-Y端）锚固展开总长度，单位mm */
+  manualTopYStartAnchor?: number;
+  /** Y向面筋终点端（+Y端）锚固展开总长度，单位mm */
+  manualTopYEndAnchor?: number;
+  /** @deprecated 仅用于兼容旧分享数据 */
   manualBottomAnchorLength?: number;
-  /** 面筋加长后的单端锚固展开总长度，单位 mm */
+  /** @deprecated 仅用于兼容旧分享数据 */
   manualTopAnchorLength?: number;
 }
 
