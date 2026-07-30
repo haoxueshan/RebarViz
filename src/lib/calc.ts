@@ -1049,20 +1049,61 @@ export function calcSlab(p: SlabParams): CalcResult {
   const by = parseSlabRebar(p.bottomY);
   const tx = p.topX ? parseSlabRebar(p.topX) : null;
   const ty = p.topY ? parseSlabRebar(p.topY) : null;
+  const useManualAnchor = p.manualAnchorEnabled === true
+    && (p.supportType === 'simple' || p.supportType === 'continuous');
+  const resolveManualExtendedAnchor = (
+    standardLength: number,
+    manualLength: number | undefined,
+    enabled: boolean,
+  ): number => {
+    if (
+      !enabled
+      || manualLength === undefined
+      || !Number.isFinite(manualLength)
+      || manualLength <= 0
+    ) {
+      return standardLength;
+    }
+    return Math.max(standardLength, manualLength);
+  };
+  const validManualBottomAnchor = p.manualBottomAnchorLength !== undefined
+    && Number.isFinite(p.manualBottomAnchorLength)
+    && p.manualBottomAnchorLength > 0
+    ? p.manualBottomAnchorLength
+    : undefined;
+  const validManualTopAnchor = p.manualTopAnchorLength !== undefined
+    && Number.isFinite(p.manualTopAnchorLength)
+    && p.manualTopAnchorLength > 0
+    ? p.manualTopAnchorLength
+    : undefined;
   const items: CalcItem[] = [];
   let total = 0;
 
   // ── 底筋 (按支座类型区分锚固) ──
   const bxLa = calcLa(bx.grade, bx.diameter, p.concreteGrade);
   const bxDetail = slabBottomAnchorDetail(p.supportType, bx.diameter, bxLa);
-  const bxAnchorTotal = bxDetail.straight + bxDetail.bend; // 直段+弯折
+  const bxStandardAnchor = bxDetail.straight + bxDetail.bend; // 直段+弯折
+  const bxAnchorTotal = resolveManualExtendedAnchor(
+    bxStandardAnchor,
+    p.manualBottomAnchorLength,
+    useManualAnchor,
+  );
   const bxCount = Math.ceil(slabD / bx.spacing);
   const bxLen = (slabW + 2 * bxAnchorTotal) / 1000;
   const bxW = bxCount * bxLen * w(bx.diameter);
   const supportLabel = p.supportType === 'simple' ? '简支' : p.supportType === 'continuous' ? '连续' : '悬挑';
   const bxFormula: FormulaStep[] = [
-    { label: `锚固 (${supportLabel})`, formula: bxDetail.bend > 0 ? '直段+弯折' : '直段伸入', substitution: bxDetail.bend > 0 ? `= ${bxDetail.straight} + ${bxDetail.bend}` : `= ${bxDetail.straight}`, result: `= ${bxAnchorTotal} mm` },
-    { label: '锚固说明', formula: '22G101', substitution: '', result: bxDetail.description },
+    ...(useManualAnchor
+      ? [
+          { label: '标准默认长度', formula: bxDetail.bend > 0 ? '直段+弯折' : '直段伸入', substitution: bxDetail.bend > 0 ? `= ${bxDetail.straight} + ${bxDetail.bend}` : `= ${bxDetail.straight}`, result: `= ${bxStandardAnchor} mm` },
+          { label: '人为输入长度', formula: '单端锚固展开总长度', substitution: validManualBottomAnchor === undefined ? '= 无有效输入' : `= ${validManualBottomAnchor}`, result: validManualBottomAnchor === undefined ? '回退到标准默认长度' : `= ${validManualBottomAnchor} mm` },
+          { label: '最终采用', formula: 'max(标准默认长度, 人为输入长度)', substitution: validManualBottomAnchor === undefined ? `= ${bxStandardAnchor}` : `= max(${bxStandardAnchor}, ${validManualBottomAnchor})`, result: `= ${bxAnchorTotal} mm` },
+          { label: '锚固说明', formula: '现有规则 + 人为加长', substitution: '', result: `${bxDetail.description}；标准值按现有规则计算，最终长度采用人为加长值。` },
+        ]
+      : [
+          { label: `锚固 (${supportLabel})`, formula: bxDetail.bend > 0 ? '直段+弯折' : '直段伸入', substitution: bxDetail.bend > 0 ? `= ${bxDetail.straight} + ${bxDetail.bend}` : `= ${bxDetail.straight}`, result: `= ${bxAnchorTotal} mm` },
+          { label: '锚固说明', formula: '22G101', substitution: '', result: bxDetail.description },
+        ]),
     { label: '根数', formula: 'n = ⌈D / s⌉', substitution: `= ⌈${slabD} / ${bx.spacing}⌉`, result: `= ${bxCount}` },
     { label: '单根长度', formula: 'L = W + 2×anc', substitution: `= ${slabW} + 2×${bxAnchorTotal}`, result: `= ${slabW + 2 * bxAnchorTotal} mm = ${bxLen.toFixed(2)} m` },
     weightSteps('X向底筋', bxCount, bxLen, bx.diameter),
@@ -1078,13 +1119,27 @@ export function calcSlab(p: SlabParams): CalcResult {
 
   const byLa = calcLa(by.grade, by.diameter, p.concreteGrade);
   const byDetail = slabBottomAnchorDetail(p.supportType, by.diameter, byLa);
-  const byAnchorTotal = byDetail.straight + byDetail.bend;
+  const byStandardAnchor = byDetail.straight + byDetail.bend;
+  const byAnchorTotal = resolveManualExtendedAnchor(
+    byStandardAnchor,
+    p.manualBottomAnchorLength,
+    useManualAnchor,
+  );
   const byCount = Math.ceil(slabW / by.spacing);
   const byLen = (slabD + 2 * byAnchorTotal) / 1000;
   const byW = byCount * byLen * w(by.diameter);
   const byFormula: FormulaStep[] = [
-    { label: `锚固 (${supportLabel})`, formula: byDetail.bend > 0 ? '直段+弯折' : '直段伸入', substitution: byDetail.bend > 0 ? `= ${byDetail.straight} + ${byDetail.bend}` : `= ${byDetail.straight}`, result: `= ${byAnchorTotal} mm` },
-    { label: '锚固说明', formula: '22G101', substitution: '', result: byDetail.description },
+    ...(useManualAnchor
+      ? [
+          { label: '标准默认长度', formula: byDetail.bend > 0 ? '直段+弯折' : '直段伸入', substitution: byDetail.bend > 0 ? `= ${byDetail.straight} + ${byDetail.bend}` : `= ${byDetail.straight}`, result: `= ${byStandardAnchor} mm` },
+          { label: '人为输入长度', formula: '单端锚固展开总长度', substitution: validManualBottomAnchor === undefined ? '= 无有效输入' : `= ${validManualBottomAnchor}`, result: validManualBottomAnchor === undefined ? '回退到标准默认长度' : `= ${validManualBottomAnchor} mm` },
+          { label: '最终采用', formula: 'max(标准默认长度, 人为输入长度)', substitution: validManualBottomAnchor === undefined ? `= ${byStandardAnchor}` : `= max(${byStandardAnchor}, ${validManualBottomAnchor})`, result: `= ${byAnchorTotal} mm` },
+          { label: '锚固说明', formula: '现有规则 + 人为加长', substitution: '', result: `${byDetail.description}；标准值按现有规则计算，最终长度采用人为加长值。` },
+        ]
+      : [
+          { label: `锚固 (${supportLabel})`, formula: byDetail.bend > 0 ? '直段+弯折' : '直段伸入', substitution: byDetail.bend > 0 ? `= ${byDetail.straight} + ${byDetail.bend}` : `= ${byDetail.straight}`, result: `= ${byAnchorTotal} mm` },
+          { label: '锚固说明', formula: '22G101', substitution: '', result: byDetail.description },
+        ]),
     { label: '根数', formula: 'n = ⌈W / s⌉', substitution: `= ⌈${slabW} / ${by.spacing}⌉`, result: `= ${byCount}` },
     { label: '单根长度', formula: 'L = D + 2×anc', substitution: `= ${slabD} + 2×${byAnchorTotal}`, result: `= ${slabD + 2 * byAnchorTotal} mm = ${byLen.toFixed(2)} m` },
     weightSteps('Y向底筋', byCount, byLen, by.diameter),
@@ -1102,12 +1157,26 @@ export function calcSlab(p: SlabParams): CalcResult {
   // 面筋伸入支座: 连续板 ≥ la, 简支板 ≥ la/2, 悬挑板全长
   if (tx) {
     const txLa = calcLa(tx.grade, tx.diameter, p.concreteGrade);
-    const txAnchor = p.supportType === 'cantilever' ? 0 : p.supportType === 'continuous' ? txLa : Math.ceil(txLa / 2);
+    const txStandardAnchor = p.supportType === 'cantilever' ? 0 : p.supportType === 'continuous' ? txLa : Math.ceil(txLa / 2);
+    const txAnchor = resolveManualExtendedAnchor(
+      txStandardAnchor,
+      p.manualTopAnchorLength,
+      useManualAnchor,
+    );
     const txCount = Math.ceil(slabD / tx.spacing);
     const txLen = (slabW + 2 * txAnchor) / 1000;
     const txW = txCount * txLen * w(tx.diameter);
     const txFormula: FormulaStep[] = [
-      { label: `面筋锚固 (${supportLabel})`, formula: p.supportType === 'continuous' ? 'anc = la' : 'anc = la/2', substitution: p.supportType === 'cantilever' ? '悬挑端无锚固' : `= ${txAnchor}`, result: `= ${txAnchor} mm` },
+      ...(useManualAnchor
+        ? [
+            { label: '标准默认长度', formula: p.supportType === 'continuous' ? 'anc = la' : 'anc = la/2', substitution: `= ${txStandardAnchor}`, result: `= ${txStandardAnchor} mm` },
+            { label: '人为输入长度', formula: '单端锚固展开总长度', substitution: validManualTopAnchor === undefined ? '= 无有效输入' : `= ${validManualTopAnchor}`, result: validManualTopAnchor === undefined ? '回退到标准默认长度' : `= ${validManualTopAnchor} mm` },
+            { label: '最终采用', formula: 'max(标准默认长度, 人为输入长度)', substitution: validManualTopAnchor === undefined ? `= ${txStandardAnchor}` : `= max(${txStandardAnchor}, ${validManualTopAnchor})`, result: `= ${txAnchor} mm` },
+            { label: '锚固说明', formula: '现有规则 + 人为加长', substitution: '', result: '标准值按现有规则计算，最终长度采用人为加长值。' },
+          ]
+        : [
+            { label: `面筋锚固 (${supportLabel})`, formula: p.supportType === 'continuous' ? 'anc = la' : 'anc = la/2', substitution: p.supportType === 'cantilever' ? '悬挑端无锚固' : `= ${txAnchor}`, result: `= ${txAnchor} mm` },
+          ]),
       { label: '根数', formula: 'n = ⌈D / s⌉', substitution: `= ⌈${slabD} / ${tx.spacing}⌉`, result: `= ${txCount}` },
       { label: '单根长度', formula: 'L = W + 2×anc', substitution: `= ${slabW} + 2×${txAnchor}`, result: `= ${slabW + 2 * txAnchor} mm = ${txLen.toFixed(2)} m` },
       weightSteps('X向面筋', txCount, txLen, tx.diameter),
@@ -1118,12 +1187,26 @@ export function calcSlab(p: SlabParams): CalcResult {
   }
   if (ty) {
     const tyLa = calcLa(ty.grade, ty.diameter, p.concreteGrade);
-    const tyAnchor = p.supportType === 'cantilever' ? 0 : p.supportType === 'continuous' ? tyLa : Math.ceil(tyLa / 2);
+    const tyStandardAnchor = p.supportType === 'cantilever' ? 0 : p.supportType === 'continuous' ? tyLa : Math.ceil(tyLa / 2);
+    const tyAnchor = resolveManualExtendedAnchor(
+      tyStandardAnchor,
+      p.manualTopAnchorLength,
+      useManualAnchor,
+    );
     const tyCount = Math.ceil(slabW / ty.spacing);
     const tyLen = (slabD + 2 * tyAnchor) / 1000;
     const tyW = tyCount * tyLen * w(ty.diameter);
     const tyFormula: FormulaStep[] = [
-      { label: `面筋锚固 (${supportLabel})`, formula: p.supportType === 'continuous' ? 'anc = la' : 'anc = la/2', substitution: p.supportType === 'cantilever' ? '悬挑端无锚固' : `= ${tyAnchor}`, result: `= ${tyAnchor} mm` },
+      ...(useManualAnchor
+        ? [
+            { label: '标准默认长度', formula: p.supportType === 'continuous' ? 'anc = la' : 'anc = la/2', substitution: `= ${tyStandardAnchor}`, result: `= ${tyStandardAnchor} mm` },
+            { label: '人为输入长度', formula: '单端锚固展开总长度', substitution: validManualTopAnchor === undefined ? '= 无有效输入' : `= ${validManualTopAnchor}`, result: validManualTopAnchor === undefined ? '回退到标准默认长度' : `= ${validManualTopAnchor} mm` },
+            { label: '最终采用', formula: 'max(标准默认长度, 人为输入长度)', substitution: validManualTopAnchor === undefined ? `= ${tyStandardAnchor}` : `= max(${tyStandardAnchor}, ${validManualTopAnchor})`, result: `= ${tyAnchor} mm` },
+            { label: '锚固说明', formula: '现有规则 + 人为加长', substitution: '', result: '标准值按现有规则计算，最终长度采用人为加长值。' },
+          ]
+        : [
+            { label: `面筋锚固 (${supportLabel})`, formula: p.supportType === 'continuous' ? 'anc = la' : 'anc = la/2', substitution: p.supportType === 'cantilever' ? '悬挑端无锚固' : `= ${tyAnchor}`, result: `= ${tyAnchor} mm` },
+          ]),
       { label: '根数', formula: 'n = ⌈W / s⌉', substitution: `= ⌈${slabW} / ${ty.spacing}⌉`, result: `= ${tyCount}` },
       { label: '单根长度', formula: 'L = D + 2×anc', substitution: `= ${slabD} + 2×${tyAnchor}`, result: `= ${slabD + 2 * tyAnchor} mm = ${tyLen.toFixed(2)} m` },
       weightSteps('Y向面筋', tyCount, tyLen, ty.diameter),

@@ -108,6 +108,12 @@ export interface SlabParams {
   // 新增
   concreteGrade: ConcreteGrade;
   cover: number;
+  /** 仅简支板和连续板可启用的人为锚固加长 */
+  manualAnchorEnabled?: boolean;
+  /** 底筋加长后的单端锚固展开总长度，单位 mm */
+  manualBottomAnchorLength?: number;
+  /** 面筋加长后的单端锚固展开总长度，单位 mm */
+  manualTopAnchorLength?: number;
 }
 
 export interface JointParams {

@@ -113,6 +113,55 @@ export function SlabPageClient() {
               <NumField label="保护层 (mm)" value={params.cover} onChange={v => update({ cover: v })} min={10} max={30} />
             </Section>
 
+            {params.supportType !== 'cantilever' && (
+              <Section title="锚固长度加长">
+                <SelectField
+                  label="锚固长度"
+                  value={params.manualAnchorEnabled ? 'manual' : 'standard'}
+                  onChange={value => update(value === 'manual'
+                    ? {
+                        manualAnchorEnabled: true,
+                        manualBottomAnchorLength: params.manualBottomAnchorLength ?? 300,
+                        manualTopAnchorLength: params.manualTopAnchorLength ?? 300,
+                      }
+                    : { manualAnchorEnabled: false })}
+                  options={[
+                    { value: 'standard', label: '标准默认长度' },
+                    { value: 'manual', label: '人为加长' },
+                  ]}
+                />
+                {params.manualAnchorEnabled && (
+                  <>
+                    <NumField
+                      label="底筋单端锚固总长度 (mm)"
+                      value={params.manualBottomAnchorLength ?? 300}
+                      onChange={value => update({ manualBottomAnchorLength: value })}
+                      min={1}
+                      max={2000}
+                    />
+                    <NumField
+                      label="面筋单端锚固总长度 (mm)"
+                      value={params.manualTopAnchorLength ?? 300}
+                      onChange={value => update({ manualTopAnchorLength: value })}
+                      min={1}
+                      max={2000}
+                    />
+                    {!params.topX && !params.topY && (
+                      <p className="text-[11px] text-muted">
+                        当前没有面筋，面筋锚固长度不参与计算。
+                      </p>
+                    )}
+                    <p className="text-[11px] text-amber-600">
+                      输入值小于标准默认长度时，系统仍采用标准长度。
+                    </p>
+                    <p className="text-[11px] text-muted">
+                      人为锚固长度参与钢筋用量计算，三维模型保持现有构造示意。
+                    </p>
+                  </>
+                )}
+              </Section>
+            )}
+
             <Section title="底筋" defaultOpen>
               <Field label="X向底筋" value={params.bottomX} onChange={v => update({ bottomX: v })} placeholder="如: C12@150" error={errors.bottomX?.message} />
               <Field label="Y向底筋" value={params.bottomY} onChange={v => update({ bottomY: v })} placeholder="如: C10@200" error={errors.bottomY?.message} />
