@@ -16,16 +16,18 @@ const NAV = [
 
 export function Header() {
   const pathname = usePathname();
-  const isLanding = pathname === '/';
+  const isPortal = pathname === '/';
+  const isLearningLanding = pathname === '/learning';
+  const isDarkPage = isPortal || isLearningLanding;
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
     <header className={`sticky top-0 z-50 backdrop-blur-md border-b transition-colors ${
-      isLanding
+      isDarkPage
         ? 'bg-[#0a0f1a]/80 border-white/5'
         : 'bg-white/80 border-gray-200'
     }`}>
-      <div className={`${isLanding ? 'w-full' : 'max-w-[1600px] mx-auto'} px-4 h-14 flex items-center justify-between`}>
+      <div className={`${isDarkPage ? 'w-full' : 'max-w-[1600px] mx-auto'} px-4 h-14 flex items-center justify-between`}>
         <Link href="/" className="flex items-center gap-2.5 group" onClick={() => setMobileOpen(false)}>
           <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-gradient-to-br from-blue-500 to-cyan-400">
             <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -33,12 +35,12 @@ export function Header() {
             </svg>
           </div>
           <div className="leading-tight">
-            <span className={`text-base font-bold ${isLanding ? 'text-white' : 'text-gray-800'}`}>RebarViz</span>
-            <span className={`hidden sm:block text-[11px] ${isLanding ? 'text-gray-400' : 'text-muted'}`}>钢筋平法识图 · 22G101</span>
+            <span className={`text-base font-bold ${isDarkPage ? 'text-white' : 'text-gray-800'}`}>RebarViz</span>
+            <span className={`hidden sm:block text-[11px] ${isDarkPage ? 'text-gray-400' : 'text-muted'}`}>钢筋平法识图 · 22G101</span>
           </div>
         </Link>
 
-        <nav className="hidden md:flex items-center gap-1">
+        <nav className={`${isPortal ? 'hidden' : 'hidden md:flex'} items-center gap-1`}>
           {NAV.map(({ href, label, icon: Icon }) => {
             const active = pathname === href;
             return (
@@ -46,7 +48,7 @@ export function Header() {
                 key={href}
                 href={href}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
-                  isLanding
+                  isLearningLanding
                     ? active ? 'text-white bg-white/10' : 'text-gray-400 hover:bg-white/5 hover:text-white'
                     : active ? 'text-accent bg-accent/10' : 'text-muted hover:bg-gray-100 hover:text-primary'
                 }`}
@@ -58,7 +60,24 @@ export function Header() {
           })}
         </nav>
 
-        {isLanding && (
+        {isPortal && (
+          <div className="flex items-center gap-2">
+            <Link
+              href="/learning"
+              className="hidden rounded-xl px-4 py-2 text-sm font-medium text-slate-300 transition-colors hover:bg-white/[0.06] hover:text-white sm:inline-flex"
+            >
+              平法识图学习
+            </Link>
+            <Link
+              href="/calculator"
+              className="inline-flex rounded-xl bg-blue-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-cyan-400"
+            >
+              计算器
+            </Link>
+          </div>
+        )}
+
+        {isLearningLanding && (
           <div className="flex items-center gap-2">
             <a
               href="#features"
@@ -94,7 +113,7 @@ export function Header() {
       </div>
 
       {/* Mobile dropdown (landing only) */}
-      {mobileOpen && isLanding && (
+      {mobileOpen && isLearningLanding && (
         <nav className="sm:hidden border-t px-4 py-2 space-y-1 border-white/5 bg-[#0a0f1a]/95 backdrop-blur-md">
           {NAV.map(({ href, label, icon: Icon }) => {
             const active = pathname === href;

@@ -2,7 +2,6 @@ import type { Metadata } from 'next';
 import localFont from 'next/font/local';
 import './globals.css';
 import { Header } from '@/components/Header';
-import { TrialGate } from '@/components/TrialGate';
 
 const geist = localFont({
   src: [
@@ -23,9 +22,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="zh-CN">
         <body suppressHydrationWarning className={`${geist.variable} font-sans antialiased bg-gray-50 text-gray-800`}>
         <Header />
-        <TrialGate>
-          {children}
-        </TrialGate>
+        {children}
       </body>
     </html>
   );
