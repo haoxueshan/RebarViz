@@ -1,1108 +1,900 @@
-'use client';
+"use client";
 
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from "react";
 import {
   AlertCircle,
   ArrowDown,
   ArrowUp,
-  BrickWall,
   Calculator,
   Plus,
   RotateCcw,
-  Ruler,
-  Sigma,
   Trash2,
-} from 'lucide-react';
+} from "lucide-react";
 import {
-  MAX_VISIBLE_SVG_BARS,
-  calculateRebar,
-  createDefaultCalculatorState,
-  parseNumericInput,
-  resolveTopInputs,
-  setTopFollowMode,
-  validateCalculatorState,
-  type CalculatedBar,
-  type CalculatorState,
-  type CountMode,
-  type RebarDirection,
-  type RebarInputs,
-  type RebarLayer,
-} from './calculator';
-import {
-  applyThroughWallResult,
-  calculateTopThroughWall,
-  createDefaultThroughWallState,
-  type ThroughDirection,
-  type ThroughRoom,
-  type ThroughWallCalculation,
-  type ThroughWallResult,
-  type TopThroughWallState,
-} from '@/lib/top-through-wall-calculator';
+  calculateSlabResults,
+  cloneDefaultSlabCalculatorState,
+  resolveBottomAnchor,
+  resolveTopAnchor,
+  type AnchorRule,
+  type AnchorSource,
+  type BarDirection,
+  type BarLayer,
+  type BarResult,
+  type BarSettings,
+  type RoomArrangement,
+  type SlabCalculatorState,
+  type SlabRoom,
+} from "@/lib/slab-calculator";
 
-const X_COLOR = '#2563eb';
-const Y_COLOR = '#f97316';
+const fieldClass =
+  "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-500";
+const labelClass = "mb-1 block text-xs font-medium text-slate-600";
 
-interface NumberFieldProps {
-  id: string;
+function toNumber(value: string): number {
+  if (value.trim() === "") return 0;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function sourceLabel(source: AnchorSource): string {
+  if (source === "inner-wall") return "内墙";
+  if (source === "outer-wall") return "外墙";
+  return "手动";
+}
+
+function directionLabel(direction: BarDirection): string {
+  return direction === "x" ? "X向（西→东）" : "Y向（南→北）";
+}
+
+function endLabels(direction: BarDirection): [string, string] {
+  return direction === "x" ? ["西端", "东端"] : ["南端", "北端"];
+}
+
+type NumberFieldProps = {
   label: string;
   value: number;
   onChange: (value: number) => void;
+  suffix?: string;
   min?: number;
-  readOnly?: boolean;
-  invalid?: boolean;
-}
+  step?: number;
+};
 
 function NumberField({
-  id,
   label,
   value,
   onChange,
-  min,
-  readOnly = false,
-  invalid = false,
+  suffix = "mm",
+  min = 0,
+  step = 1,
 }: NumberFieldProps) {
   return (
-    <label htmlFor={id} className="block min-w-0">
-      <span className="mb-1.5 block text-xs font-medium text-slate-600">{label}</span>
-      <div className="relative">
+    <label>
+      <span className={labelClass}>{label}</span>
+      <span className="relative block">
         <input
-          id={id}
+          className={`${fieldClass} pr-12`}
           type="number"
           inputMode="decimal"
-          step="any"
           min={min}
-          value={Number.isFinite(value) ? value : 0}
-          readOnly={readOnly}
-          aria-invalid={invalid}
-          onChange={(event) => onChange(parseNumericInput(event.target.value))}
-          className={`h-10 w-full rounded-xl border px-3 pr-12 text-sm text-slate-900 outline-none transition ${
-            invalid
-              ? 'border-red-300 bg-red-50/60 focus:border-red-500 focus:ring-2 focus:ring-red-100'
-              : readOnly
-                ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-500'
-                : 'border-slate-200 bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-100'
-          }`}
+          step={step}
+          value={value}
+          onChange={(event) => onChange(toNumber(event.target.value))}
         />
         <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-slate-400">
-          mm
+          {suffix}
         </span>
-      </div>
+      </span>
     </label>
   );
 }
 
-function SectionTitle({ number, title, description }: { number: string; title: string; description: string }) {
-  return (
-    <div className="mb-5 flex items-start gap-3">
-      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-xs font-bold text-blue-600">
-        {number}
-      </span>
-      <div>
-        <h2 className="text-base font-semibold text-slate-900">{title}</h2>
-        <p className="mt-1 text-sm leading-6 text-slate-500">{description}</p>
-      </div>
-    </div>
-  );
-}
+type AnchorRuleFieldProps = {
+  label: string;
+  rule: AnchorRule;
+  layer: BarLayer;
+  state: SlabCalculatorState;
+  onChange: (rule: AnchorRule) => void;
+};
 
-interface DirectionCardProps {
-  idPrefix: string;
-  direction: RebarDirection;
-  bar: RebarInputs;
-  anchorReadOnly?: boolean;
-  onChange: (key: keyof RebarInputs, value: number) => void;
-}
-
-function DirectionCard({
-  idPrefix,
-  direction,
-  bar,
-  anchorReadOnly = false,
+function AnchorRuleField({
+  label,
+  rule,
+  layer,
+  state,
   onChange,
-}: DirectionCardProps) {
-  const isX = direction === 'x';
-  const color = isX ? X_COLOR : Y_COLOR;
-  const directionText = isX ? 'X向：西 → 东' : 'Y向：南 → 北';
-  const firstAnchorLabel = isX ? '西端锚固' : '南端锚固';
-  const secondAnchorLabel = isX ? '东端锚固' : '北端锚固';
+}: AnchorRuleFieldProps) {
+  const resolved =
+    layer === "bottom"
+      ? resolveBottomAnchor(rule, state.slab)
+      : resolveTopAnchor(rule, state.slab);
+  const wall =
+    rule.source === "inner-wall"
+      ? state.slab.innerWallThickness
+      : state.slab.outerWallThickness;
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4 sm:p-5">
-      <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-800">
-        <span className="h-1 w-6 rounded-full" style={{ backgroundColor: color }} />
-        {directionText}
+    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+      <label>
+        <span className={labelClass}>{label}锚固来源</span>
+        <select
+          className={fieldClass}
+          value={rule.source}
+          onChange={(event) =>
+            onChange({ ...rule, source: event.target.value as AnchorSource })
+          }
+        >
+          <option value="inner-wall">内墙</option>
+          <option value="outer-wall">外墙</option>
+          <option value="manual">手动输入</option>
+        </select>
+      </label>
+      {rule.source === "manual" ? (
+        <div className="mt-2">
+          <NumberField
+            label="最终锚固"
+            value={rule.manualValue}
+            onChange={(manualValue) => onChange({ ...rule, manualValue })}
+          />
+          <p className="mt-1 text-xs text-slate-500">手动值直接作为最终值，不叠加墙厚或增加值。</p>
+        </div>
+      ) : (
+        <div className="mt-2 rounded-md bg-white px-3 py-2 text-xs leading-5 text-slate-600">
+          {layer === "top" ? (
+            <>
+              计算过程：{sourceLabel(rule.source)} {wall} + 增加 {state.slab.topAnchorExtra} ={" "}
+              <strong className="text-blue-700">{resolved}mm</strong>
+            </>
+          ) : (
+            <>
+              计算结果：{sourceLabel(rule.source)} {wall} ={" "}
+              <strong className="text-blue-700">{resolved}mm</strong>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+type BarSettingsCardProps = {
+  title: string;
+  direction: BarDirection;
+  layer: BarLayer;
+  settings: BarSettings;
+  state: SlabCalculatorState;
+  onChange: (settings: BarSettings) => void;
+};
+
+function BarSettingsCard({
+  title,
+  direction,
+  layer,
+  settings,
+  state,
+  onChange,
+}: BarSettingsCardProps) {
+  const [startLabel, endLabel] = endLabels(direction);
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h3 className="font-semibold text-slate-800">{title}</h3>
+        <span className={`rounded-full px-2 py-1 text-xs ${direction === "x" ? "bg-blue-50 text-blue-700" : "bg-emerald-50 text-emerald-700"}`}>
+          {directionLabel(direction)}
+        </span>
       </div>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div className="grid gap-3 sm:grid-cols-2">
         <NumberField
-          id={`${idPrefix}-diameter`}
           label="钢筋直径"
-          value={bar.diameter}
-          min={1}
-          invalid={bar.diameter <= 0}
-          onChange={(value) => onChange('diameter', value)}
+          value={settings.diameter}
+          onChange={(diameter) => onChange({ ...settings, diameter })}
         />
         <NumberField
-          id={`${idPrefix}-spacing`}
           label="钢筋间距"
-          value={bar.spacing}
-          min={1}
-          invalid={bar.spacing <= 0}
-          onChange={(value) => onChange('spacing', value)}
+          value={settings.spacing}
+          onChange={(spacing) => onChange({ ...settings, spacing })}
         />
-        <NumberField
-          id={`${idPrefix}-first-anchor`}
-          label={firstAnchorLabel}
-          value={bar.firstAnchor}
-          min={0}
-          readOnly={anchorReadOnly}
-          invalid={bar.firstAnchor < 0}
-          onChange={(value) => onChange('firstAnchor', value)}
+      </div>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <AnchorRuleField
+          label={startLabel}
+          rule={settings.startAnchor}
+          layer={layer}
+          state={state}
+          onChange={(startAnchor) => onChange({ ...settings, startAnchor })}
         />
-        <NumberField
-          id={`${idPrefix}-second-anchor`}
-          label={secondAnchorLabel}
-          value={bar.secondAnchor}
-          min={0}
-          readOnly={anchorReadOnly}
-          invalid={bar.secondAnchor < 0}
-          onChange={(value) => onChange('secondAnchor', value)}
+        <AnchorRuleField
+          label={endLabel}
+          rule={settings.endAnchor}
+          layer={layer}
+          state={state}
+          onChange={(endAnchor) => onChange({ ...settings, endAnchor })}
         />
       </div>
     </div>
   );
 }
 
-interface ThroughWallSettingsProps {
-  throughWall: TopThroughWallState;
-  slab: CalculatorState['slab'];
-  calculation: ThroughWallCalculation;
-  onChange: (value: TopThroughWallState) => void;
-}
-
-function ThroughWallSettings({ throughWall, slab, calculation, onChange }: ThroughWallSettingsProps) {
-  const nextRoomId = useRef(3);
-  const activeDirection = throughWall.direction === 'y' ? 'y' : 'x';
-  const directionLabel = activeDirection === 'x' ? '东西向' : '南北向';
-  const perpendicularLabel = activeDirection === 'x' ? '南北向净宽' : '东西向净宽';
-
-  const updateRoom = (roomId: string, patch: Partial<ThroughRoom>) => {
-    const rooms = throughWall.rooms.map((room, index) => {
-      if (room.id !== roomId) return room;
-      const isLast = index === throughWall.rooms.length - 1;
-      return {
-        ...room,
-        ...patch,
-        wallAfter: isLast ? 0 : (patch.wallAfter ?? room.wallAfter),
-        continuousWithNext: isLast ? false : (patch.continuousWithNext ?? room.continuousWithNext),
-      };
-    });
-    onChange({ ...throughWall, rooms });
-  };
-
-  const addRoom = () => {
-    const roomNumber = nextRoomId.current;
-    nextRoomId.current += 1;
-    const direction = throughWall.direction === 'y' ? 'y' : 'x';
-    const rooms = throughWall.rooms.map((room, index) => (
-      index === throughWall.rooms.length - 1
-        ? { ...room, wallAfter: room.wallAfter || 240, continuousWithNext: true }
-        : room
-    ));
-    rooms.push({
-      id: `through-room-${roomNumber}`,
-      name: `房间${String.fromCharCode(64 + Math.min(roomNumber, 26))}`,
-      netSpan: direction === 'x' ? slab.spanX : slab.spanY,
-      perpendicularSpan: direction === 'x' ? slab.spanY : slab.spanX,
-      wallAfter: 0,
-      continuousWithNext: false,
-    });
-    onChange({ ...throughWall, rooms });
-  };
-
-  const removeRoom = (roomId: string) => {
-    if (throughWall.rooms.length <= 1) return;
-    const rooms = throughWall.rooms
-      .filter((room) => room.id !== roomId)
-      .map((room, index, allRooms) => (
-        index === allRooms.length - 1
-          ? { ...room, wallAfter: 0, continuousWithNext: false }
-          : room
-      ));
-    onChange({
-      ...throughWall,
-      rooms,
-      enabled: rooms.length >= 2 ? throughWall.enabled : false,
-      direction: rooms.length >= 2 ? throughWall.direction : 'none',
-    });
-  };
-
-  const moveRoom = (index: number, offset: -1 | 1) => {
-    const target = index + offset;
-    if (target < 0 || target >= throughWall.rooms.length) return;
-    const gaps = throughWall.rooms.slice(0, -1).map((room) => ({
-      wallAfter: room.wallAfter,
-      continuousWithNext: room.continuousWithNext,
-    }));
-    const reordered = [...throughWall.rooms];
-    [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
-    const rooms = reordered.map((room, roomIndex) => (
-      roomIndex === reordered.length - 1
-        ? { ...room, wallAfter: 0, continuousWithNext: false }
-        : { ...room, ...gaps[roomIndex] }
-    ));
-    onChange({ ...throughWall, rooms });
-  };
-
-  const toggleEnabled = () => {
-    if (!throughWall.enabled && throughWall.rooms.length < 2) return;
-    onChange({
-      ...throughWall,
-      enabled: !throughWall.enabled,
-      direction: throughWall.enabled ? 'none' : activeDirection,
-    });
-  };
-
-  const changeDirection = (direction: Exclude<ThroughDirection, 'none'>) => {
-    onChange({ ...throughWall, enabled: true, direction });
-  };
-
+function Section({
+  number,
+  title,
+  description,
+  children,
+}: {
+  number: number;
+  title: string;
+  description: string;
+  children: React.ReactNode;
+}) {
   return (
-    <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-      <SectionTitle
-        number="4"
-        title="面筋通墙设置"
-        description="多个房间沿同一直线连续布置时，通墙结果直接替换对应面筋，不与原面筋重复累计。"
-      />
-
-      <div className="rounded-2xl border border-blue-100 bg-blue-50/60 p-4">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <span className="mb-2 block text-xs font-medium text-slate-600">面筋通墙</span>
-            <button
-              type="button"
-              role="switch"
-              aria-label="启用面筋通墙"
-              aria-checked={throughWall.enabled}
-              disabled={!throughWall.enabled && throughWall.rooms.length < 2}
-              onClick={toggleEnabled}
-              className="inline-flex items-center gap-3 rounded-xl disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
-            >
-              <span className={`relative h-6 w-11 rounded-full transition ${throughWall.enabled ? 'bg-blue-600' : 'bg-slate-300'}`}>
-                <span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-all ${throughWall.enabled ? 'left-6' : 'left-1'}`} />
-              </span>
-              <span className="text-sm font-medium text-slate-800">
-                {throughWall.enabled ? '已启用通墙计算' : '未启用通墙计算'}
-              </span>
-            </button>
-          </div>
-
-          <div>
-            <span className="mb-2 block text-xs font-medium text-slate-600">通墙方向</span>
-            <div className="inline-flex rounded-xl border border-slate-200 bg-white p-1">
-              {([
-                { value: 'x' as const, label: 'X向：西 → 东' },
-                { value: 'y' as const, label: 'Y向：南 → 北' },
-              ]).map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  disabled={!throughWall.enabled}
-                  aria-pressed={throughWall.enabled && throughWall.direction === option.value}
-                  onClick={() => changeDirection(option.value)}
-                  className={`rounded-lg px-3 py-2 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-45 ${
-                    throughWall.enabled && throughWall.direction === option.value
-                      ? 'bg-blue-600 text-white shadow-sm'
-                      : 'text-slate-600 hover:bg-slate-50'
-                  }`}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <section className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 shadow-sm sm:p-6">
+      <div className="mb-5 flex gap-3">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">
+          {number}
+        </span>
         <div>
-          <h3 className="text-sm font-semibold text-slate-900">连续房间</h3>
-          <p className="mt-1 text-xs leading-5 text-slate-500">
-            每个房间填写{directionLabel}净掏空尺寸及{perpendicularLabel}；墙厚只记录在相邻房间之间。
-          </p>
+          <h2 className="text-lg font-bold text-slate-900">{title}</h2>
+          <p className="mt-1 text-sm text-slate-500">{description}</p>
         </div>
-        <button
-          type="button"
-          onClick={addRoom}
-          className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 text-xs font-semibold text-blue-700 transition hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-200"
-        >
-          <Plus className="h-4 w-4" />新增房间
-        </button>
       </div>
-
-      <div className="mt-4 space-y-4">
-        {throughWall.rooms.map((room, index) => {
-          const isLast = index === throughWall.rooms.length - 1;
-          return (
-            <div key={room.id} className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
-              <div className="mb-4 flex flex-wrap items-center gap-2">
-                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white text-xs font-bold text-blue-600 shadow-sm">
-                  {index + 1}
-                </span>
-                <input
-                  aria-label={`第${index + 1}个房间名称`}
-                  value={room.name}
-                  onChange={(event) => updateRoom(room.id, { name: event.target.value })}
-                  className="h-9 min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                />
-                <div className="ml-auto flex items-center gap-1">
-                  <button
-                    type="button"
-                    aria-label={`${room.name}上移`}
-                    disabled={index === 0}
-                    onClick={() => moveRoom(index, -1)}
-                    className="rounded-lg p-2 text-slate-500 transition hover:bg-white hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-30"
-                  >
-                    <ArrowUp className="h-4 w-4" />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`${room.name}下移`}
-                    disabled={isLast}
-                    onClick={() => moveRoom(index, 1)}
-                    className="rounded-lg p-2 text-slate-500 transition hover:bg-white hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-30"
-                  >
-                    <ArrowDown className="h-4 w-4" />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`删除${room.name}`}
-                    disabled={throughWall.rooms.length <= 1}
-                    onClick={() => removeRoom(room.id)}
-                    className="rounded-lg p-2 text-slate-500 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-30"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                <NumberField
-                  id={`${room.id}-net-span`}
-                  label={`${directionLabel}净掏空尺寸`}
-                  value={room.netSpan}
-                  min={1}
-                  invalid={room.netSpan <= 0}
-                  onChange={(value) => updateRoom(room.id, { netSpan: value })}
-                />
-                <NumberField
-                  id={`${room.id}-perpendicular-span`}
-                  label={perpendicularLabel}
-                  value={room.perpendicularSpan}
-                  min={1}
-                  invalid={room.perpendicularSpan <= 0}
-                  onChange={(value) => updateRoom(room.id, { perpendicularSpan: value })}
-                />
-                <NumberField
-                  id={`${room.id}-wall-after`}
-                  label={isLast ? '最后一间后墙厚（固定）' : '与下一间中间墙厚'}
-                  value={room.wallAfter}
-                  min={0}
-                  readOnly={isLast}
-                  invalid={room.wallAfter < 0 || (isLast && room.wallAfter !== 0)}
-                  onChange={(value) => updateRoom(room.id, { wallAfter: value })}
-                />
-              </div>
-
-              {!isLast && (
-                <label className="mt-3 inline-flex cursor-pointer items-center gap-2 text-xs text-slate-600">
-                  <input
-                    type="checkbox"
-                    checked={room.continuousWithNext}
-                    onChange={(event) => updateRoom(room.id, { continuousWithNext: event.target.checked })}
-                    className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                  />
-                  与下一间房在同一直线上连续
-                </label>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      {calculation.result && (
-        <div className="mt-4 grid gap-3 rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4 text-xs text-emerald-800 sm:grid-cols-3">
-          <span>连续房间：{calculation.result.roomCount} 间</span>
-          <span>净尺寸合计：{calculation.result.netSpanTotal} mm</span>
-          <span>中间墙合计：{calculation.result.intermediateWallTotal} mm</span>
-        </div>
-      )}
-
-      {throughWall.enabled && calculation.errors.length > 0 && (
-        <p className="mt-4 flex items-start gap-2 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-700">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-          通墙设置无效，结果暂按单房间面筋规则显示。请根据提示修正房间数据。
-        </p>
-      )}
+      {children}
     </section>
   );
 }
 
-interface DiagramLineProps {
-  direction: RebarDirection;
-  count: number;
-  layer: RebarLayer;
-}
-
-function allocateVisibleCounts(counts: number[]): number[] {
-  const safeCounts = counts.map((count) => Math.max(Math.trunc(count), 0));
-  let remaining = MAX_VISIBLE_SVG_BARS;
-  let remainingGroups = safeCounts.filter((count) => count > 0).length;
-
-  return safeCounts.map((count) => {
-    if (count <= 0 || remaining <= 0 || remainingGroups <= 0) return 0;
-    const allocation = Math.min(count, Math.ceil(remaining / remainingGroups));
-    remaining -= allocation;
-    remainingGroups -= 1;
-    return allocation;
-  });
-}
-
-function DiagramLines({ direction, count, layer }: DiagramLineProps) {
-  const visibleCount = Math.min(Math.max(Math.trunc(count), 0), MAX_VISIBLE_SVG_BARS);
-  const inset = layer === 'top' ? 4 : 0;
-  const color = direction === 'x' ? X_COLOR : Y_COLOR;
-
-  return Array.from({ length: visibleCount }, (_, index) => {
-    const ratio = visibleCount === 1 ? 0.5 : index / (visibleCount - 1);
-    const commonProps = {
-      stroke: color,
-      strokeWidth: 2,
-      strokeDasharray: layer === 'top' ? '7 4' : undefined,
-      opacity: layer === 'top' ? 0.92 : 0.58,
-    };
-
-    if (direction === 'x') {
-      const y = 53 + inset + ratio * (284 - 2 * inset);
-      return <line key={`${layer}-${direction}-${index}`} {...commonProps} x1="73" x2="447" y1={y} y2={y} />;
-    }
-
-    const x = 73 + inset + ratio * (374 - 2 * inset);
-    return <line key={`${layer}-${direction}-${index}`} {...commonProps} x1={x} x2={x} y1="53" y2="337" />;
-  });
-}
-
-interface ThroughRoomSegment {
-  id: string;
-  name: string;
-  start: number;
-  end: number;
-  wallEnd: number;
-  netSpan: number;
-}
-
-function buildRoomSegments(
-  rooms: ThroughRoom[],
-  result: ThroughWallResult,
-  start: number,
-  availableLength: number,
-): ThroughRoomSegment[] {
-  const pathLength = result.netSpanTotal + result.intermediateWallTotal;
-  const scale = pathLength > 0 ? availableLength / pathLength : 0;
-  let cursor = start;
-
-  return rooms.map((room) => {
-    const roomStart = cursor;
-    const roomEnd = roomStart + room.netSpan * scale;
-    const wallEnd = roomEnd + room.wallAfter * scale;
-    cursor = wallEnd;
-    return {
-      id: room.id,
-      name: room.name,
-      start: roomStart,
-      end: roomEnd,
-      wallEnd,
-      netSpan: room.netSpan,
-    };
-  });
-}
-
-function allocateRoomLineCounts(total: number, rooms: ThroughRoom[]): number[] {
-  const netTotal = rooms.reduce((sum, room) => sum + Math.max(room.netSpan, 0), 0);
-  let remaining = total;
-
-  return rooms.map((room, index) => {
-    if (index === rooms.length - 1) return remaining;
-    const count = netTotal > 0 ? Math.min(remaining, Math.round(total * room.netSpan / netTotal)) : 0;
-    remaining -= count;
-    return count;
-  });
-}
-
-function ThroughWallDiagram({
-  throughWall,
-  result,
+function RoomEditor({
+  room,
+  index,
+  roomCount,
+  arrangement,
+  onChange,
+  onMove,
+  onDelete,
 }: {
-  throughWall: TopThroughWallState;
-  result: ThroughWallResult;
+  room: SlabRoom;
+  index: number;
+  roomCount: number;
+  arrangement: RoomArrangement;
+  onChange: (room: SlabRoom) => void;
+  onMove: (offset: -1 | 1) => void;
+  onDelete: () => void;
 }) {
-  const isX = result.direction === 'x';
-  const [throughVisible, perpendicularVisible] = allocateVisibleCounts([
-    result.throughBar.count,
-    result.perpendicularBar.count,
-  ]);
-  const perpendicularRoomCounts = allocateRoomLineCounts(perpendicularVisible, throughWall.rooms);
-  const segments = buildRoomSegments(
-    throughWall.rooms,
-    result,
-    isX ? 70 : 55,
-    isX ? 380 : 280,
-  );
-  const throughColor = isX ? X_COLOR : Y_COLOR;
-  const perpendicularColor = isX ? Y_COLOR : X_COLOR;
-
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
-      <div className="mb-3 flex flex-wrap gap-x-5 gap-y-2 text-xs text-slate-500" aria-label="通墙图示线型">
-        <span className="inline-flex items-center gap-2">
-          <span className="w-6 border-t-2 border-dashed" style={{ borderColor: throughColor }} />
-          {isX ? 'X向' : 'Y向'}通墙面筋
-        </span>
-        <span className="inline-flex items-center gap-2">
-          <span className="w-6 border-t-2 border-dashed" style={{ borderColor: perpendicularColor }} />
-          垂直方向面筋
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <BrickWall className="h-3.5 w-3.5 text-slate-500" />中间墙
-        </span>
+    <div className="rounded-xl border border-slate-200 bg-white p-4">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <input
+          aria-label={`房间${index + 1}名称`}
+          className={`${fieldClass} min-w-32 flex-1 font-medium`}
+          value={room.name}
+          onChange={(event) => onChange({ ...room, name: event.target.value })}
+        />
+        {arrangement !== "single" && (
+          <div className="flex gap-1">
+            <button
+              type="button"
+              aria-label="向前移动"
+              disabled={index === 0}
+              onClick={() => onMove(-1)}
+              className="rounded-lg border border-slate-200 p-2 text-slate-500 hover:bg-slate-50 disabled:opacity-30"
+            >
+              <ArrowUp size={16} />
+            </button>
+            <button
+              type="button"
+              aria-label="向后移动"
+              disabled={index === roomCount - 1}
+              onClick={() => onMove(1)}
+              className="rounded-lg border border-slate-200 p-2 text-slate-500 hover:bg-slate-50 disabled:opacity-30"
+            >
+              <ArrowDown size={16} />
+            </button>
+            <button
+              type="button"
+              aria-label="删除房间"
+              disabled={roomCount <= 2}
+              onClick={onDelete}
+              className="rounded-lg border border-rose-200 p-2 text-rose-600 hover:bg-rose-50 disabled:opacity-30"
+            >
+              <Trash2 size={16} />
+            </button>
+          </div>
+        )}
       </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <NumberField
+          label="东西向净掏空尺寸 X"
+          value={room.spanX}
+          onChange={(spanX) => onChange({ ...room, spanX })}
+        />
+        <NumberField
+          label="南北向净掏空尺寸 Y"
+          value={room.spanY}
+          onChange={(spanY) => onChange({ ...room, spanY })}
+        />
+      </div>
+    </div>
+  );
+}
 
-      <svg
-        className="block h-auto w-full"
-        viewBox="0 0 520 390"
-        role="img"
-        aria-labelledby="through-wall-svg-title through-wall-svg-desc"
-      >
-        <title id="through-wall-svg-title">多房间面筋通墙方向图</title>
-        <desc id="through-wall-svg-desc">
-          {isX
-            ? 'X向面筋沿西向东连续穿过中间墙，Y向面筋仅在各房间内沿南北方向布置。'
-            : 'Y向面筋沿南向北连续穿过中间墙，X向面筋仅在各房间内沿东西方向布置。'}
-        </desc>
+function anchorResultLabel(source: AnchorSource, value: number): string {
+  return `${sourceLabel(source)} ${value.toFixed(0)}mm`;
+}
 
-        <text x="260" y="23" textAnchor="middle" className="fill-slate-700 text-[13px] font-semibold">北（+Y）</text>
-        <text x="260" y="382" textAnchor="middle" className="fill-slate-700 text-[13px] font-semibold">南（−Y）</text>
-        <text x="25" y="199" textAnchor="middle" className="fill-slate-700 text-[13px] font-semibold">西</text>
-        <text x="495" y="199" textAnchor="middle" className="fill-slate-700 text-[13px] font-semibold">东</text>
-
-        {segments.map((segment, index) => {
-          const isLast = index === segments.length - 1;
-          if (isX) {
-            return (
-              <g key={segment.id}>
-                <rect x={segment.start} y="55" width={Math.max(segment.end - segment.start, 0)} height="280" rx="4" className="fill-slate-50 stroke-slate-300" strokeWidth="1.5" />
-                <text x={(segment.start + segment.end) / 2} y="75" textAnchor="middle" className="fill-slate-500 text-[11px]">{segment.name}</text>
-                {!isLast && segment.wallEnd > segment.end && (
-                  <rect x={segment.end} y="48" width={segment.wallEnd - segment.end} height="294" className="fill-slate-400/60 stroke-slate-500" strokeWidth="1" />
+function ResultsTable({ results }: { results: BarResult[] }) {
+  return (
+    <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+      <table className="min-w-[1120px] w-full text-left text-sm">
+        <thead className="bg-slate-100 text-xs uppercase tracking-wide text-slate-600">
+          <tr>
+            <th className="px-3 py-3">房间/路径</th>
+            <th className="px-3 py-3">类型</th>
+            <th className="px-3 py-3">方向</th>
+            <th className="px-3 py-3">通墙</th>
+            <th className="px-3 py-3">直径</th>
+            <th className="px-3 py-3">根数</th>
+            <th className="px-3 py-3">单根长度</th>
+            <th className="px-3 py-3">总长度</th>
+            <th className="px-3 py-3">重量</th>
+            <th className="px-3 py-3">起点锚固</th>
+            <th className="px-3 py-3">终点锚固</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {results.map((result) => (
+            <tr key={result.id} className="text-slate-700 hover:bg-slate-50">
+              <td className="px-3 py-3 font-medium text-slate-900">{result.scopeName}</td>
+              <td className="px-3 py-3">{result.layer === "bottom" ? "地筋" : "面筋"}</td>
+              <td className="px-3 py-3">{result.direction.toUpperCase()}向</td>
+              <td className="px-3 py-3">
+                {result.throughWall ? (
+                  <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800">通墙</span>
+                ) : (
+                  "否"
                 )}
-              </g>
-            );
-          }
-          return (
-            <g key={segment.id}>
-              <rect x="75" y={segment.start} width="370" height={Math.max(segment.end - segment.start, 0)} rx="4" className="fill-slate-50 stroke-slate-300" strokeWidth="1.5" />
-              <text x="95" y={(segment.start + segment.end) / 2} dominantBaseline="middle" className="fill-slate-500 text-[11px]">{segment.name}</text>
-              {!isLast && segment.wallEnd > segment.end && (
-                <rect x="68" y={segment.end} width="384" height={segment.wallEnd - segment.end} className="fill-slate-400/60 stroke-slate-500" strokeWidth="1" />
-              )}
-            </g>
-          );
-        })}
-
-        {Array.from({ length: throughVisible }, (_, index) => {
-          const ratio = throughVisible === 1 ? 0.5 : index / (throughVisible - 1);
-          return isX ? (
-            <line
-              key={`through-x-${index}`}
-              x1="70"
-              x2="450"
-              y1={62 + ratio * 266}
-              y2={62 + ratio * 266}
-              stroke={X_COLOR}
-              strokeWidth="2"
-              strokeDasharray="7 4"
-              opacity="0.9"
-            />
-          ) : (
-            <line
-              key={`through-y-${index}`}
-              x1={82 + ratio * 356}
-              x2={82 + ratio * 356}
-              y1="55"
-              y2="335"
-              stroke={Y_COLOR}
-              strokeWidth="2"
-              strokeDasharray="7 4"
-              opacity="0.9"
-            />
-          );
-        })}
-
-        {segments.flatMap((segment, roomIndex) => {
-          const visible = perpendicularRoomCounts[roomIndex] ?? 0;
-          return Array.from({ length: visible }, (_, lineIndex) => {
-            const ratio = visible === 1 ? 0.5 : lineIndex / (visible - 1);
-            return isX ? (
-              <line
-                key={`perpendicular-y-${segment.id}-${lineIndex}`}
-                x1={segment.start + 5 + ratio * Math.max(segment.end - segment.start - 10, 0)}
-                x2={segment.start + 5 + ratio * Math.max(segment.end - segment.start - 10, 0)}
-                y1="62"
-                y2="328"
-                stroke={Y_COLOR}
-                strokeWidth="2"
-                strokeDasharray="7 4"
-                opacity="0.78"
-              />
-            ) : (
-              <line
-                key={`perpendicular-x-${segment.id}-${lineIndex}`}
-                x1="82"
-                x2="438"
-                y1={segment.start + 5 + ratio * Math.max(segment.end - segment.start - 10, 0)}
-                y2={segment.start + 5 + ratio * Math.max(segment.end - segment.start - 10, 0)}
-                stroke={X_COLOR}
-                strokeWidth="2"
-                strokeDasharray="7 4"
-                opacity="0.78"
-              />
-            );
-          });
-        })}
-      </svg>
-      <p className="mt-2 text-xs leading-5 text-slate-400">
-        图示仅表达方向和连续关系，钢筋线总计最多显示 {MAX_VISIBLE_SVG_BARS} 条；实际计算根数不截断。
-      </p>
+              </td>
+              <td className="px-3 py-3">Φ{result.diameter}</td>
+              <td className="px-3 py-3 font-semibold">{result.count}</td>
+              <td className="px-3 py-3">{result.singleLengthM.toFixed(3)}m</td>
+              <td className="px-3 py-3">{result.totalLengthM.toFixed(3)}m</td>
+              <td className="px-3 py-3 font-semibold text-slate-900">{result.weightKg.toFixed(2)}kg</td>
+              <td className="px-3 py-3">{anchorResultLabel(result.startAnchorSource, result.startAnchor)}</td>
+              <td className="px-3 py-3">{anchorResultLabel(result.endAnchorSource, result.endAnchor)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
 
 function SlabDiagram({
   state,
-  result,
-  throughWall,
-  throughCalculation,
+  results,
 }: {
-  state: CalculatorState;
-  result: ReturnType<typeof calculateRebar>;
-  throughWall: TopThroughWallState;
-  throughCalculation: ThroughWallCalculation;
+  state: SlabCalculatorState;
+  results: BarResult[];
 }) {
-  if (throughCalculation.result) {
-    return <ThroughWallDiagram throughWall={throughWall} result={throughCalculation.result} />;
+  const rooms = state.slab.rooms;
+  const horizontal = state.slab.arrangement !== "y";
+  const count = Math.max(rooms.length, 1);
+  const gap = 12;
+  const frameX = 60;
+  const frameY = 58;
+  const frameW = 580;
+  const frameH = 270;
+  const roomW = horizontal ? (frameW - gap * (count - 1)) / count : frameW;
+  const roomH = horizontal ? frameH : (frameH - gap * (count - 1)) / count;
+  const throughDirection =
+    state.through.enabled && state.through.direction !== "none"
+      ? state.through.direction
+      : null;
+  const visible: React.ReactNode[] = [];
+  const pushLine = (node: React.ReactNode) => {
+    if (visible.length < 60) visible.push(node);
+  };
+
+  rooms.forEach((room, roomIndex) => {
+    const x = frameX + (horizontal ? roomIndex * (roomW + gap) : 0);
+    const y = frameY + (horizontal ? 0 : roomIndex * (roomH + gap));
+    const roomResults = results.filter((result) => result.scopeName === room.name);
+    const bottomXCount = roomResults.find((r) => r.layer === "bottom" && r.direction === "x")?.count ?? 4;
+    const bottomYCount = roomResults.find((r) => r.layer === "bottom" && r.direction === "y")?.count ?? 4;
+    const localLineCountX = Math.min(Math.max(bottomXCount, 1), 4);
+    const localLineCountY = Math.min(Math.max(bottomYCount, 1), 4);
+
+    for (let line = 1; line <= localLineCountX; line += 1) {
+      const lineY = y + (line * roomH) / (localLineCountX + 1);
+      pushLine(<line key={`bx-${room.id}-${line}`} x1={x + 8} y1={lineY} x2={x + roomW - 8} y2={lineY} stroke="#2563eb" strokeWidth="2" />);
+    }
+    for (let line = 1; line <= localLineCountY; line += 1) {
+      const lineX = x + (line * roomW) / (localLineCountY + 1);
+      pushLine(<line key={`by-${room.id}-${line}`} x1={lineX} y1={y + 8} x2={lineX} y2={y + roomH - 8} stroke="#059669" strokeWidth="2" />);
+    }
+
+    if (throughDirection !== "x") {
+      for (let line = 1; line <= 3; line += 1) {
+        const lineY = y + (line * roomH) / 4 + 4;
+        pushLine(<line key={`tx-${room.id}-${line}`} x1={x + 8} y1={lineY} x2={x + roomW - 8} y2={lineY} stroke="#2563eb" strokeWidth="2" strokeDasharray="7 5" />);
+      }
+    }
+    if (throughDirection !== "y") {
+      for (let line = 1; line <= 3; line += 1) {
+        const lineX = x + (line * roomW) / 4 + 4;
+        pushLine(<line key={`ty-${room.id}-${line}`} x1={lineX} y1={y + 8} x2={lineX} y2={y + roomH - 8} stroke="#059669" strokeWidth="2" strokeDasharray="7 5" />);
+      }
+    }
+  });
+
+  if (throughDirection === "x") {
+    for (let line = 1; line <= 4; line += 1) {
+      const y = frameY + (line * frameH) / 5;
+      pushLine(<line key={`through-x-${line}`} x1={frameX + 5} y1={y} x2={frameX + frameW - 5} y2={y} stroke="#2563eb" strokeWidth="3" strokeDasharray="8 5" />);
+    }
+  }
+  if (throughDirection === "y") {
+    for (let line = 1; line <= 4; line += 1) {
+      const x = frameX + (line * frameW) / 5;
+      pushLine(<line key={`through-y-${line}`} x1={x} y1={frameY + 5} x2={x} y2={frameY + frameH - 5} stroke="#059669" strokeWidth="3" strokeDasharray="8 5" />);
+    }
   }
 
-  const [bottomYVisible, bottomXVisible, topYVisible, topXVisible] = allocateVisibleCounts([
-    result.bottomY.count,
-    result.bottomX.count,
-    result.topY.count,
-    result.topX.count,
-  ]);
+  const throughStart = state.through.startAnchor.source;
+  const throughEnd = state.through.endAnchor.source;
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
-      <div className="mb-3 flex flex-wrap gap-x-5 gap-y-2 text-xs text-slate-500" aria-label="图示线型">
-        <span className="inline-flex items-center gap-2">
-          <span className="w-6 border-t-2 border-slate-500" />地筋实线
-        </span>
-        <span className="inline-flex items-center gap-2">
-          <span className="w-6 border-t-2 border-dashed border-slate-500" />面筋虚线
-        </span>
-        <span className="inline-flex items-center gap-2">
-          <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: X_COLOR }} />X向
-        </span>
-        <span className="inline-flex items-center gap-2">
-          <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: Y_COLOR }} />Y向
-        </span>
-      </div>
-
-      <svg
-        className="block h-auto w-full"
-        viewBox="0 0 520 390"
-        role="img"
-        aria-labelledby="calculator-svg-title calculator-svg-desc"
-      >
-        <title id="calculator-svg-title">楼板钢筋方向图</title>
-        <desc id="calculator-svg-desc">
-          X向钢筋沿西向东布置，Y向钢筋沿南向北布置；地筋为实线，面筋为虚线。
-        </desc>
-        <text x="260" y="23" textAnchor="middle" className="fill-slate-700 text-[13px] font-semibold">北（+Y）</text>
-        <text x="260" y="382" textAnchor="middle" className="fill-slate-700 text-[13px] font-semibold">南（−Y）</text>
-        <text x="25" y="199" textAnchor="middle" className="fill-slate-700 text-[13px] font-semibold">西</text>
-        <text x="495" y="199" textAnchor="middle" className="fill-slate-700 text-[13px] font-semibold">东</text>
-        <rect x="65" y="45" width="390" height="300" rx="6" className="fill-slate-100 stroke-slate-300" strokeWidth="2" />
-        <DiagramLines direction="y" count={bottomYVisible} layer="bottom" />
-        <DiagramLines direction="x" count={bottomXVisible} layer="bottom" />
-        <DiagramLines direction="y" count={topYVisible} layer="top" />
-        <DiagramLines direction="x" count={topXVisible} layer="top" />
-        <text x="260" y="365" textAnchor="middle" className="fill-slate-500 text-[12px]">
-          东西净尺寸 X = {state.slab.spanX} mm
-        </text>
-        <text
-          x="474"
-          y="199"
-          textAnchor="middle"
-          transform="rotate(90 474 199)"
-          className="fill-slate-500 text-[12px]"
-        >
-          南北净尺寸 Y = {state.slab.spanY} mm
-        </text>
+    <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white p-3">
+      <svg viewBox="0 0 700 410" className="min-w-[620px] w-full" role="img" aria-label="楼板房间及钢筋方向示意图">
+        <rect x="35" y="32" width="630" height="322" rx="8" fill="#f1f5f9" stroke="#64748b" strokeWidth="8" />
+        {rooms.map((room, index) => {
+          const x = frameX + (horizontal ? index * (roomW + gap) : 0);
+          const y = frameY + (horizontal ? 0 : index * (roomH + gap));
+          return (
+            <g key={room.id}>
+              <rect x={x} y={y} width={roomW} height={roomH} fill="#fff" stroke="#94a3b8" strokeWidth="2" />
+              <text x={x + roomW / 2} y={y + 18} textAnchor="middle" fontSize="13" fill="#334155">
+                {room.name} · {room.spanX}×{room.spanY}mm
+              </text>
+              {index < rooms.length - 1 && (
+                horizontal ? (
+                  <rect x={x + roomW} y={frameY} width={gap} height={frameH} fill="#cbd5e1" />
+                ) : (
+                  <rect x={frameX} y={y + roomH} width={frameW} height={gap} fill="#cbd5e1" />
+                )
+              )}
+            </g>
+          );
+        })}
+        {visible}
+        <text x="60" y="380" fontSize="12" fill="#2563eb">蓝色：X向</text>
+        <text x="150" y="380" fontSize="12" fill="#059669">绿色：Y向</text>
+        <text x="240" y="380" fontSize="12" fill="#475569">实线：地筋　虚线：面筋</text>
+        {throughDirection && (
+          <>
+            <text x="60" y="25" fontSize="12" fill="#92400e">
+              通墙路径起点：{sourceLabel(throughStart)}
+            </text>
+            <text x="640" y="25" textAnchor="end" fontSize="12" fill="#92400e">
+              终点：{sourceLabel(throughEnd)}
+            </text>
+          </>
+        )}
       </svg>
-      <p className="mt-2 text-xs leading-5 text-slate-400">
-        图中钢筋线总计最多显示 {MAX_VISIBLE_SVG_BARS} 条；计算结果始终使用实际根数。
-      </p>
-    </div>
-  );
-}
-
-function formatLength(value: number) {
-  return `${value.toFixed(3)} m`;
-}
-
-function formatWeight(value: number) {
-  return `${value.toFixed(2)} kg`;
-}
-
-function ResultTable({ bars }: { bars: CalculatedBar[] }) {
-  return (
-    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-      <div className="overflow-x-auto">
-        <table className="min-w-[760px] w-full border-collapse text-sm">
-          <thead className="bg-slate-50 text-xs font-semibold text-slate-500">
-            <tr>
-              <th className="px-4 py-3 text-left">钢筋类型</th>
-              <th className="px-4 py-3 text-left">方向</th>
-              <th className="px-4 py-3 text-right">钢筋直径</th>
-              <th className="px-4 py-3 text-right">根数</th>
-              <th className="px-4 py-3 text-right">单根长度</th>
-              <th className="px-4 py-3 text-right">总长度</th>
-              <th className="px-4 py-3 text-right">重量</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100 [font-variant-numeric:tabular-nums]">
-            {bars.map((bar) => {
-              const isX = bar.direction === 'x';
-              return (
-                <tr key={bar.key} className="text-slate-700">
-                  <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-900">
-                    {bar.layer === 'bottom' ? '地筋' : '面筋'}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3">
-                    <span
-                      className="inline-flex items-center gap-2 font-medium"
-                      style={{ color: isX ? X_COLOR : Y_COLOR }}
-                    >
-                      <span className="h-1 w-5 rounded-full" style={{ backgroundColor: isX ? X_COLOR : Y_COLOR }} />
-                      {isX ? 'X向' : 'Y向'}{bar.throughWall ? '通墙' : ''}
-                    </span>
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-right">Φ{bar.diameter}</td>
-                  <td className="whitespace-nowrap px-4 py-3 text-right">{bar.count} 根</td>
-                  <td className="whitespace-nowrap px-4 py-3 text-right">{formatLength(bar.singleLengthM)}</td>
-                  <td className="whitespace-nowrap px-4 py-3 text-right">{formatLength(bar.totalLengthM)}</td>
-                  <td className="whitespace-nowrap px-4 py-3 text-right font-semibold text-slate-900">
-                    {formatWeight(bar.weightKg)}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      <p className="mt-2 text-xs text-slate-500">图示最多绘制60条代表线；实际根数始终使用完整计算结果。</p>
     </div>
   );
 }
 
 export function CalculatorClient() {
-  const [state, setState] = useState<CalculatorState>(() => createDefaultCalculatorState());
-  const [throughWall, setThroughWall] = useState<TopThroughWallState>(() => createDefaultThroughWallState());
-  const topInputs = useMemo(() => resolveTopInputs(state), [state]);
-  const baseResult = useMemo(() => calculateRebar(state), [state]);
-  const throughCalculation = useMemo(
-    () => calculateTopThroughWall(state, throughWall),
-    [state, throughWall],
+  const [state, setState] = useState<SlabCalculatorState>(() =>
+    cloneDefaultSlabCalculatorState(),
   );
-  const result = useMemo(
-    () => applyThroughWallResult(baseResult, throughCalculation),
-    [baseResult, throughCalculation],
-  );
-  const validationMessages = useMemo(
-    () => Array.from(new Set([
-      ...validateCalculatorState(state),
-      ...throughCalculation.errors,
-    ])),
-    [state, throughCalculation.errors],
-  );
+  const calculation = useMemo(() => calculateSlabResults(state), [state]);
 
-  const updateSlabNumber = (key: 'spanX' | 'spanY' | 'cover', value: number) => {
-    setState((current) => ({
-      ...current,
-      slab: { ...current.slab, [key]: value },
-    }));
-  };
-
-  const updateCountMode = (countMode: CountMode) => {
-    setState((current) => ({
-      ...current,
-      slab: { ...current.slab, countMode },
-    }));
-  };
-
-  const updateBar = (
-    layer: RebarLayer,
-    direction: RebarDirection,
-    key: keyof RebarInputs,
-    value: number,
-  ) => {
-    setState((current) => ({
-      ...current,
-      [layer]: {
-        ...current[layer],
-        [direction]: {
-          ...current[layer][direction],
-          [key]: value,
+  const setArrangement = (arrangement: RoomArrangement) => {
+    setState((current) => {
+      let rooms = current.slab.rooms;
+      if (arrangement === "single") {
+        rooms = [rooms[0] ?? { id: "room-a", name: "房间A", spanX: 4200, spanY: 3600 }];
+      } else if (rooms.length < 2) {
+        const first = rooms[0] ?? { id: "room-a", name: "房间A", spanX: 4200, spanY: 3600 };
+        rooms = [
+          first,
+          {
+            id: `room-${Date.now()}`,
+            name: "房间B",
+            spanX: 3600,
+            spanY: arrangement === "x" ? first.spanY : 3600,
+          },
+        ];
+        if (arrangement === "y") rooms[1].spanX = first.spanX;
+      }
+      return {
+        ...current,
+        slab: { ...current.slab, arrangement, rooms },
+        through: {
+          ...current.through,
+          enabled: arrangement === "single" ? false : current.through.enabled,
+          direction:
+            arrangement === "single"
+              ? "none"
+              : current.through.enabled
+                ? arrangement
+                : current.through.direction,
         },
+      };
+    });
+  };
+
+  const updateRoom = (id: string, room: SlabRoom) => {
+    setState((current) => ({
+      ...current,
+      slab: {
+        ...current.slab,
+        rooms: current.slab.rooms.map((item) => (item.id === id ? room : item)),
       },
     }));
   };
 
-  const toggleTopFollow = () => {
-    setState((current) => setTopFollowMode(current, !current.topFollowsBottom));
+  const moveRoom = (index: number, offset: -1 | 1) => {
+    setState((current) => {
+      const rooms = [...current.slab.rooms];
+      const target = index + offset;
+      if (target < 0 || target >= rooms.length) return current;
+      [rooms[index], rooms[target]] = [rooms[target], rooms[index]];
+      return { ...current, slab: { ...current.slab, rooms } };
+    });
   };
 
-  const reset = () => {
-    setState(createDefaultCalculatorState());
-    setThroughWall(createDefaultThroughWallState());
+  const updateBar = (
+    layer: BarLayer,
+    direction: BarDirection,
+    settings: BarSettings,
+  ) => {
+    setState((current) => ({
+      ...current,
+      [layer]: { ...current[layer], [direction]: settings },
+    }));
   };
+
+  const arrangementOptions: Array<{ value: RoomArrangement; label: string }> = [
+    { value: "single", label: "单房间" },
+    { value: "x", label: "沿X向排列" },
+    { value: "y", label: "沿Y向排列" },
+  ];
 
   return (
-    <main className="min-h-[calc(100dvh-3.5rem)] bg-slate-100/80 px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
-      <div className="mx-auto w-full max-w-[1500px]">
-        <header className="mb-6 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7">
-          <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-start gap-4">
-              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-blue-600 text-white shadow-lg shadow-blue-600/20">
-                <Calculator className="h-6 w-6" />
-              </span>
-              <div>
-                <p className="text-xs font-semibold tracking-[0.18em] text-blue-600">REBARVIZ · 计算器</p>
-                <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">楼板钢筋计算器</h1>
-                <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
-                  按 X/Y 方向分别计算地筋与面筋的根数、长度和理论重量，结果随输入实时更新。
-                </p>
+    <main className="min-h-screen bg-gradient-to-b from-slate-100 to-white px-3 py-6 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl">
+        <header className="mb-6 rounded-2xl bg-slate-900 p-5 text-white shadow-lg sm:p-7">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <div className="mb-2 flex items-center gap-2 text-blue-300">
+                <Calculator size={20} />
+                <span className="text-sm font-semibold tracking-wide">RebarViz · 计算器</span>
               </div>
+              <h1 className="text-2xl font-bold sm:text-3xl">楼板钢筋计算器</h1>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-300">
+                楼板基础参数统一驱动房间、墙厚、锚固、根数、重量与通墙示意，结果随输入实时更新。
+              </p>
             </div>
             <button
               type="button"
-              onClick={reset}
-              className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-200"
+              onClick={() => setState(cloneDefaultSlabCalculatorState())}
+              className="inline-flex items-center gap-2 rounded-lg border border-white/20 bg-white/10 px-4 py-2 text-sm font-medium hover:bg-white/20"
             >
-              <RotateCcw className="h-4 w-4" />
+              <RotateCcw size={16} />
               重置数据
             </button>
           </div>
         </header>
 
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,0.9fr)_minmax(560px,1.1fr)]">
-          <div className="space-y-6">
-            <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-              <SectionTitle number="1" title="楼板基础参数" description="输入楼板净尺寸、保护层并选择根数计算方式。" />
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <NumberField
-                  id="calculator-span-x"
-                  label="东西净尺寸 X"
-                  value={state.slab.spanX}
-                  min={1}
-                  invalid={state.slab.spanX <= 0}
-                  onChange={(value) => updateSlabNumber('spanX', value)}
-                />
-                <NumberField
-                  id="calculator-span-y"
-                  label="南北净尺寸 Y"
-                  value={state.slab.spanY}
-                  min={1}
-                  invalid={state.slab.spanY <= 0}
-                  onChange={(value) => updateSlabNumber('spanY', value)}
-                />
-                <NumberField
-                  id="calculator-cover"
-                  label="保护层"
-                  value={state.slab.cover}
-                  min={0}
-                  invalid={state.slab.cover < 0}
-                  onChange={(value) => updateSlabNumber('cover', value)}
-                />
-                <label htmlFor="calculator-count-mode" className="block min-w-0">
-                  <span className="mb-1.5 block text-xs font-medium text-slate-600">根数算法</span>
-                  <select
-                    id="calculator-count-mode"
-                    value={state.slab.countMode}
-                    onChange={(event) => updateCountMode(event.target.value as CountMode)}
-                    className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                  >
-                    <option value="project">项目算法：ceil（净尺寸 ÷ 间距）</option>
-                    <option value="cover">保护层算法：ceil（有效宽度 ÷ 间距）+ 1</option>
-                  </select>
-                </label>
-              </div>
-            </section>
-
-            <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-              <SectionTitle number="2" title="地筋参数" description="X向沿西至东运行，Y向沿南至北运行；两端锚固分别计入单根长度。" />
-              <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
-                <DirectionCard
-                  idPrefix="calculator-bottom-x"
-                  direction="x"
-                  bar={state.bottom.x}
-                  onChange={(key, value) => updateBar('bottom', 'x', key, value)}
-                />
-                <DirectionCard
-                  idPrefix="calculator-bottom-y"
-                  direction="y"
-                  bar={state.bottom.y}
-                  onChange={(key, value) => updateBar('bottom', 'y', key, value)}
-                />
-              </div>
-            </section>
-
-            <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-              <SectionTitle number="3" title="面筋参数" description="可跟随对应地筋端部锚固，也可关闭跟随后分别手动输入四端数值。" />
-              <div className="mb-5 grid gap-4 rounded-2xl border border-blue-100 bg-blue-50/60 p-4 sm:grid-cols-[minmax(0,1fr)_180px] sm:items-end">
-                <div>
-                  <span className="mb-2 block text-xs font-medium text-slate-600">面筋锚固方式</span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={state.topFollowsBottom}
-                    onClick={toggleTopFollow}
-                    className="inline-flex items-center gap-3 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
-                  >
-                    <span className={`relative h-6 w-11 rounded-full transition ${state.topFollowsBottom ? 'bg-blue-600' : 'bg-slate-300'}`}>
-                      <span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-all ${state.topFollowsBottom ? 'left-6' : 'left-1'}`} />
-                    </span>
-                    <span className="text-sm font-medium text-slate-800">锚固跟随对应地筋</span>
-                  </button>
-                </div>
-                <NumberField
-                  id="calculator-top-increment"
-                  label="每端比地筋增加"
-                  value={state.topAnchorIncrement}
-                  min={0}
-                  invalid={state.topAnchorIncrement < 0}
-                  onChange={(value) => setState((current) => ({ ...current, topAnchorIncrement: value }))}
-                />
-              </div>
-              <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
-                <DirectionCard
-                  idPrefix="calculator-top-x"
-                  direction="x"
-                  bar={topInputs.x}
-                  anchorReadOnly={state.topFollowsBottom}
-                  onChange={(key, value) => updateBar('top', 'x', key, value)}
-                />
-                <DirectionCard
-                  idPrefix="calculator-top-y"
-                  direction="y"
-                  bar={topInputs.y}
-                  anchorReadOnly={state.topFollowsBottom}
-                  onChange={(key, value) => updateBar('top', 'y', key, value)}
-                />
-              </div>
-              <p className="mt-4 text-xs leading-5 text-slate-500">
-                {state.topFollowsBottom
-                  ? `当前面筋各端锚固 = 对应地筋端部 + ${Math.max(state.topAnchorIncrement, 0)} mm`
-                  : '当前面筋西、东、南、北四端锚固均为手动输入。'}
-              </p>
-            </section>
-
-            <ThroughWallSettings
-              throughWall={throughWall}
-              slab={state.slab}
-              calculation={throughCalculation}
-              onChange={setThroughWall}
-            />
-          </div>
-
-          <section className="self-start rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6 xl:sticky xl:top-20">
-            <div className="mb-5 flex items-start justify-between gap-4">
-              <div className="flex items-start gap-3">
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-xs font-bold text-blue-600">5</span>
-                <div>
-                  <h2 className="text-base font-semibold text-slate-900">计算结果</h2>
-                  <p className="mt-1 text-sm leading-6 text-slate-500">四项钢筋独立计算，长度与重量按要求保留小数位。</p>
-                </div>
-              </div>
-              <span className="hidden items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 sm:inline-flex">
-                <Sigma className="h-3.5 w-3.5" />实时更新
-              </span>
+        <div className="space-y-6">
+          <Section
+            number={1}
+            title="楼板基础参数"
+            description="这里是房间尺寸、墙厚、保护层和面筋增加值的唯一数据源。"
+          >
+            <div className="grid gap-2 sm:grid-cols-3">
+              {arrangementOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setArrangement(option.value)}
+                  className={`rounded-lg border px-4 py-2 text-sm font-medium transition ${state.slab.arrangement === option.value ? "border-blue-600 bg-blue-600 text-white" : "border-slate-300 bg-white text-slate-700 hover:border-blue-300"}`}
+                >
+                  {option.label}
+                </button>
+              ))}
             </div>
 
-            {validationMessages.length > 0 && (
-              <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700" role="alert">
-                <div className="flex items-start gap-2.5">
-                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <div>
-                    <p className="font-semibold">请检查输入数据</p>
-                    <ul className="mt-1.5 list-disc space-y-1 pl-5">
-                      {validationMessages.map((message) => <li key={message}>{message}</li>)}
-                    </ul>
+            <div className="mt-4 grid gap-3 lg:grid-cols-2">
+              {state.slab.rooms.map((room, index) => (
+                <RoomEditor
+                  key={room.id}
+                  room={room}
+                  index={index}
+                  roomCount={state.slab.rooms.length}
+                  arrangement={state.slab.arrangement}
+                  onChange={(next) => updateRoom(room.id, next)}
+                  onMove={(offset) => moveRoom(index, offset)}
+                  onDelete={() =>
+                    setState((current) => ({
+                      ...current,
+                      slab: {
+                        ...current.slab,
+                        rooms: current.slab.rooms.filter((item) => item.id !== room.id),
+                      },
+                    }))
+                  }
+                />
+              ))}
+            </div>
+            {state.slab.arrangement !== "single" && (
+              <button
+                type="button"
+                onClick={() =>
+                  setState((current) => {
+                    const first = current.slab.rooms[0];
+                    const nextIndex = current.slab.rooms.length;
+                    const room: SlabRoom = {
+                      id: `room-${Date.now()}`,
+                      name: `房间${String.fromCharCode(65 + nextIndex)}`,
+                      spanX: current.slab.arrangement === "y" ? (first?.spanX ?? 4200) : 3600,
+                      spanY: current.slab.arrangement === "x" ? (first?.spanY ?? 3600) : 3600,
+                    };
+                    return {
+                      ...current,
+                      slab: { ...current.slab, rooms: [...current.slab.rooms, room] },
+                    };
+                  })
+                }
+                className="mt-3 inline-flex items-center gap-2 rounded-lg border border-dashed border-blue-300 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100"
+              >
+                <Plus size={16} /> 添加房间
+              </button>
+            )}
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+              <NumberField
+                label="内墙厚度"
+                value={state.slab.innerWallThickness}
+                onChange={(innerWallThickness) =>
+                  setState((current) => ({
+                    ...current,
+                    slab: { ...current.slab, innerWallThickness },
+                  }))
+                }
+              />
+              <NumberField
+                label="外墙厚度"
+                value={state.slab.outerWallThickness}
+                onChange={(outerWallThickness) =>
+                  setState((current) => ({
+                    ...current,
+                    slab: { ...current.slab, outerWallThickness },
+                  }))
+                }
+              />
+              <NumberField
+                label="保护层"
+                value={state.slab.cover}
+                onChange={(cover) =>
+                  setState((current) => ({ ...current, slab: { ...current.slab, cover } }))
+                }
+              />
+              <NumberField
+                label="面筋锚固增加值"
+                value={state.slab.topAnchorExtra}
+                onChange={(topAnchorExtra) =>
+                  setState((current) => ({
+                    ...current,
+                    slab: { ...current.slab, topAnchorExtra },
+                  }))
+                }
+              />
+              <label>
+                <span className={labelClass}>根数算法</span>
+                <select
+                  className={fieldClass}
+                  value={state.slab.countMode}
+                  onChange={(event) =>
+                    setState((current) => ({
+                      ...current,
+                      slab: {
+                        ...current.slab,
+                        countMode: event.target.value as "project" | "cover",
+                      },
+                    }))
+                  }
+                >
+                  <option value="project">项目算法</option>
+                  <option value="cover">保护层算法</option>
+                </select>
+              </label>
+            </div>
+            <p className="mt-3 text-xs text-slate-500">
+              中间墙数量由房间数自动确定：当前 {Math.max(state.slab.rooms.length - 1, 0)} 道；无需也不能在房间末尾重复输入墙厚。
+            </p>
+          </Section>
+
+          <Section number={2} title="地筋参数" description="地筋锚固直接取选中的墙厚，手动输入时直接采用最终值。">
+            <div className="grid gap-4 xl:grid-cols-2">
+              <BarSettingsCard
+                title="地筋 X向"
+                direction="x"
+                layer="bottom"
+                settings={state.bottom.x}
+                state={state}
+                onChange={(settings) => updateBar("bottom", "x", settings)}
+              />
+              <BarSettingsCard
+                title="地筋 Y向"
+                direction="y"
+                layer="bottom"
+                settings={state.bottom.y}
+                state={state}
+                onChange={(settings) => updateBar("bottom", "y", settings)}
+              />
+            </div>
+          </Section>
+
+          <Section
+            number={3}
+            title="面筋与通墙参数"
+            description="面筋墙体模式为墙厚加统一增加值；通墙只设置方向和整条路径最外侧锚固。"
+          >
+            <div className="grid gap-4 xl:grid-cols-2">
+              <BarSettingsCard
+                title="面筋 X向"
+                direction="x"
+                layer="top"
+                settings={state.top.x}
+                state={state}
+                onChange={(settings) => updateBar("top", "x", settings)}
+              />
+              <BarSettingsCard
+                title="面筋 Y向"
+                direction="y"
+                layer="top"
+                settings={state.top.y}
+                state={state}
+                onChange={(settings) => updateBar("top", "y", settings)}
+              />
+            </div>
+
+            <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h3 className="font-semibold text-slate-900">面筋通墙计算</h3>
+                  <p className="mt-1 text-xs text-slate-600">房间尺寸、内墙厚、保护层和增加值均直接读取楼板基础参数。</p>
+                </div>
+                <label className="inline-flex cursor-pointer items-center gap-2 text-sm font-medium text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={state.through.enabled}
+                    onChange={(event) =>
+                      setState((current) => ({
+                        ...current,
+                        through: {
+                          ...current.through,
+                          enabled: event.target.checked,
+                          direction: event.target.checked
+                            ? current.slab.arrangement === "single"
+                              ? "none"
+                              : current.slab.arrangement
+                            : "none",
+                        },
+                      }))
+                    }
+                    className="h-5 w-5 rounded border-slate-300 text-blue-600"
+                  />
+                  启用通墙
+                </label>
+              </div>
+
+              {state.through.enabled && (
+                <div className="mt-4">
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {(["x", "y"] as const).map((direction) => (
+                      <button
+                        key={direction}
+                        type="button"
+                        onClick={() =>
+                          setState((current) => ({
+                            ...current,
+                            through: { ...current.through, direction },
+                          }))
+                        }
+                        className={`rounded-lg border px-4 py-2 text-sm font-medium ${state.through.direction === direction ? "border-amber-600 bg-amber-600 text-white" : "border-amber-300 bg-white text-slate-700"}`}
+                      >
+                        {direction === "x" ? "X向通墙（西→东）" : "Y向通墙（南→北）"}
+                      </button>
+                    ))}
                   </div>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <AnchorRuleField
+                      label={state.through.direction === "y" ? "整条路径最南端" : "整条路径最西端"}
+                      rule={state.through.startAnchor}
+                      layer="top"
+                      state={state}
+                      onChange={(startAnchor) =>
+                        setState((current) => ({
+                          ...current,
+                          through: { ...current.through, startAnchor },
+                        }))
+                      }
+                    />
+                    <AnchorRuleField
+                      label={state.through.direction === "y" ? "整条路径最北端" : "整条路径最东端"}
+                      rule={state.through.endAnchor}
+                      layer="top"
+                      state={state}
+                      onChange={(endAnchor) =>
+                        setState((current) => ({
+                          ...current,
+                          through: { ...current.through, endAnchor },
+                        }))
+                      }
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          </Section>
+
+          <Section
+            number={4}
+            title="计算结果和示意图"
+            description="地筋始终按房间分别计算；通墙启用且校验通过时，通墙方向面筋直接替换普通面筋。"
+          >
+            {calculation.errors.length > 0 && (
+              <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+                <div className="mb-2 flex items-center gap-2 font-semibold">
+                  <AlertCircle size={17} /> 请修正以下输入
+                </div>
+                <ul className="list-disc space-y-1 pl-5">
+                  {calculation.errors.map((error) => (
+                    <li key={error}>{error}</li>
+                  ))}
+                </ul>
+                {state.through.enabled && (
+                  <p className="mt-2 text-xs">通墙校验失败时暂按各房间普通面筋显示，避免使用错误的连续区结果。</p>
+                )}
+              </div>
+            )}
+
+            {calculation.throughWall && (
+              <div className="mb-4 grid gap-3 sm:grid-cols-3">
+                <div className="rounded-lg bg-blue-50 p-3 text-sm text-blue-900">
+                  净尺寸合计 <strong>{calculation.throughWall.netSpanTotal}mm</strong>
+                </div>
+                <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
+                  中间墙合计 <strong>{calculation.throughWall.intermediateWallTotal}mm</strong>
+                </div>
+                <div className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-900">
+                  通墙方向 <strong>{calculation.throughWall.direction.toUpperCase()}向</strong>
                 </div>
               </div>
             )}
 
-            <div className="grid gap-5">
-              <SlabDiagram
-                state={state}
-                result={result}
-                throughWall={throughWall}
-                throughCalculation={throughCalculation}
-              />
-              <ResultTable bars={result.bars} />
+            <ResultsTable results={calculation.results} />
+            <div className="mt-4 rounded-xl bg-slate-900 p-5 text-white">
+              <p className="text-sm text-slate-300">全部钢筋合计重量</p>
+              <p className="mt-1 text-3xl font-bold">{calculation.totalWeightKg.toFixed(2)} kg</p>
             </div>
 
-            <div className="mt-5 rounded-2xl bg-slate-950 p-5 text-white" aria-live="polite">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-                <div>
-                  <p className="text-sm text-slate-400">全部钢筋合计重量</p>
-                  <p className="mt-1 text-xs leading-5 text-slate-500">理论重量按钢筋截面积 × 7850 kg/m³ 计算</p>
-                </div>
-                <div className="text-3xl font-bold tracking-tight text-cyan-300 [font-variant-numeric:tabular-nums]">
-                  {formatWeight(result.totalWeightKg)}
-                </div>
-              </div>
+            <div className="mt-5">
+              <SlabDiagram state={state} results={calculation.results} />
             </div>
 
-            <div className="mt-4 grid gap-3 text-xs leading-5 text-slate-500 sm:grid-cols-2">
-              <div className="flex items-start gap-2 rounded-xl bg-slate-50 p-3">
-                <Ruler className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" />
-                <span>
-                  {throughCalculation.result
-                    ? `通墙方向根数按共同垂直净宽 ${throughCalculation.result.perpendicularSpan} mm；垂直方向根数按房间净尺寸合计 ${throughCalculation.result.netSpanTotal} mm，均不计中间墙。`
-                    : state.slab.countMode === 'cover'
-                      ? '根数：ceil（（垂直方向净尺寸 − 2 × 保护层）÷ 间距）+ 1'
-                      : '根数：ceil（垂直方向净尺寸 ÷ 间距）'}
-                </span>
-              </div>
-              <div className="flex items-start gap-2 rounded-xl bg-slate-50 p-3">
-                <Calculator className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" />
-                <span>
-                  {throughCalculation.result
-                    ? `通墙单根长度 = 净尺寸合计 ${throughCalculation.result.netSpanTotal} + 中间墙合计 ${throughCalculation.result.intermediateWallTotal} + 路径最外侧两端锚固。`
-                    : '单根长度 = 运行方向净尺寸 + 第一端锚固 + 第二端锚固'}
-                </span>
-              </div>
+            <div className="mt-4 grid gap-3 text-xs leading-5 text-slate-600 md:grid-cols-2">
+              <p className="rounded-lg bg-white p-3">
+                X向沿西→东运行，根数按南北净尺寸；Y向沿南→北运行，根数按东西净尺寸。保护层算法仅在整个计算宽度最外侧扣减两次保护层。
+              </p>
+              <p className="rounded-lg bg-white p-3">
+                中间墙厚只进入通墙方向面筋的单根运行长度，不进入通墙方向或垂直方向的任何根数计算，也不在中间墙位置增加锚固。
+              </p>
             </div>
-          </section>
+          </Section>
         </div>
       </div>
     </main>
