@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { CalculatorClient } from './CalculatorClient';
 
 export const metadata: Metadata = {
   title: '计算器 | RebarViz',
@@ -6,13 +7,5 @@ export const metadata: Metadata = {
 };
 
 export default function CalculatorPage() {
-  return (
-    <main className="h-[calc(100dvh-3.5rem)] min-h-[560px] bg-slate-100">
-      <iframe
-        src="/rebar-offline-calculator.html"
-        title="楼板钢筋离线计算器"
-        className="h-full w-full border-0"
-      />
-    </main>
-  );
+  return <CalculatorClient />;
 }
