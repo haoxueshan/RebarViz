@@ -16,6 +16,7 @@ import {
   createDefaultRoomAnchorRules,
   resolveBottomAnchor,
   resolveTopAnchor,
+  shouldApplyTopExtra,
   synchronizeRoomAnchors,
   type AnchorRule,
   type AnchorSource,
@@ -27,6 +28,7 @@ import {
   type SlabCalculation,
   type SlabCalculatorState,
   type SlabRoom,
+  type TopExtraMode,
 } from "@/lib/slab-calculator";
 
 const fieldClass =
@@ -51,6 +53,51 @@ function directionLabel(direction: BarDirection): string {
 
 function endLabels(direction: BarDirection): [string, string] {
   return direction === "x" ? ["西端", "东端"] : ["南端", "北端"];
+}
+
+function topExtraEndpointLabels(
+  direction: BarDirection,
+  throughWall: boolean,
+): [string, string] {
+  const [start, end] = endLabels(direction);
+  return throughWall ? [`最${start}`, `最${end}`] : [start, end];
+}
+
+function TopExtraModeSelector({
+  direction,
+  mode,
+  throughWall = false,
+  onChange,
+}: {
+  direction: BarDirection;
+  mode: TopExtraMode;
+  throughWall?: boolean;
+  onChange: (mode: TopExtraMode) => void;
+}) {
+  const [start, end] = topExtraEndpointLabels(direction, throughWall);
+  const options: Array<{ value: TopExtraMode; label: string }> = [
+    { value: "start", label: `${start}增加` },
+    { value: "end", label: `${end}增加` },
+    { value: "both", label: "两端增加" },
+  ];
+  return (
+    <fieldset>
+      <legend className={labelClass}>面筋增加位置</legend>
+      <div className="grid grid-cols-3 gap-2">
+        {options.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={mode === option.value}
+            onClick={() => onChange(option.value)}
+            className={`rounded-lg border px-2 py-2 text-xs font-medium transition sm:text-sm ${mode === option.value ? "border-blue-600 bg-blue-600 text-white" : "border-slate-300 bg-white text-slate-700 hover:border-blue-300"}`}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </fieldset>
+  );
 }
 
 type NumberFieldProps = {
@@ -96,6 +143,7 @@ type AnchorRuleFieldProps = {
   rule: AnchorRule;
   layer: BarLayer;
   state: SlabCalculatorState;
+  applyTopExtra?: boolean;
   onChange: (rule: AnchorRule) => void;
 };
 
@@ -104,12 +152,13 @@ function AnchorRuleField({
   rule,
   layer,
   state,
+  applyTopExtra = true,
   onChange,
 }: AnchorRuleFieldProps) {
   const resolved =
     layer === "bottom"
       ? resolveBottomAnchor(rule, state.slab)
-      : resolveTopAnchor(rule, state.slab);
+      : resolveTopAnchor(rule, state.slab, applyTopExtra);
   const wall =
     rule.source === "inner-wall"
       ? state.slab.innerWallThickness
@@ -144,7 +193,8 @@ function AnchorRuleField({
         <div className="mt-2 rounded-md bg-white px-3 py-2 text-xs leading-5 text-slate-600">
           {layer === "top" ? (
             <>
-              计算过程：{sourceLabel(rule.source)} {wall} + 增加 {state.slab.topAnchorExtra} ={" "}
+              计算过程：{sourceLabel(rule.source)} {wall} + 增加{" "}
+              {applyTopExtra ? state.slab.topAnchorExtra : 0} ={" "}
               <strong className="text-blue-700">{resolved}mm</strong>
             </>
           ) : (
@@ -166,6 +216,8 @@ type BarSettingsCardProps = {
   settings: BarSettings;
   state: SlabCalculatorState;
   onChange: (settings: BarSettings) => void;
+  extraMode?: TopExtraMode;
+  onExtraModeChange?: (mode: TopExtraMode) => void;
   onAnchorChange: (
     roomId: string,
     endpoint: "start" | "end",
@@ -180,9 +232,12 @@ function BarSettingsCard({
   settings,
   state,
   onChange,
+  extraMode,
+  onExtraModeChange,
   onAnchorChange,
 }: BarSettingsCardProps) {
   const [startLabel, endLabel] = endLabels(direction);
+  const effectiveExtraMode = extraMode ?? "both";
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="mb-3 flex items-center justify-between gap-2">
@@ -203,6 +258,15 @@ function BarSettingsCard({
           onChange={(spacing) => onChange({ ...settings, spacing })}
         />
       </div>
+      {layer === "top" && onExtraModeChange && (
+        <div className="mt-3">
+          <TopExtraModeSelector
+            direction={direction}
+            mode={effectiveExtraMode}
+            onChange={onExtraModeChange}
+          />
+        </div>
+      )}
       <div className="mt-4 space-y-3">
         <p className="text-xs font-medium text-slate-500">各房间端部锚固</p>
         {state.slab.rooms.map((room) => {
@@ -216,6 +280,11 @@ function BarSettingsCard({
                   rule={rules.start}
                   layer={layer}
                   state={state}
+                  applyTopExtra={
+                    layer === "top"
+                      ? shouldApplyTopExtra(effectiveExtraMode, "start")
+                      : false
+                  }
                   onChange={(rule) => onAnchorChange(room.id, "start", rule)}
                 />
                 <AnchorRuleField
@@ -223,6 +292,11 @@ function BarSettingsCard({
                   rule={rules.end}
                   layer={layer}
                   state={state}
+                  applyTopExtra={
+                    layer === "top"
+                      ? shouldApplyTopExtra(effectiveExtraMode, "end")
+                      : false
+                  }
                   onChange={(rule) => onAnchorChange(room.id, "end", rule)}
                 />
               </div>
@@ -335,8 +409,22 @@ function RoomEditor({
   );
 }
 
-function anchorResultLabel(source: AnchorSource, value: number): string {
-  return `${sourceLabel(source)} ${value.toFixed(0)}mm`;
+function topExtraModeLabel(result: BarResult): string {
+  if (result.layer === "bottom" || !result.topExtraMode) return "不适用";
+  if (result.topExtraMode === "both") return "两端增加";
+  const [start, end] = topExtraEndpointLabels(result.direction, result.throughWall);
+  return `${result.topExtraMode === "start" ? start : end}增加`;
+}
+
+function anchorResultLabel(
+  result: BarResult,
+  endpoint: "start" | "end",
+): string {
+  const source = endpoint === "start" ? result.startAnchorSource : result.endAnchorSource;
+  const value = endpoint === "start" ? result.startAnchor : result.endAnchor;
+  if (result.layer === "bottom") return `${sourceLabel(source)} ${value.toFixed(0)}mm`;
+  const applied = endpoint === "start" ? result.startExtraApplied : result.endExtraApplied;
+  return `${sourceLabel(source)} ${value.toFixed(0)}mm（${applied ? `已增加${result.topExtraValue.toFixed(0)}mm` : "未增加"}）`;
 }
 
 function ResultsTable({ results }: { results: BarResult[] }) {
@@ -362,14 +450,15 @@ function ResultsTable({ results }: { results: BarResult[] }) {
               <div><dt className="text-xs text-slate-500">单根长度</dt><dd className="mt-1 font-medium">{result.singleLengthM.toFixed(3)}m</dd></div>
               <div><dt className="text-xs text-slate-500">总长度</dt><dd className="mt-1 font-medium">{result.totalLengthM.toFixed(3)}m</dd></div>
               <div className="col-span-2"><dt className="text-xs text-slate-500">重量</dt><dd className="mt-1 text-lg font-semibold text-slate-900">{result.weightKg.toFixed(2)}kg</dd></div>
-              <div><dt className="text-xs text-slate-500">起点锚固</dt><dd className="mt-1 font-medium">{anchorResultLabel(result.startAnchorSource, result.startAnchor)}</dd></div>
-              <div><dt className="text-xs text-slate-500">终点锚固</dt><dd className="mt-1 font-medium">{anchorResultLabel(result.endAnchorSource, result.endAnchor)}</dd></div>
+              <div className="col-span-2"><dt className="text-xs text-slate-500">增加位置</dt><dd className="mt-1 font-medium">{topExtraModeLabel(result)}</dd></div>
+              <div><dt className="text-xs text-slate-500">起点锚固</dt><dd className="mt-1 font-medium">{anchorResultLabel(result, "start")}</dd></div>
+              <div><dt className="text-xs text-slate-500">终点锚固</dt><dd className="mt-1 font-medium">{anchorResultLabel(result, "end")}</dd></div>
             </dl>
           </article>
         ))}
       </div>
       <div className="hidden overflow-x-auto rounded-xl border border-slate-200 bg-white sm:block">
-        <table className="min-w-[1120px] w-full text-left text-sm">
+        <table className="min-w-[1280px] w-full text-left text-sm">
         <thead className="bg-slate-100 text-xs uppercase tracking-wide text-slate-600">
           <tr>
             <th className="px-3 py-3">房间/路径</th>
@@ -381,6 +470,7 @@ function ResultsTable({ results }: { results: BarResult[] }) {
             <th className="px-3 py-3">单根长度</th>
             <th className="px-3 py-3">总长度</th>
             <th className="px-3 py-3">重量</th>
+            <th className="px-3 py-3">增加位置</th>
             <th className="px-3 py-3">起点锚固</th>
             <th className="px-3 py-3">终点锚固</th>
           </tr>
@@ -403,8 +493,9 @@ function ResultsTable({ results }: { results: BarResult[] }) {
               <td className="px-3 py-3">{result.singleLengthM.toFixed(3)}m</td>
               <td className="px-3 py-3">{result.totalLengthM.toFixed(3)}m</td>
               <td className="px-3 py-3 font-semibold text-slate-900">{result.weightKg.toFixed(2)}kg</td>
-              <td className="px-3 py-3">{anchorResultLabel(result.startAnchorSource, result.startAnchor)}</td>
-              <td className="px-3 py-3">{anchorResultLabel(result.endAnchorSource, result.endAnchor)}</td>
+              <td className="px-3 py-3">{topExtraModeLabel(result)}</td>
+              <td className="px-3 py-3">{anchorResultLabel(result, "start")}</td>
+              <td className="px-3 py-3">{anchorResultLabel(result, "end")}</td>
             </tr>
           ))}
         </tbody>
@@ -482,8 +573,9 @@ function SlabDiagram({
   }
 
   const visible = [...throughLines, ...normalLines].slice(0, 60);
-  const throughStart = calculation.throughWall?.throughBar.startAnchorSource;
-  const throughEnd = calculation.throughWall?.throughBar.endAnchorSource;
+  const throughBar = calculation.throughWall?.throughBar;
+  const throughStart = throughBar?.startAnchorSource;
+  const throughEnd = throughBar?.endAnchorSource;
 
   return (
     <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white p-3">
@@ -522,13 +614,16 @@ function SlabDiagram({
         <text x="60" y="380" fontSize="12" fill="#2563eb">蓝色：X向</text>
         <text x="150" y="380" fontSize="12" fill="#059669">绿色：Y向</text>
         <text x="240" y="380" fontSize="12" fill="#475569">实线：地筋　虚线：面筋</text>
-        {throughDirection && throughStart && throughEnd && (
+        {throughDirection && throughBar && throughStart && throughEnd && (
           <>
             <text x="60" y="25" fontSize="12" fill="#92400e">
               通墙路径起点：{sourceLabel(throughStart)}
             </text>
             <text x="640" y="25" textAnchor="end" fontSize="12" fill="#92400e">
               终点：{sourceLabel(throughEnd)}
+            </text>
+            <text x="640" y="397" textAnchor="end" fontSize="12" fill="#92400e">
+              面筋增加：{topExtraModeLabel(throughBar)}
             </text>
           </>
         )}
@@ -633,7 +728,23 @@ export function CalculatorClient() {
   ) => {
     setState((current) => ({
       ...current,
-      [layer]: { ...current[layer], [direction]: settings },
+      [layer]: {
+        ...current[layer],
+        [direction]: { ...current[layer][direction], ...settings },
+      },
+    }));
+  };
+
+  const updateTopExtraMode = (
+    direction: BarDirection,
+    extraMode: TopExtraMode,
+  ) => {
+    setState((current) => ({
+      ...current,
+      top: {
+        ...current.top,
+        [direction]: { ...current.top[direction], extraMode },
+      },
     }));
   };
 
@@ -871,6 +982,8 @@ export function CalculatorClient() {
                 settings={state.top.x}
                 state={state}
                 onChange={(settings) => updateBar("top", "x", settings)}
+                extraMode={state.top.x.extraMode ?? "both"}
+                onExtraModeChange={(mode) => updateTopExtraMode("x", mode)}
                 onAnchorChange={(roomId, endpoint, rule) =>
                   updateRoomAnchor(roomId, "top", "x", endpoint, rule)
                 }
@@ -882,6 +995,8 @@ export function CalculatorClient() {
                 settings={state.top.y}
                 state={state}
                 onChange={(settings) => updateBar("top", "y", settings)}
+                extraMode={state.top.y.extraMode ?? "both"}
+                onExtraModeChange={(mode) => updateTopExtraMode("y", mode)}
                 onAnchorChange={(roomId, endpoint, rule) =>
                   updateRoomAnchor(roomId, "top", "y", endpoint, rule)
                 }
@@ -937,12 +1052,29 @@ export function CalculatorClient() {
                       </button>
                     ))}
                   </div>
+                  <div className="mt-3">
+                    <TopExtraModeSelector
+                      direction={state.through.direction === "y" ? "y" : "x"}
+                      throughWall
+                      mode={state.through.extraMode ?? "both"}
+                      onChange={(extraMode) =>
+                        setState((current) => ({
+                          ...current,
+                          through: { ...current.through, extraMode },
+                        }))
+                      }
+                    />
+                  </div>
                   <div className="mt-3 grid gap-3 sm:grid-cols-2">
                     <AnchorRuleField
                       label={state.through.direction === "y" ? "整条路径最南端" : "整条路径最西端"}
                       rule={state.through.startAnchor}
                       layer="top"
                       state={state}
+                      applyTopExtra={shouldApplyTopExtra(
+                        state.through.extraMode ?? "both",
+                        "start",
+                      )}
                       onChange={(startAnchor) =>
                         setState((current) => ({
                           ...current,
@@ -955,6 +1087,10 @@ export function CalculatorClient() {
                       rule={state.through.endAnchor}
                       layer="top"
                       state={state}
+                      applyTopExtra={shouldApplyTopExtra(
+                        state.through.extraMode ?? "both",
+                        "end",
+                      )}
                       onChange={(endAnchor) =>
                         setState((current) => ({
                           ...current,

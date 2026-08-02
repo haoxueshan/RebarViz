@@ -6,10 +6,12 @@ import {
   createDefaultRoomAnchorRules,
   resolveBottomAnchor,
   resolveTopAnchor,
+  shouldApplyTopExtra,
   synchronizeRoomAnchors,
   type RoomArrangement,
   type SlabCalculatorState,
   type SlabRoom,
+  type TopExtraMode,
 } from "./slab-calculator";
 
 function stateWithRooms(
@@ -26,6 +28,18 @@ function stateWithRooms(
   }));
   state.slab.arrangement = arrangement;
   state.slab.rooms = synchronizeRoomAnchors(rooms, arrangement);
+  return state;
+}
+
+function xThroughState(): SlabCalculatorState {
+  const state = stateWithRooms("x", [
+    [4200, 3600],
+    [3600, 3600],
+  ]);
+  state.through.enabled = true;
+  state.through.direction = "x";
+  state.through.startAnchor = { source: "outer-wall", manualValue: 0 };
+  state.through.endAnchor = { source: "outer-wall", manualValue: 0 };
   return state;
 }
 
@@ -147,18 +161,6 @@ describe("房间级端部规则", () => {
 });
 
 describe("面筋通墙回归", () => {
-  function xThroughState(): SlabCalculatorState {
-    const state = stateWithRooms("x", [
-      [4200, 3600],
-      [3600, 3600],
-    ]);
-    state.through.enabled = true;
-    state.through.direction = "x";
-    state.through.startAnchor = { source: "outer-wall", manualValue: 0 };
-    state.through.endAnchor = { source: "outer-wall", manualValue: 0 };
-    return state;
-  }
-
   it("中间墙只进入X向单根长度，Y向根数为39", () => {
     const calculation = calculateSlabResults(xThroughState());
     expect(calculation.errors).toEqual([]);
@@ -203,6 +205,184 @@ describe("面筋通墙回归", () => {
     const calculation = calculateSlabResults(inconsistent);
     expect(calculation.throughWall).toBeNull();
     expect(calculation.errors).toContain("房间垂直方向尺寸不一致，需要拆分钢筋连续区");
+  });
+});
+
+describe("面筋增加值作用端", () => {
+  it("start模式在起点应用增加值", () => {
+    expect(shouldApplyTopExtra("start", "start")).toBe(true);
+  });
+
+  it("start模式不在终点应用增加值", () => {
+    expect(shouldApplyTopExtra("start", "end")).toBe(false);
+  });
+
+  it("end模式不在起点应用增加值", () => {
+    expect(shouldApplyTopExtra("end", "start")).toBe(false);
+  });
+
+  it("end模式在终点应用增加值", () => {
+    expect(shouldApplyTopExtra("end", "end")).toBe(true);
+  });
+
+  it("both模式在两端应用增加值", () => {
+    expect(shouldApplyTopExtra("both", "start")).toBe(true);
+    expect(shouldApplyTopExtra("both", "end")).toBe(true);
+  });
+
+  it("普通X向面筋只在西端增加", () => {
+    const state = cloneDefaultSlabCalculatorState();
+    state.top.x.extraMode = "start";
+    const result = calculateSlabResults(state).results.find(
+      (bar) => bar.layer === "top" && bar.direction === "x",
+    );
+    expect(result?.startAnchor).toBe(620);
+    expect(result?.endAnchor).toBe(370);
+    expect(result?.singleLengthM).toBeCloseTo(5.19, 6);
+    expect(result?.startExtraApplied).toBe(true);
+    expect(result?.endExtraApplied).toBe(false);
+  });
+
+  it("普通X向面筋只在东端增加", () => {
+    const state = cloneDefaultSlabCalculatorState();
+    state.top.x.extraMode = "end";
+    const result = calculateSlabResults(state).results.find(
+      (bar) => bar.layer === "top" && bar.direction === "x",
+    );
+    expect(result?.startAnchor).toBe(370);
+    expect(result?.endAnchor).toBe(620);
+    expect(result?.singleLengthM).toBeCloseTo(5.19, 6);
+  });
+
+  it("普通X向面筋在两端增加", () => {
+    const state = cloneDefaultSlabCalculatorState();
+    state.top.x.extraMode = "both";
+    const result = calculateSlabResults(state).results.find(
+      (bar) => bar.layer === "top" && bar.direction === "x",
+    );
+    expect(result?.startAnchor).toBe(620);
+    expect(result?.endAnchor).toBe(620);
+    expect(result?.singleLengthM).toBeCloseTo(5.44, 6);
+  });
+
+  it("普通Y向面筋只在南端增加", () => {
+    const state = cloneDefaultSlabCalculatorState();
+    state.top.y.extraMode = "start";
+    const result = calculateSlabResults(state).results.find(
+      (bar) => bar.layer === "top" && bar.direction === "y",
+    );
+    expect(result?.startAnchor).toBe(620);
+    expect(result?.endAnchor).toBe(370);
+    expect(result?.singleLengthM).toBeCloseTo(4.59, 6);
+  });
+
+  it("普通Y向面筋只在北端增加", () => {
+    const state = cloneDefaultSlabCalculatorState();
+    state.top.y.extraMode = "end";
+    const result = calculateSlabResults(state).results.find(
+      (bar) => bar.layer === "top" && bar.direction === "y",
+    );
+    expect(result?.startAnchor).toBe(370);
+    expect(result?.endAnchor).toBe(620);
+    expect(result?.singleLengthM).toBeCloseTo(4.59, 6);
+  });
+
+  it("X向通墙只在最西端增加", () => {
+    const state = xThroughState();
+    state.through.extraMode = "start";
+    const result = calculateSlabResults(state).throughWall?.throughBar;
+    expect(result?.startAnchor).toBe(620);
+    expect(result?.endAnchor).toBe(370);
+    expect(result?.singleLengthM).toBeCloseTo(9.03, 6);
+    expect(result?.totalLengthM).toBeCloseTo(162.54, 6);
+    expect(result?.weightKg).toBeCloseTo(100.21, 2);
+  });
+
+  it("X向通墙只在最东端增加", () => {
+    const state = xThroughState();
+    state.through.extraMode = "end";
+    const result = calculateSlabResults(state).throughWall?.throughBar;
+    expect(result?.startAnchor).toBe(370);
+    expect(result?.endAnchor).toBe(620);
+    expect(result?.singleLengthM).toBeCloseTo(9.03, 6);
+  });
+
+  it("X向通墙在两端增加", () => {
+    const state = xThroughState();
+    state.through.extraMode = "both";
+    const result = calculateSlabResults(state).throughWall?.throughBar;
+    expect(result?.startAnchor).toBe(620);
+    expect(result?.endAnchor).toBe(620);
+    expect(result?.singleLengthM).toBeCloseTo(9.28, 6);
+    expect(result?.count).toBe(18);
+  });
+
+  it("通墙组合区垂直面筋使用普通方向自己的extraMode", () => {
+    const state = xThroughState();
+    state.through.extraMode = "start";
+    state.top.y.extraMode = "end";
+    const perpendicular = calculateSlabResults(state).throughWall?.perpendicularBar;
+    expect(perpendicular?.topExtraMode).toBe("end");
+    expect(perpendicular?.startAnchor).toBe(370);
+    expect(perpendicular?.endAnchor).toBe(620);
+    expect(perpendicular?.singleLengthM).toBeCloseTo(4.59, 6);
+    expect(perpendicular?.count).toBe(39);
+  });
+
+  it("手动端无论模式如何都不增加topAnchorExtra", () => {
+    const state = cloneDefaultSlabCalculatorState();
+    state.top.x.extraMode = "both";
+    state.slab.rooms[0].anchors.top.x.start = { source: "manual", manualValue: 550 };
+    const result = calculateSlabResults(state).results.find(
+      (bar) => bar.layer === "top" && bar.direction === "x",
+    );
+    expect(result?.startAnchor).toBe(550);
+    expect(result?.endAnchor).toBe(620);
+    expect(result?.startExtraApplied).toBe(false);
+    expect(result?.endExtraApplied).toBe(true);
+  });
+
+  it("修改增加值后只有启用增加的墙体端变化", () => {
+    const state = cloneDefaultSlabCalculatorState();
+    state.top.x.extraMode = "start";
+    state.slab.topAnchorExtra = 300;
+    const result = calculateSlabResults(state).results.find(
+      (bar) => bar.layer === "top" && bar.direction === "x",
+    );
+    expect(result?.startAnchor).toBe(670);
+    expect(result?.endAnchor).toBe(370);
+  });
+
+  it("地筋结果完全不受TopExtraMode影响", () => {
+    const state = cloneDefaultSlabCalculatorState();
+    const before = calculateSlabResults(state).results.filter((bar) => bar.layer === "bottom");
+    state.top.x.extraMode = "start";
+    state.top.y.extraMode = "end";
+    state.through.extraMode = "start";
+    state.slab.topAnchorExtra = 500;
+    const after = calculateSlabResults(state).results.filter((bar) => bar.layer === "bottom");
+    expect(after).toEqual(before);
+  });
+
+  it("默认状态和缺少旧字段的状态都按两端增加", () => {
+    const defaults = cloneDefaultSlabCalculatorState();
+    expect(defaults.top.x.extraMode).toBe("both");
+    expect(defaults.top.y.extraMode).toBe("both");
+    expect(defaults.through.extraMode).toBe("both");
+
+    const legacy = cloneDefaultSlabCalculatorState();
+    delete (legacy.top.x as { extraMode?: TopExtraMode }).extraMode;
+    const result = calculateSlabResults(legacy).results.find(
+      (bar) => bar.layer === "top" && bar.direction === "x",
+    );
+    expect(result?.topExtraMode).toBe("both");
+    expect(result?.singleLengthM).toBeCloseTo(5.44, 6);
+
+    const legacyThrough = xThroughState();
+    delete (legacyThrough.through as { extraMode?: TopExtraMode }).extraMode;
+    const throughResult = calculateSlabResults(legacyThrough).throughWall?.throughBar;
+    expect(throughResult?.topExtraMode).toBe("both");
+    expect(throughResult?.singleLengthM).toBeCloseTo(9.28, 6);
   });
 });
 

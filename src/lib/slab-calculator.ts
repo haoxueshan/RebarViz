@@ -4,6 +4,7 @@ export type AnchorSource = "inner-wall" | "outer-wall" | "manual";
 export type BarDirection = "x" | "y";
 export type BarLayer = "bottom" | "top";
 export type ThroughDirection = "none" | "x" | "y";
+export type TopExtraMode = "start" | "end" | "both";
 
 export type AnchorRule = {
   source: AnchorSource;
@@ -48,9 +49,13 @@ export type BarSettings = {
   spacing: number;
 };
 
-export type RebarLayerSettings = {
-  x: BarSettings;
-  y: BarSettings;
+export type TopBarSettings = BarSettings & {
+  extraMode: TopExtraMode;
+};
+
+export type RebarLayerSettings<T extends BarSettings = BarSettings> = {
+  x: T;
+  y: T;
 };
 
 export type TopThroughRule = {
@@ -58,12 +63,13 @@ export type TopThroughRule = {
   direction: ThroughDirection;
   startAnchor: AnchorRule;
   endAnchor: AnchorRule;
+  extraMode: TopExtraMode;
 };
 
 export type SlabCalculatorState = {
   slab: SlabBaseState;
-  bottom: RebarLayerSettings;
-  top: RebarLayerSettings;
+  bottom: RebarLayerSettings<BarSettings>;
+  top: RebarLayerSettings<TopBarSettings>;
   through: TopThroughRule;
 };
 
@@ -83,6 +89,10 @@ export type BarResult = {
   endAnchorSource: AnchorSource;
   startAnchor: number;
   endAnchor: number;
+  topExtraMode?: TopExtraMode;
+  topExtraValue: number;
+  startExtraApplied: boolean;
+  endExtraApplied: boolean;
 };
 
 export type ThroughWallResult = {
@@ -196,14 +206,15 @@ export const DEFAULT_SLAB_CALCULATOR_STATE: SlabCalculatorState = {
     y: { diameter: 10, spacing: 200 },
   },
   top: {
-    x: { diameter: 10, spacing: 200 },
-    y: { diameter: 10, spacing: 200 },
+    x: { diameter: 10, spacing: 200, extraMode: "both" },
+    y: { diameter: 10, spacing: 200, extraMode: "both" },
   },
   through: {
     enabled: false,
     direction: "none",
     startAnchor: wallAnchor("outer-wall"),
     endAnchor: wallAnchor("outer-wall"),
+    extraMode: "both",
   },
 };
 
@@ -227,14 +238,23 @@ export function resolveBottomAnchor(
 export function resolveTopAnchor(
   rule: AnchorRule,
   slab: SlabBaseState,
+  applyExtra = true,
 ): number {
+  const extra = applyExtra ? safeNonNegative(slab.topAnchorExtra) : 0;
   if (rule.source === "inner-wall") {
-    return safeNonNegative(slab.innerWallThickness) + safeNonNegative(slab.topAnchorExtra);
+    return safeNonNegative(slab.innerWallThickness) + extra;
   }
   if (rule.source === "outer-wall") {
-    return safeNonNegative(slab.outerWallThickness) + safeNonNegative(slab.topAnchorExtra);
+    return safeNonNegative(slab.outerWallThickness) + extra;
   }
   return safeNonNegative(rule.manualValue);
+}
+
+export function shouldApplyTopExtra(
+  mode: TopExtraMode,
+  endpoint: "start" | "end",
+): boolean {
+  return mode === "both" || mode === endpoint;
 }
 
 export function countBars(
@@ -274,12 +294,33 @@ type CreateBarInput = {
   perpendicularSpan: number;
   slab: SlabBaseState;
   anchorRules: DirectionAnchorRules;
+  topExtraMode?: TopExtraMode;
 };
 
 function createBarResult(input: CreateBarInput): BarResult {
-  const resolver = input.layer === "bottom" ? resolveBottomAnchor : resolveTopAnchor;
-  const startAnchor = resolver(input.anchorRules.start, input.slab);
-  const endAnchor = resolver(input.anchorRules.end, input.slab);
+  const topExtraMode = input.layer === "top" ? (input.topExtraMode ?? "both") : undefined;
+  const startExtraSelected = topExtraMode
+    ? shouldApplyTopExtra(topExtraMode, "start")
+    : false;
+  const endExtraSelected = topExtraMode
+    ? shouldApplyTopExtra(topExtraMode, "end")
+    : false;
+  const startExtraApplied =
+    input.layer === "top" &&
+    startExtraSelected &&
+    input.anchorRules.start.source !== "manual";
+  const endExtraApplied =
+    input.layer === "top" &&
+    endExtraSelected &&
+    input.anchorRules.end.source !== "manual";
+  const startAnchor =
+    input.layer === "bottom"
+      ? resolveBottomAnchor(input.anchorRules.start, input.slab)
+      : resolveTopAnchor(input.anchorRules.start, input.slab, startExtraSelected);
+  const endAnchor =
+    input.layer === "bottom"
+      ? resolveBottomAnchor(input.anchorRules.end, input.slab)
+      : resolveTopAnchor(input.anchorRules.end, input.slab, endExtraSelected);
   const count = countBars(
     input.perpendicularSpan,
     input.settings.spacing,
@@ -307,6 +348,10 @@ function createBarResult(input: CreateBarInput): BarResult {
     endAnchorSource: input.anchorRules.end.source,
     startAnchor,
     endAnchor,
+    topExtraMode,
+    topExtraValue: input.layer === "top" ? safeNonNegative(input.slab.topAnchorExtra) : 0,
+    startExtraApplied,
+    endExtraApplied,
   };
 }
 
@@ -316,6 +361,7 @@ export function calculateRoomBar(
   direction: BarDirection,
   settings: BarSettings,
   slab: SlabBaseState,
+  topExtraMode?: TopExtraMode,
 ): BarResult {
   return createBarResult({
     id: `${room.id}-${layer}-${direction}`,
@@ -328,6 +374,7 @@ export function calculateRoomBar(
     perpendicularSpan: direction === "x" ? room.spanY : room.spanX,
     slab,
     anchorRules: room.anchors[layer][direction],
+    topExtraMode,
   });
 }
 
@@ -371,6 +418,7 @@ export function calculateTopThroughWall(
     perpendicularSpan: commonPerpendicularSpan,
     slab,
     anchorRules: { start: through.startAnchor, end: through.endAnchor },
+    topExtraMode: through.extraMode ?? "both",
   });
   const perpendicularBar = createBarResult({
     id: `through-area-top-${perpendicularDirection}`,
@@ -383,6 +431,7 @@ export function calculateTopThroughWall(
     perpendicularSpan: netSpanTotal,
     slab,
     anchorRules: perpendicularAnchors,
+    topExtraMode: perpendicularSettings.extraMode ?? "both",
   });
 
   return {
@@ -480,8 +529,22 @@ export function calculateSlabResults(state: SlabCalculatorState): SlabCalculatio
   const topResults = throughWall
     ? [throughWall.throughBar, throughWall.perpendicularBar]
     : state.slab.rooms.flatMap((room) => [
-        calculateRoomBar(room, "top", "x", state.top.x, state.slab),
-        calculateRoomBar(room, "top", "y", state.top.y, state.slab),
+        calculateRoomBar(
+          room,
+          "top",
+          "x",
+          state.top.x,
+          state.slab,
+          state.top.x.extraMode ?? "both",
+        ),
+        calculateRoomBar(
+          room,
+          "top",
+          "y",
+          state.top.y,
+          state.slab,
+          state.top.y.extraMode ?? "both",
+        ),
       ]);
   const results = [...bottomResults, ...topResults];
   const totalWeightKg = results.reduce(
