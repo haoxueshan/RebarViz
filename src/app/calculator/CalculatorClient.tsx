@@ -16,6 +16,7 @@ import {
   createDefaultRoomAnchorRules,
   resolveBottomAnchor,
   resolveTopAnchor,
+  restoreRoomAnchorToAuto,
   shouldApplyTopExtra,
   synchronizeRoomAnchors,
   type AnchorRule,
@@ -32,7 +33,7 @@ import {
 } from "@/lib/slab-calculator";
 
 const fieldClass =
-  "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-500";
+  "min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-500";
 const labelClass = "mb-1 block text-xs font-medium text-slate-600";
 
 function toNumber(value: string): number {
@@ -90,7 +91,7 @@ function TopExtraModeSelector({
             type="button"
             aria-pressed={mode === option.value}
             onClick={() => onChange(option.value)}
-            className={`rounded-lg border px-2 py-2 text-xs font-medium transition sm:text-sm ${mode === option.value ? "border-blue-600 bg-blue-600 text-white" : "border-slate-300 bg-white text-slate-700 hover:border-blue-300"}`}
+            className={`min-h-11 rounded-lg border px-2 py-2 text-xs font-medium transition sm:text-sm ${mode === option.value ? "border-blue-600 bg-blue-600 text-white" : "border-slate-300 bg-white text-slate-700 hover:border-blue-300"}`}
           >
             {option.label}
           </button>
@@ -145,6 +146,7 @@ type AnchorRuleFieldProps = {
   state: SlabCalculatorState;
   applyTopExtra?: boolean;
   onChange: (rule: AnchorRule) => void;
+  onRestoreAuto?: () => void;
 };
 
 function AnchorRuleField({
@@ -154,6 +156,7 @@ function AnchorRuleField({
   state,
   applyTopExtra = true,
   onChange,
+  onRestoreAuto,
 }: AnchorRuleFieldProps) {
   const resolved =
     layer === "bottom"
@@ -166,13 +169,31 @@ function AnchorRuleField({
 
   return (
     <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${rule.origin === "user" ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-700"}`}>
+          {rule.origin === "user" ? "已自定义" : "自动拓扑"}
+        </span>
+        {rule.origin === "user" && onRestoreAuto && (
+          <button
+            type="button"
+            onClick={onRestoreAuto}
+            className="min-h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs font-medium text-slate-700 hover:border-blue-300 hover:text-blue-700"
+          >
+            恢复自动锚固
+          </button>
+        )}
+      </div>
       <label>
         <span className={labelClass}>{label}锚固来源</span>
         <select
           className={fieldClass}
           value={rule.source}
           onChange={(event) =>
-            onChange({ ...rule, source: event.target.value as AnchorSource })
+            onChange({
+              ...rule,
+              source: event.target.value as AnchorSource,
+              origin: "user",
+            })
           }
         >
           <option value="inner-wall">内墙</option>
@@ -185,7 +206,9 @@ function AnchorRuleField({
           <NumberField
             label="最终锚固"
             value={rule.manualValue}
-            onChange={(manualValue) => onChange({ ...rule, manualValue })}
+            onChange={(manualValue) =>
+              onChange({ ...rule, manualValue, origin: "user" })
+            }
           />
           <p className="mt-1 text-xs text-slate-500">手动值直接作为最终值，不叠加墙厚或增加值。</p>
         </div>
@@ -195,12 +218,16 @@ function AnchorRuleField({
             <>
               计算过程：{sourceLabel(rule.source)} {wall} + 增加{" "}
               {applyTopExtra ? state.slab.topAnchorExtra : 0} ={" "}
-              <strong className="text-blue-700">{resolved}mm</strong>
+              <strong className="text-blue-700">
+                {Number.isFinite(resolved) ? `${resolved}mm` : "--"}
+              </strong>
             </>
           ) : (
             <>
               计算结果：{sourceLabel(rule.source)} {wall} ={" "}
-              <strong className="text-blue-700">{resolved}mm</strong>
+              <strong className="text-blue-700">
+                {Number.isFinite(resolved) ? `${resolved}mm` : "--"}
+              </strong>
             </>
           )}
         </div>
@@ -223,6 +250,10 @@ type BarSettingsCardProps = {
     endpoint: "start" | "end",
     rule: AnchorRule,
   ) => void;
+  onRestoreAuto: (
+    roomId: string,
+    endpoint: "start" | "end",
+  ) => void;
 };
 
 function BarSettingsCard({
@@ -235,11 +266,15 @@ function BarSettingsCard({
   extraMode,
   onExtraModeChange,
   onAnchorChange,
+  onRestoreAuto,
 }: BarSettingsCardProps) {
   const [startLabel, endLabel] = endLabels(direction);
   const effectiveExtraMode = extraMode ?? "both";
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div
+      data-testid={`${layer}-${direction}-settings`}
+      className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+    >
       <div className="mb-3 flex items-center justify-between gap-2">
         <h3 className="font-semibold text-slate-800">{title}</h3>
         <span className={`rounded-full px-2 py-1 text-xs ${direction === "x" ? "bg-blue-50 text-blue-700" : "bg-emerald-50 text-emerald-700"}`}>
@@ -271,10 +306,25 @@ function BarSettingsCard({
         <p className="text-xs font-medium text-slate-500">各房间端部锚固</p>
         {state.slab.rooms.map((room) => {
           const rules = room.anchors[layer][direction];
+          const customized =
+            rules.start.origin === "user" || rules.end.origin === "user";
           return (
-            <div key={room.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-              <p className="mb-2 text-sm font-semibold text-slate-700">{room.name}</p>
-              <div className="grid gap-3 sm:grid-cols-2">
+            <details
+              key={room.id}
+              data-testid={`anchors-${layer}-${direction}-${room.id}`}
+              className="group rounded-xl border border-slate-200 bg-slate-50"
+            >
+              <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-semibold text-slate-700">
+                <span>
+                  {room.name} · {startLabel}{sourceLabel(rules.start.source)} → {endLabel}{sourceLabel(rules.end.source)}
+                </span>
+                {customized && (
+                  <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-800">
+                    已自定义
+                  </span>
+                )}
+              </summary>
+              <div className="grid gap-3 border-t border-slate-200 p-3 sm:grid-cols-2">
                 <AnchorRuleField
                   label={startLabel}
                   rule={rules.start}
@@ -286,6 +336,7 @@ function BarSettingsCard({
                       : false
                   }
                   onChange={(rule) => onAnchorChange(room.id, "start", rule)}
+                  onRestoreAuto={() => onRestoreAuto(room.id, "start")}
                 />
                 <AnchorRuleField
                   label={endLabel}
@@ -298,9 +349,10 @@ function BarSettingsCard({
                       : false
                   }
                   onChange={(rule) => onAnchorChange(room.id, "end", rule)}
+                  onRestoreAuto={() => onRestoreAuto(room.id, "end")}
                 />
               </div>
-            </div>
+            </details>
           );
         })}
       </div>
@@ -427,10 +479,44 @@ function anchorResultLabel(
   return `${sourceLabel(source)} ${value.toFixed(0)}mm（${applied ? `已增加${result.topExtraValue.toFixed(0)}mm` : "未增加"}）`;
 }
 
-function ResultsTable({ results }: { results: BarResult[] }) {
+function ResultFormula({
+  result,
+  state,
+}: {
+  result: BarResult;
+  state: SlabCalculatorState;
+}) {
+  const lengthParts = [
+    result.netRunSpanMm,
+    ...(result.intermediateWallMm > 0 ? [result.intermediateWallMm] : []),
+    result.startAnchor,
+    result.endAnchor,
+  ];
+  const countFormula =
+    state.slab.countMode === "cover"
+      ? `ceil((${result.calculationWidthMm} - 2 × ${state.slab.cover}) / ${result.spacing}) + 1 = ${result.count}根`
+      : `ceil(${result.calculationWidthMm} / ${result.spacing}) = ${result.count}根`;
+  return (
+    <div className="space-y-1 text-xs leading-5 text-slate-600">
+      <p>单根长度：{lengthParts.join(" + ")} = {(result.singleLengthM * 1000).toFixed(0)}mm</p>
+      <p>根数：{countFormula}</p>
+      <p>总长度：{result.count} × {result.singleLengthM.toFixed(3)} = {result.totalLengthM.toFixed(3)}m</p>
+      <p>单位重量：π × {result.diameter}² × 7850 ÷ 4 ÷ 1,000,000 = {result.unitWeightKgM.toFixed(4)}kg/m</p>
+      <p>重量：{result.totalLengthM.toFixed(3)} × {result.unitWeightKgM.toFixed(4)} = {result.weightKg.toFixed(2)}kg</p>
+    </div>
+  );
+}
+
+function ResultsTable({
+  results,
+  state,
+}: {
+  results: BarResult[];
+  state: SlabCalculatorState;
+}) {
   return (
     <>
-      <div className="space-y-3 sm:hidden" data-testid="mobile-result-cards">
+      <div className="space-y-3 xl:hidden" data-testid="mobile-result-cards">
         {results.map((result) => (
           <article key={result.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="flex items-start justify-between gap-3">
@@ -453,11 +539,14 @@ function ResultsTable({ results }: { results: BarResult[] }) {
               <div className="col-span-2"><dt className="text-xs text-slate-500">增加位置</dt><dd className="mt-1 font-medium">{topExtraModeLabel(result)}</dd></div>
               <div><dt className="text-xs text-slate-500">起点锚固</dt><dd className="mt-1 font-medium">{anchorResultLabel(result, "start")}</dd></div>
               <div><dt className="text-xs text-slate-500">终点锚固</dt><dd className="mt-1 font-medium">{anchorResultLabel(result, "end")}</dd></div>
+              <div className="col-span-2 border-t border-slate-100 pt-3">
+                <ResultFormula result={result} state={state} />
+              </div>
             </dl>
           </article>
         ))}
       </div>
-      <div className="hidden overflow-x-auto rounded-xl border border-slate-200 bg-white sm:block">
+      <div className="hidden overflow-x-auto rounded-xl border border-slate-200 bg-white xl:block">
         <table className="min-w-[1280px] w-full text-left text-sm">
         <thead className="bg-slate-100 text-xs uppercase tracking-wide text-slate-600">
           <tr>
@@ -501,6 +590,18 @@ function ResultsTable({ results }: { results: BarResult[] }) {
         </tbody>
         </table>
       </div>
+      <div className="mt-4 hidden grid-cols-2 gap-3 xl:grid">
+        {results.map((result) => (
+          <details key={`formula-${result.id}`} className="rounded-xl border border-slate-200 bg-white p-3">
+            <summary className="cursor-pointer text-sm font-semibold text-slate-800">
+              {result.scopeName} · {result.layer === "bottom" ? "地筋" : "面筋"}{result.direction.toUpperCase()}向计算核查
+            </summary>
+            <div className="mt-3 border-t border-slate-100 pt-3">
+              <ResultFormula result={result} state={state} />
+            </div>
+          </details>
+        ))}
+      </div>
     </>
   );
 }
@@ -512,6 +613,17 @@ function SlabDiagram({
   state: SlabCalculatorState;
   calculation: SlabCalculation;
 }) {
+  if (!calculation.isValid) {
+    return (
+      <div
+        role="img"
+        aria-label="楼板示意图输入无效"
+        className="flex min-h-64 items-center justify-center rounded-xl border border-dashed border-rose-300 bg-rose-50 p-6 text-center text-sm font-medium text-rose-700"
+      >
+        输入无效，修正全部错误后显示钢筋计算示意图。
+      </div>
+    );
+  }
   const results = calculation.results;
   const rooms = state.slab.rooms;
   const horizontal = state.slab.arrangement !== "y";
@@ -530,7 +642,7 @@ function SlabDiagram({
   rooms.forEach((room, roomIndex) => {
     const x = frameX + (horizontal ? roomIndex * (roomW + gap) : 0);
     const y = frameY + (horizontal ? 0 : roomIndex * (roomH + gap));
-    const roomResults = results.filter((result) => result.scopeName === room.name);
+    const roomResults = results.filter((result) => result.roomId === room.id);
     const bottomXCount = roomResults.find((r) => r.layer === "bottom" && r.direction === "x")?.count ?? 4;
     const bottomYCount = roomResults.find((r) => r.layer === "bottom" && r.direction === "y")?.count ?? 4;
     const localLineCountX = Math.min(Math.max(bottomXCount, 1), 4);
@@ -578,8 +690,8 @@ function SlabDiagram({
   const throughEnd = throughBar?.endAnchorSource;
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white p-3">
-      <svg viewBox="0 0 700 410" className="min-w-[620px] w-full" role="img" aria-label="楼板房间及钢筋方向示意图">
+    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white p-3">
+      <svg viewBox="0 0 700 410" className="h-auto w-full max-w-full" role="img" aria-label="楼板房间及钢筋方向示意图">
         <rect x="35" y="32" width="630" height="322" rx="8" fill="#f1f5f9" stroke="#64748b" strokeWidth="8" />
         {rooms.map((room, index) => {
           const x = frameX + (horizontal ? index * (roomW + gap) : 0);
@@ -640,6 +752,13 @@ export function CalculatorClient() {
   const calculation = useMemo(() => calculateSlabResults(state), [state]);
 
   const setArrangement = (arrangement: RoomArrangement) => {
+    if (
+      arrangement === "single" &&
+      state.slab.rooms.length > 1 &&
+      !window.confirm("切换为单房间将移除其余房间，是否继续？")
+    ) {
+      return;
+    }
     setState((current) => {
       const fallbackRoom: SlabRoom = {
         id: "room-a",
@@ -709,6 +828,10 @@ export function CalculatorClient() {
   };
 
   const deleteRoom = (id: string) => {
+    const room = state.slab.rooms.find((item) => item.id === id);
+    if (!window.confirm(`删除${room?.name || "该房间"}及其锚固设置，是否继续？`)) {
+      return;
+    }
     setState((current) => {
       const rooms = current.slab.rooms.filter((room) => room.id !== id);
       return {
@@ -769,7 +892,7 @@ export function CalculatorClient() {
                     ...room.anchors[layer],
                     [direction]: {
                       ...room.anchors[layer][direction],
-                      [endpoint]: { ...rule },
+                      [endpoint]: { ...rule, origin: "user" },
                     },
                   },
                 },
@@ -778,6 +901,34 @@ export function CalculatorClient() {
         ),
       },
     }));
+  };
+
+  const restoreRoomAnchor = (
+    roomId: string,
+    layer: BarLayer,
+    direction: BarDirection,
+    endpoint: "start" | "end",
+  ) => {
+    setState((current) => ({
+      ...current,
+      slab: {
+        ...current.slab,
+        rooms: restoreRoomAnchorToAuto(
+          current.slab.rooms,
+          current.slab.arrangement,
+          roomId,
+          layer,
+          direction,
+          endpoint,
+        ),
+      },
+    }));
+  };
+
+  const resetData = () => {
+    if (window.confirm("重置将清除当前房间和锚固设置，是否继续？")) {
+      setState(cloneDefaultSlabCalculatorState());
+    }
   };
 
   const arrangementOptions: Array<{ value: RoomArrangement; label: string }> = [
@@ -803,7 +954,7 @@ export function CalculatorClient() {
             </div>
             <button
               type="button"
-              onClick={() => setState(cloneDefaultSlabCalculatorState())}
+              onClick={resetData}
               className="inline-flex items-center gap-2 rounded-lg border border-white/20 bg-white/10 px-4 py-2 text-sm font-medium hover:bg-white/20"
             >
               <RotateCcw size={16} />
@@ -812,7 +963,8 @@ export function CalculatorClient() {
           </div>
         </header>
 
-        <div className="space-y-6">
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.55fr)_minmax(360px,0.85fr)] xl:items-start">
+          <div className="space-y-6">
           <Section
             number={1}
             title="楼板基础参数"
@@ -954,6 +1106,9 @@ export function CalculatorClient() {
                 onAnchorChange={(roomId, endpoint, rule) =>
                   updateRoomAnchor(roomId, "bottom", "x", endpoint, rule)
                 }
+                onRestoreAuto={(roomId, endpoint) =>
+                  restoreRoomAnchor(roomId, "bottom", "x", endpoint)
+                }
               />
               <BarSettingsCard
                 title="地筋 Y向"
@@ -964,6 +1119,9 @@ export function CalculatorClient() {
                 onChange={(settings) => updateBar("bottom", "y", settings)}
                 onAnchorChange={(roomId, endpoint, rule) =>
                   updateRoomAnchor(roomId, "bottom", "y", endpoint, rule)
+                }
+                onRestoreAuto={(roomId, endpoint) =>
+                  restoreRoomAnchor(roomId, "bottom", "y", endpoint)
                 }
               />
             </div>
@@ -987,6 +1145,9 @@ export function CalculatorClient() {
                 onAnchorChange={(roomId, endpoint, rule) =>
                   updateRoomAnchor(roomId, "top", "x", endpoint, rule)
                 }
+                onRestoreAuto={(roomId, endpoint) =>
+                  restoreRoomAnchor(roomId, "top", "x", endpoint)
+                }
               />
               <BarSettingsCard
                 title="面筋 Y向"
@@ -999,6 +1160,9 @@ export function CalculatorClient() {
                 onExtraModeChange={(mode) => updateTopExtraMode("y", mode)}
                 onAnchorChange={(roomId, endpoint, rule) =>
                   updateRoomAnchor(roomId, "top", "y", endpoint, rule)
+                }
+                onRestoreAuto={(roomId, endpoint) =>
+                  restoreRoomAnchor(roomId, "top", "y", endpoint)
                 }
               />
             </div>
@@ -1013,6 +1177,7 @@ export function CalculatorClient() {
                   <input
                     type="checkbox"
                     checked={state.through.enabled}
+                    disabled={state.slab.arrangement === "single"}
                     onChange={(event) =>
                       setState((current) => ({
                         ...current,
@@ -1027,7 +1192,7 @@ export function CalculatorClient() {
                         },
                       }))
                     }
-                    className="h-5 w-5 rounded border-slate-300 text-blue-600"
+                    className="h-5 w-5 rounded border-slate-300 text-blue-600 disabled:opacity-40"
                   />
                   启用通墙
                 </label>
@@ -1035,22 +1200,13 @@ export function CalculatorClient() {
 
               {state.through.enabled && (
                 <div className="mt-4">
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    {(["x", "y"] as const).map((direction) => (
-                      <button
-                        key={direction}
-                        type="button"
-                        onClick={() =>
-                          setState((current) => ({
-                            ...current,
-                            through: { ...current.through, direction },
-                          }))
-                        }
-                        className={`rounded-lg border px-4 py-2 text-sm font-medium ${state.through.direction === direction ? "border-amber-600 bg-amber-600 text-white" : "border-amber-300 bg-white text-slate-700"}`}
-                      >
-                        {direction === "x" ? "X向通墙（西→东）" : "Y向通墙（南→北）"}
-                      </button>
-                    ))}
+                  <div className="rounded-lg border border-amber-300 bg-white px-4 py-3 text-sm text-slate-700">
+                    通墙方向跟随房间排列：
+                    <strong className="ml-1 text-amber-800">
+                      {state.slab.arrangement === "x"
+                        ? "X向（西→东）"
+                        : "Y向（南→北）"}
+                    </strong>
                   </div>
                   <div className="mt-3">
                     <TopExtraModeSelector
@@ -1078,7 +1234,23 @@ export function CalculatorClient() {
                       onChange={(startAnchor) =>
                         setState((current) => ({
                           ...current,
-                          through: { ...current.through, startAnchor },
+                          through: {
+                            ...current.through,
+                            startAnchor: { ...startAnchor, origin: "user" },
+                          },
+                        }))
+                      }
+                      onRestoreAuto={() =>
+                        setState((current) => ({
+                          ...current,
+                          through: {
+                            ...current.through,
+                            startAnchor: {
+                              source: "outer-wall",
+                              manualValue: 0,
+                              origin: "auto",
+                            },
+                          },
                         }))
                       }
                     />
@@ -1094,7 +1266,23 @@ export function CalculatorClient() {
                       onChange={(endAnchor) =>
                         setState((current) => ({
                           ...current,
-                          through: { ...current.through, endAnchor },
+                          through: {
+                            ...current.through,
+                            endAnchor: { ...endAnchor, origin: "user" },
+                          },
+                        }))
+                      }
+                      onRestoreAuto={() =>
+                        setState((current) => ({
+                          ...current,
+                          through: {
+                            ...current.through,
+                            endAnchor: {
+                              source: "outer-wall",
+                              manualValue: 0,
+                              origin: "auto",
+                            },
+                          },
                         }))
                       }
                     />
@@ -1104,62 +1292,74 @@ export function CalculatorClient() {
             </div>
           </Section>
 
-          <Section
-            number={4}
-            title="计算结果和示意图"
-            description="地筋始终按房间分别计算；通墙启用且校验通过时，通墙方向面筋直接替换普通面筋。"
-          >
-            {calculation.errors.length > 0 && (
-              <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
-                <div className="mb-2 flex items-center gap-2 font-semibold">
-                  <AlertCircle size={17} /> 当前结果无效，请修正以下输入
-                </div>
-                <ul className="list-disc space-y-1 pl-5">
+          </div>
+
+          <aside className="space-y-4 xl:sticky xl:top-20">
+            <section data-testid="validation-status" className={`rounded-2xl border p-4 shadow-sm ${calculation.isValid ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50"}`}>
+              <div className="flex items-center gap-2 font-semibold">
+                <AlertCircle size={17} />
+                {calculation.isValid ? "校验通过" : "输入无效"}
+              </div>
+              {!calculation.isValid && (
+                <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-rose-800">
                   {calculation.errors.map((error) => (
                     <li key={error}>{error}</li>
                   ))}
                 </ul>
-                {state.through.enabled && (
-                  <p className="mt-2 text-xs">通墙校验失败时暂按各房间普通面筋显示，避免使用错误的连续区结果。</p>
-                )}
-              </div>
-            )}
+              )}
+            </section>
 
-            {calculation.throughWall && (
-              <div className="mb-4 grid gap-3 sm:grid-cols-3">
-                <div className="rounded-lg bg-blue-50 p-3 text-sm text-blue-900">
-                  净尺寸合计 <strong>{calculation.throughWall.netSpanTotal}mm</strong>
-                </div>
-                <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
-                  中间墙合计 <strong>{calculation.throughWall.intermediateWallTotal}mm</strong>
-                </div>
-                <div className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-900">
-                  通墙方向 <strong>{calculation.throughWall.direction.toUpperCase()}向</strong>
-                </div>
-              </div>
-            )}
-
-            <ResultsTable results={calculation.results} />
-            <div className={`mt-4 rounded-xl p-5 text-white ${calculation.isValid ? "bg-slate-900" : "bg-rose-800"}`}>
-              <p className="text-sm text-slate-300">全部钢筋合计重量</p>
+            <section data-testid="total-weight" className={`rounded-2xl p-5 text-white shadow-sm ${calculation.isValid ? "bg-slate-900" : "bg-rose-800"}`}>
+              <p className="text-sm text-slate-200">全部钢筋合计重量</p>
               <p className="mt-1 text-3xl font-bold">
-                {calculation.isValid ? `${calculation.totalWeightKg.toFixed(2)} kg` : "--"}
+                {calculation.totalWeightKg === null
+                  ? "--"
+                  : `${calculation.totalWeightKg.toFixed(2)} kg`}
               </p>
               {!calculation.isValid && (
-                <p className="mt-2 text-sm text-rose-100">输入无效，安全预览不能作为工程计算结果。</p>
+                <p className="mt-2 text-sm text-rose-100">不生成长度、重量或普通面筋替代结果。</p>
               )}
-            </div>
+            </section>
 
-            <div className="mt-5">
-              <SlabDiagram state={state} calculation={calculation} />
-            </div>
+            {calculation.throughWall && (
+              <section className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950 shadow-sm">
+                <h3 className="font-semibold">通墙关键公式</h3>
+                <div className="mt-3 space-y-2 text-xs leading-5">
+                  <p>净尺寸：{calculation.throughWall.netSpanTotal}mm</p>
+                  <p>中间墙：{calculation.throughWall.intermediateWallTotal}mm</p>
+                  <p>
+                    单根长度：{calculation.throughWall.throughBar.netRunSpanMm} + {calculation.throughWall.intermediateWallTotal} + {calculation.throughWall.throughBar.startAnchor} + {calculation.throughWall.throughBar.endAnchor} = {(calculation.throughWall.throughBar.singleLengthM * 1000).toFixed(0)}mm
+                  </p>
+                  <p>
+                    垂直筋根数：ceil({calculation.throughWall.netSpanTotal} / {calculation.throughWall.perpendicularBar.spacing}) = {calculation.throughWall.perpendicularBar.count}根
+                  </p>
+                </div>
+              </section>
+            )}
 
+            <SlabDiagram state={state} calculation={calculation} />
+          </aside>
+        </div>
+
+        <div className="mt-6">
+          <Section
+            number={4}
+            title="详细计算结果"
+            description="结果表、总重量和示意图均读取同一份已校验计算结果。"
+          >
+            {calculation.isValid ? (
+              <ResultsTable results={calculation.results} state={state} />
+            ) : (
+              <div className="rounded-xl border border-dashed border-rose-300 bg-rose-50 p-6 text-center text-sm font-medium text-rose-700">
+                输入无效，当前不显示任何长度、根数或重量结果。
+              </div>
+            )}
             <div className="mt-4 grid gap-3 text-xs leading-5 text-slate-600 md:grid-cols-2">
               <p className="rounded-lg bg-white p-3">
                 X向沿西→东运行，根数按南北净尺寸；Y向沿南→北运行，根数按东西净尺寸。保护层算法仅在整个计算宽度最外侧扣减两次保护层。
               </p>
               <p className="rounded-lg bg-white p-3">
-                中间墙厚只进入通墙方向面筋的单根运行长度，不进入通墙方向或垂直方向的任何根数计算，也不在中间墙位置增加锚固。
+                中间墙厚只进入通墙方向面筋的单根运行长度，不进入任何根数计算，也不在中间墙位置增加锚固。
               </p>
             </div>
           </Section>

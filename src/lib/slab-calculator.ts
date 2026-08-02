@@ -1,6 +1,7 @@
 export type CountMode = "project" | "cover";
 export type RoomArrangement = "single" | "x" | "y";
 export type AnchorSource = "inner-wall" | "outer-wall" | "manual";
+export type AnchorOrigin = "auto" | "user";
 export type BarDirection = "x" | "y";
 export type BarLayer = "bottom" | "top";
 export type ThroughDirection = "none" | "x" | "y";
@@ -9,6 +10,7 @@ export type TopExtraMode = "start" | "end" | "both";
 export type AnchorRule = {
   source: AnchorSource;
   manualValue: number;
+  origin: AnchorOrigin;
 };
 
 export type DirectionAnchorRules = {
@@ -75,6 +77,8 @@ export type SlabCalculatorState = {
 
 export type BarResult = {
   id: string;
+  scopeId: string;
+  roomId?: string;
   scopeName: string;
   layer: BarLayer;
   direction: BarDirection;
@@ -93,6 +97,10 @@ export type BarResult = {
   topExtraValue: number;
   startExtraApplied: boolean;
   endExtraApplied: boolean;
+  netRunSpanMm: number;
+  intermediateWallMm: number;
+  calculationWidthMm: number;
+  spacing: number;
 };
 
 export type ThroughWallResult = {
@@ -106,18 +114,25 @@ export type ThroughWallResult = {
 
 export type SlabCalculation = {
   results: BarResult[];
-  totalWeightKg: number;
+  totalWeightKg: number | null;
   throughWall: ThroughWallResult | null;
   errors: string[];
   isValid: boolean;
 };
 
-function wallAnchor(source: "inner-wall" | "outer-wall"): AnchorRule {
-  return { source, manualValue: 0 };
+function wallAnchor(
+  source: "inner-wall" | "outer-wall",
+  origin: AnchorOrigin = "auto",
+): AnchorRule {
+  return { source, manualValue: 0, origin };
 }
 
 function copyAnchor(rule: AnchorRule): AnchorRule {
-  return { source: rule.source, manualValue: rule.manualValue };
+  return {
+    source: rule.source,
+    manualValue: rule.manualValue,
+    origin: rule.origin,
+  };
 }
 
 function directionRules(
@@ -155,11 +170,44 @@ export function createDefaultRoomAnchorRules(
   };
 }
 
-function keepManualOrDefault(
-  current: AnchorRule | undefined,
+type LegacyAnchorRule = Omit<AnchorRule, "origin"> & {
+  origin?: string;
+};
+
+function normalizeAnchorRule(
+  current: LegacyAnchorRule | undefined,
   fallback: AnchorRule,
 ): AnchorRule {
-  return current?.source === "manual" ? copyAnchor(current) : copyAnchor(fallback);
+  if (!current) return copyAnchor(fallback);
+  if (!(["inner-wall", "outer-wall", "manual"] as string[]).includes(current.source)) {
+    return {
+      source: current.source,
+      manualValue: current.manualValue,
+      origin: (current.origin ?? "user") as AnchorOrigin,
+    };
+  }
+  if (
+    current.origin !== undefined &&
+    !(["auto", "user"] as string[]).includes(current.origin)
+  ) {
+    return {
+      source: current.source,
+      manualValue: current.manualValue,
+      origin: current.origin as AnchorOrigin,
+    };
+  }
+  const origin =
+    current.origin === "auto" || current.origin === "user"
+      ? current.origin
+      : current.source === "manual" || current.source !== fallback.source
+        ? "user"
+        : "auto";
+  if (origin === "auto") return copyAnchor(fallback);
+  return {
+    source: current.source,
+    manualValue: current.manualValue,
+    origin: "user",
+  };
 }
 
 export function synchronizeRoomAnchors(
@@ -170,14 +218,51 @@ export function synchronizeRoomAnchors(
     const defaults = createDefaultRoomAnchorRules(arrangement, index, rooms.length);
     const anchors = room.anchors;
     const synchronized = (layer: BarLayer, direction: BarDirection): DirectionAnchorRules => ({
-      start: keepManualOrDefault(anchors?.[layer]?.[direction]?.start, defaults[layer][direction].start),
-      end: keepManualOrDefault(anchors?.[layer]?.[direction]?.end, defaults[layer][direction].end),
+      start: normalizeAnchorRule(
+        anchors?.[layer]?.[direction]?.start,
+        defaults[layer][direction].start,
+      ),
+      end: normalizeAnchorRule(
+        anchors?.[layer]?.[direction]?.end,
+        defaults[layer][direction].end,
+      ),
     });
     return {
       ...room,
       anchors: {
         bottom: { x: synchronized("bottom", "x"), y: synchronized("bottom", "y") },
         top: { x: synchronized("top", "x"), y: synchronized("top", "y") },
+      },
+    };
+  });
+}
+
+export function restoreRoomAnchorToAuto(
+  rooms: SlabRoom[],
+  arrangement: RoomArrangement,
+  roomId: string,
+  layer: BarLayer,
+  direction: BarDirection,
+  endpoint: "start" | "end",
+): SlabRoom[] {
+  return rooms.map((room, index) => {
+    if (room.id !== roomId) return room;
+    const fallback = createDefaultRoomAnchorRules(
+      arrangement,
+      index,
+      rooms.length,
+    )[layer][direction][endpoint];
+    return {
+      ...room,
+      anchors: {
+        ...room.anchors,
+        [layer]: {
+          ...room.anchors[layer],
+          [direction]: {
+            ...room.anchors[layer][direction],
+            [endpoint]: copyAnchor(fallback),
+          },
+        },
       },
     };
   });
@@ -222,17 +307,47 @@ export function cloneDefaultSlabCalculatorState(): SlabCalculatorState {
   return structuredClone(DEFAULT_SLAB_CALCULATOR_STATE);
 }
 
-function safeNonNegative(value: number): number {
-  return Number.isFinite(value) ? Math.max(value, 0) : 0;
+export function normalizeSlabCalculatorState(
+  state: SlabCalculatorState,
+): SlabCalculatorState {
+  const arrangement = state.slab.arrangement;
+  const rooms = synchronizeRoomAnchors(
+    state.slab.rooms.map((room) => ({ ...room })),
+    arrangement,
+  );
+  return {
+    ...state,
+    slab: { ...state.slab, rooms },
+    bottom: {
+      x: { ...state.bottom.x },
+      y: { ...state.bottom.y },
+    },
+    top: {
+      x: { ...state.top.x, extraMode: state.top.x.extraMode ?? "both" },
+      y: { ...state.top.y, extraMode: state.top.y.extraMode ?? "both" },
+    },
+    through: {
+      ...state.through,
+      startAnchor: normalizeAnchorRule(
+        state.through.startAnchor,
+        wallAnchor("outer-wall"),
+      ),
+      endAnchor: normalizeAnchorRule(
+        state.through.endAnchor,
+        wallAnchor("outer-wall"),
+      ),
+      extraMode: state.through.extraMode ?? "both",
+    },
+  };
 }
 
 export function resolveBottomAnchor(
   rule: AnchorRule,
   slab: SlabBaseState,
 ): number {
-  if (rule.source === "inner-wall") return safeNonNegative(slab.innerWallThickness);
-  if (rule.source === "outer-wall") return safeNonNegative(slab.outerWallThickness);
-  return safeNonNegative(rule.manualValue);
+  if (rule.source === "inner-wall") return slab.innerWallThickness;
+  if (rule.source === "outer-wall") return slab.outerWallThickness;
+  return rule.manualValue;
 }
 
 export function resolveTopAnchor(
@@ -240,14 +355,14 @@ export function resolveTopAnchor(
   slab: SlabBaseState,
   applyExtra = true,
 ): number {
-  const extra = applyExtra ? safeNonNegative(slab.topAnchorExtra) : 0;
+  const extra = applyExtra ? slab.topAnchorExtra : 0;
   if (rule.source === "inner-wall") {
-    return safeNonNegative(slab.innerWallThickness) + extra;
+    return slab.innerWallThickness + extra;
   }
   if (rule.source === "outer-wall") {
-    return safeNonNegative(slab.outerWallThickness) + extra;
+    return slab.outerWallThickness + extra;
   }
-  return safeNonNegative(rule.manualValue);
+  return rule.manualValue;
 }
 
 export function shouldApplyTopExtra(
@@ -272,7 +387,10 @@ export function countBars(
     return 0;
   }
   if (mode === "cover") {
-    const effectiveWidth = Math.max(perpendicularSpan - 2 * safeNonNegative(cover), 0);
+    const effectiveWidth = Math.max(
+      perpendicularSpan - 2 * (Number.isFinite(cover) ? Math.max(cover, 0) : 0),
+      0,
+    );
     return Math.ceil(effectiveWidth / spacing) + 1;
   }
   return Math.ceil(perpendicularSpan / spacing);
@@ -285,12 +403,15 @@ export function theoreticalUnitWeight(diameter: number): number {
 
 type CreateBarInput = {
   id: string;
+  scopeId: string;
+  roomId?: string;
   scopeName: string;
   layer: BarLayer;
   direction: BarDirection;
   throughWall: boolean;
   settings: BarSettings;
   runSpan: number;
+  intermediateWallMm?: number;
   perpendicularSpan: number;
   slab: SlabBaseState;
   anchorRules: DirectionAnchorRules;
@@ -327,18 +448,21 @@ function createBarResult(input: CreateBarInput): BarResult {
     input.slab.cover,
     input.slab.countMode,
   );
-  const lengthMm = safeNonNegative(input.runSpan) + startAnchor + endAnchor;
+  const intermediateWallMm = input.intermediateWallMm ?? 0;
+  const lengthMm = input.runSpan + intermediateWallMm + startAnchor + endAnchor;
   const singleLengthM = lengthMm / 1000;
   const totalLengthM = count * singleLengthM;
   const unitWeightKgM = theoreticalUnitWeight(input.settings.diameter);
 
   return {
     id: input.id,
+    scopeId: input.scopeId,
+    roomId: input.roomId,
     scopeName: input.scopeName,
     layer: input.layer,
     direction: input.direction,
     throughWall: input.throughWall,
-    diameter: safeNonNegative(input.settings.diameter),
+    diameter: input.settings.diameter,
     count,
     singleLengthM,
     totalLengthM,
@@ -349,9 +473,13 @@ function createBarResult(input: CreateBarInput): BarResult {
     startAnchor,
     endAnchor,
     topExtraMode,
-    topExtraValue: input.layer === "top" ? safeNonNegative(input.slab.topAnchorExtra) : 0,
+    topExtraValue: input.layer === "top" ? input.slab.topAnchorExtra : 0,
     startExtraApplied,
     endExtraApplied,
+    netRunSpanMm: input.runSpan,
+    intermediateWallMm,
+    calculationWidthMm: input.perpendicularSpan,
+    spacing: input.settings.spacing,
   };
 }
 
@@ -365,6 +493,8 @@ export function calculateRoomBar(
 ): BarResult {
   return createBarResult({
     id: `${room.id}-${layer}-${direction}`,
+    scopeId: room.id,
+    roomId: room.id,
     scopeName: room.name,
     layer,
     direction,
@@ -382,6 +512,51 @@ function allEqual(values: number[]): boolean {
   return values.length > 0 && values.every((value) => value === values[0]);
 }
 
+function anchorRulesEquivalent(a: AnchorRule, b: AnchorRule): boolean {
+  return (
+    a.source === b.source &&
+    (a.source !== "manual" || a.manualValue === b.manualValue)
+  );
+}
+
+export function haveConsistentPerpendicularTopAnchors(
+  state: SlabCalculatorState,
+  throughDirection: Exclude<ThroughDirection, "none">,
+): boolean {
+  const perpendicularDirection: BarDirection =
+    throughDirection === "x" ? "y" : "x";
+  const mode = state.top[perpendicularDirection].extraMode ?? "both";
+  const first = state.slab.rooms[0]?.anchors.top[perpendicularDirection];
+  if (!first) return false;
+  const firstStart = resolveTopAnchor(
+    first.start,
+    state.slab,
+    shouldApplyTopExtra(mode, "start"),
+  );
+  const firstEnd = resolveTopAnchor(
+    first.end,
+    state.slab,
+    shouldApplyTopExtra(mode, "end"),
+  );
+  return state.slab.rooms.every((room) => {
+    const rules = room.anchors.top[perpendicularDirection];
+    return (
+      anchorRulesEquivalent(rules.start, first.start) &&
+      anchorRulesEquivalent(rules.end, first.end) &&
+      resolveTopAnchor(
+        rules.start,
+        state.slab,
+        shouldApplyTopExtra(mode, "start"),
+      ) === firstStart &&
+      resolveTopAnchor(
+        rules.end,
+        state.slab,
+        shouldApplyTopExtra(mode, "end"),
+      ) === firstEnd
+    );
+  });
+}
+
 export function calculateTopThroughWall(
   state: SlabCalculatorState,
 ): ThroughWallResult | null {
@@ -393,13 +568,14 @@ export function calculateTopThroughWall(
   const isX = direction === "x";
   const perpendicularSpans = slab.rooms.map((room) => (isX ? room.spanY : room.spanX));
   if (!allEqual(perpendicularSpans)) return null;
+  if (!haveConsistentPerpendicularTopAnchors(state, direction)) return null;
 
   const netSpanTotal = slab.rooms.reduce(
     (sum, room) => sum + (isX ? room.spanX : room.spanY),
     0,
   );
   const intermediateWallTotal =
-    (slab.rooms.length - 1) * safeNonNegative(slab.innerWallThickness);
+    (slab.rooms.length - 1) * slab.innerWallThickness;
   const commonPerpendicularSpan = perpendicularSpans[0];
   const throughSettings = isX ? top.x : top.y;
   const perpendicularDirection: BarDirection = isX ? "y" : "x";
@@ -409,12 +585,14 @@ export function calculateTopThroughWall(
 
   const throughBar = createBarResult({
     id: `through-top-${direction}`,
+    scopeId: `through-${direction}`,
     scopeName,
     layer: "top",
     direction,
     throughWall: true,
     settings: throughSettings,
-    runSpan: netSpanTotal + intermediateWallTotal,
+    runSpan: netSpanTotal,
+    intermediateWallMm: intermediateWallTotal,
     perpendicularSpan: commonPerpendicularSpan,
     slab,
     anchorRules: { start: through.startAnchor, end: through.endAnchor },
@@ -422,6 +600,7 @@ export function calculateTopThroughWall(
   });
   const perpendicularBar = createBarResult({
     id: `through-area-top-${perpendicularDirection}`,
+    scopeId: `through-area-${perpendicularDirection}`,
     scopeName: `${scopeName}组合区`,
     layer: "top",
     direction: perpendicularDirection,
@@ -457,13 +636,34 @@ function validateNonNegative(value: number, label: string, errors: string[]): vo
 }
 
 function validateAnchorRule(rule: AnchorRule, label: string, errors: string[]): void {
-  if (rule.source === "manual") validateNonNegative(rule.manualValue, `${label}手动锚固`, errors);
+  if (!(["inner-wall", "outer-wall", "manual"] as string[]).includes(rule.source)) {
+    errors.push(`${label}锚固来源无效`);
+    return;
+  }
+  if (!(["auto", "user"] as string[]).includes(rule.origin)) {
+    errors.push(`${label}锚固状态无效`);
+  }
+  if (rule.source === "manual") {
+    validatePositive(rule.manualValue, `${label}手动锚固`, errors);
+  }
 }
 
-export function validateSlabCalculator(state: SlabCalculatorState): string[] {
+export function validateSlabCalculator(input: SlabCalculatorState): string[] {
+  const state = normalizeSlabCalculatorState(input);
   const errors: string[] = [];
   const { slab } = state;
+  if (!(["single", "x", "y"] as string[]).includes(slab.arrangement)) {
+    errors.push("房间排列方向无效");
+  }
+  if (!(["project", "cover"] as string[]).includes(slab.countMode)) {
+    errors.push("根数算法无效");
+  }
   if (slab.rooms.length === 0) errors.push("至少需要一个房间");
+
+  const roomIds = slab.rooms.map((room) => room.id);
+  if (new Set(roomIds).size !== roomIds.length) {
+    errors.push("房间ID必须唯一");
+  }
 
   slab.rooms.forEach((room, index) => {
     const name = room.name.trim() || `房间${index + 1}`;
@@ -491,14 +691,49 @@ export function validateSlabCalculator(state: SlabCalculatorState): string[] {
     });
   });
 
+  (["x", "y"] as const).forEach((direction) => {
+    if (
+      !(["start", "end", "both"] as string[]).includes(
+        state.top[direction].extraMode,
+      )
+    ) {
+      errors.push(`面筋${labelDirection(direction)}增加位置无效`);
+    }
+  });
+  if (!(["none", "x", "y"] as string[]).includes(state.through.direction)) {
+    errors.push("通墙方向无效");
+  }
+  if (
+    !(["start", "end", "both"] as string[]).includes(
+      state.through.extraMode,
+    )
+  ) {
+    errors.push("通墙面筋增加位置无效");
+  }
+
   if (slab.arrangement !== "single" && slab.rooms.length < 2) {
     errors.push("多房间排列至少需要两个房间");
+  }
+  if (slab.arrangement === "single" && slab.rooms.length !== 1) {
+    errors.push("单房间模式只能保留一个房间");
   }
   if (slab.arrangement === "x" && !allEqual(slab.rooms.map((room) => room.spanY))) {
     errors.push("房间垂直方向尺寸不一致，需要拆分钢筋连续区");
   }
   if (slab.arrangement === "y" && !allEqual(slab.rooms.map((room) => room.spanX))) {
     errors.push("房间垂直方向尺寸不一致，需要拆分钢筋连续区");
+  }
+
+  if (slab.countMode === "cover" && Number.isFinite(slab.cover) && slab.cover >= 0) {
+    slab.rooms.forEach((room, index) => {
+      const name = room.name.trim() || `房间${index + 1}`;
+      if (Number.isFinite(room.spanX) && room.spanX > 0 && room.spanX <= 2 * slab.cover) {
+        errors.push(`${name}东西向计算宽度必须大于两倍保护层`);
+      }
+      if (Number.isFinite(room.spanY) && room.spanY > 0 && room.spanY <= 2 * slab.cover) {
+        errors.push(`${name}南北向计算宽度必须大于两倍保护层`);
+      }
+    });
   }
 
   if (state.through.enabled) {
@@ -513,19 +748,56 @@ export function validateSlabCalculator(state: SlabCalculatorState): string[] {
       }
       validateAnchorRule(state.through.startAnchor, "通墙路径起点", errors);
       validateAnchorRule(state.through.endAnchor, "通墙路径终点", errors);
+      if (
+        slab.arrangement === state.through.direction &&
+        slab.rooms.length >= 2 &&
+        (!allEqual(
+          slab.rooms.map((room) =>
+            state.through.direction === "x" ? room.spanY : room.spanX,
+          ),
+        ) ||
+          !haveConsistentPerpendicularTopAnchors(
+            state,
+            state.through.direction,
+          ))
+      ) {
+        errors.push(
+          "通墙组合区垂直方向尺寸或锚固不一致，请统一设置或拆分连续区。",
+        );
+      }
     }
   }
 
   return [...new Set(errors)];
 }
 
-export function calculateSlabResults(state: SlabCalculatorState): SlabCalculation {
+export function calculateSlabResults(input: SlabCalculatorState): SlabCalculation {
+  const state = normalizeSlabCalculatorState(input);
   const errors = validateSlabCalculator(state);
+  if (errors.length > 0) {
+    return {
+      results: [],
+      totalWeightKg: null,
+      throughWall: null,
+      errors,
+      isValid: false,
+    };
+  }
+
   const bottomResults = state.slab.rooms.flatMap((room) => [
     calculateRoomBar(room, "bottom", "x", state.bottom.x, state.slab),
     calculateRoomBar(room, "bottom", "y", state.bottom.y, state.slab),
   ]);
-  const throughWall = errors.length === 0 ? calculateTopThroughWall(state) : null;
+  const throughWall = calculateTopThroughWall(state);
+  if (state.through.enabled && !throughWall) {
+    return {
+      results: [],
+      totalWeightKg: null,
+      throughWall: null,
+      errors: ["通墙组合区无法形成有效计算结果，请检查房间和锚固设置。"],
+      isValid: false,
+    };
+  }
   const topResults = throughWall
     ? [throughWall.throughBar, throughWall.perpendicularBar]
     : state.slab.rooms.flatMap((room) => [
@@ -552,5 +824,5 @@ export function calculateSlabResults(state: SlabCalculatorState): SlabCalculatio
     0,
   );
 
-  return { results, totalWeightKg, throughWall, errors, isValid: errors.length === 0 };
+  return { results, totalWeightKg, throughWall, errors: [], isValid: true };
 }

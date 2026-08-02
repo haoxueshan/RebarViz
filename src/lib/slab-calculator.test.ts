@@ -6,13 +6,25 @@ import {
   createDefaultRoomAnchorRules,
   resolveBottomAnchor,
   resolveTopAnchor,
+  restoreRoomAnchorToAuto,
   shouldApplyTopExtra,
   synchronizeRoomAnchors,
+  type AnchorOrigin,
+  type AnchorRule,
+  type AnchorSource,
   type RoomArrangement,
   type SlabCalculatorState,
   type SlabRoom,
   type TopExtraMode,
 } from "./slab-calculator";
+
+function anchor(
+  source: AnchorSource,
+  manualValue = 0,
+  origin: AnchorOrigin = "user",
+): AnchorRule {
+  return { source, manualValue, origin };
+}
 
 function stateWithRooms(
   arrangement: RoomArrangement,
@@ -38,48 +50,60 @@ function xThroughState(): SlabCalculatorState {
   ]);
   state.through.enabled = true;
   state.through.direction = "x";
-  state.through.startAnchor = { source: "outer-wall", manualValue: 0 };
-  state.through.endAnchor = { source: "outer-wall", manualValue: 0 };
+  state.through.startAnchor = anchor("outer-wall");
+  state.through.endAnchor = anchor("outer-wall");
+  return state;
+}
+
+function yThroughState(): SlabCalculatorState {
+  const state = stateWithRooms("y", [
+    [4200, 3600],
+    [4200, 3000],
+  ]);
+  state.through.enabled = true;
+  state.through.direction = "y";
+  state.through.startAnchor = anchor("outer-wall");
+  state.through.endAnchor = anchor("outer-wall");
   return state;
 }
 
 describe("锚固解析", () => {
   it("地筋内墙锚固等于内墙厚度", () => {
     const slab = cloneDefaultSlabCalculatorState().slab;
-    expect(resolveBottomAnchor({ source: "inner-wall", manualValue: 0 }, slab)).toBe(240);
+    expect(resolveBottomAnchor(anchor("inner-wall"), slab)).toBe(240);
   });
 
   it("地筋外墙锚固等于外墙厚度", () => {
     const slab = cloneDefaultSlabCalculatorState().slab;
-    expect(resolveBottomAnchor({ source: "outer-wall", manualValue: 0 }, slab)).toBe(370);
+    expect(resolveBottomAnchor(anchor("outer-wall"), slab)).toBe(370);
   });
 
   it("地筋手动锚固直接作为最终值", () => {
     const slab = cloneDefaultSlabCalculatorState().slab;
-    expect(resolveBottomAnchor({ source: "manual", manualValue: 300 }, slab)).toBe(300);
+    expect(resolveBottomAnchor(anchor("manual", 300), slab)).toBe(300);
   });
 
   it("面筋内墙锚固等于内墙厚度加增加值", () => {
     const slab = cloneDefaultSlabCalculatorState().slab;
-    expect(resolveTopAnchor({ source: "inner-wall", manualValue: 0 }, slab)).toBe(490);
+    expect(resolveTopAnchor(anchor("inner-wall"), slab)).toBe(490);
   });
 
   it("面筋外墙锚固等于外墙厚度加增加值", () => {
     const slab = cloneDefaultSlabCalculatorState().slab;
-    expect(resolveTopAnchor({ source: "outer-wall", manualValue: 0 }, slab)).toBe(620);
+    expect(resolveTopAnchor(anchor("outer-wall"), slab)).toBe(620);
   });
 
   it("面筋手动锚固不增加250mm", () => {
     const slab = cloneDefaultSlabCalculatorState().slab;
-    expect(resolveTopAnchor({ source: "manual", manualValue: 550 }, slab)).toBe(550);
+    expect(resolveTopAnchor(anchor("manual", 550), slab)).toBe(550);
   });
 
   it("增加值只影响墙体模式面筋", () => {
     const slab = cloneDefaultSlabCalculatorState().slab;
     slab.topAnchorExtra = 300;
-    expect(resolveTopAnchor({ source: "inner-wall", manualValue: 0 }, slab)).toBe(540);
-    expect(resolveTopAnchor({ source: "outer-wall", manualValue: 0 }, slab)).toBe(670);
-    expect(resolveTopAnchor({ source: "manual", manualValue: 550 }, slab)).toBe(550);
+    expect(resolveTopAnchor(anchor("inner-wall"), slab)).toBe(540);
+    expect(resolveTopAnchor(anchor("outer-wall"), slab)).toBe(670);
+    expect(resolveTopAnchor(anchor("manual", 550), slab)).toBe(550);
   });
 
   it("墙厚变化不影响手动锚固", () => {
@@ -87,8 +111,8 @@ describe("锚固解析", () => {
     slab.innerWallThickness = 300;
     slab.outerWallThickness = 420;
     slab.topAnchorExtra = 280;
-    expect(resolveBottomAnchor({ source: "manual", manualValue: 315 }, slab)).toBe(315);
-    expect(resolveTopAnchor({ source: "manual", manualValue: 565 }, slab)).toBe(565);
+    expect(resolveBottomAnchor(anchor("manual", 315), slab)).toBe(315);
+    expect(resolveTopAnchor(anchor("manual", 565), slab)).toBe(565);
   });
 });
 
@@ -149,12 +173,12 @@ describe("房间级端部规则", () => {
       [3600, 3600],
       [3000, 3600],
     ]);
-    state.slab.rooms[1].anchors.bottom.x.start = { source: "manual", manualValue: 333 };
+    state.slab.rooms[1].anchors.bottom.x.start = anchor("manual", 333);
     const reordered = synchronizeRoomAnchors(
       [state.slab.rooms[1], state.slab.rooms[0], state.slab.rooms[2]],
       "x",
     );
-    expect(reordered[0].anchors.bottom.x.start).toEqual({ source: "manual", manualValue: 333 });
+    expect(reordered[0].anchors.bottom.x.start).toEqual(anchor("manual", 333));
     expect(reordered[1].anchors.bottom.x.start.source).toBe("inner-wall");
     expect(reordered[2].anchors.bottom.x.end.source).toBe("outer-wall");
   });
@@ -332,7 +356,7 @@ describe("面筋增加值作用端", () => {
   it("手动端无论模式如何都不增加topAnchorExtra", () => {
     const state = cloneDefaultSlabCalculatorState();
     state.top.x.extraMode = "both";
-    state.slab.rooms[0].anchors.top.x.start = { source: "manual", manualValue: 550 };
+    state.slab.rooms[0].anchors.top.x.start = anchor("manual", 550);
     const result = calculateSlabResults(state).results.find(
       (bar) => bar.layer === "top" && bar.direction === "x",
     );
@@ -386,6 +410,234 @@ describe("面筋增加值作用端", () => {
   });
 });
 
+describe("锚固来源状态与拓扑同步", () => {
+  it("用户选择outer-wall后添加房间不会被覆盖", () => {
+    const state = stateWithRooms("x", [[4200, 3600]]);
+    state.slab.rooms[0].anchors.bottom.x.end = anchor("outer-wall");
+    const added: SlabRoom = {
+      id: "room-1",
+      name: "房间B",
+      spanX: 3600,
+      spanY: 3600,
+      anchors: createDefaultRoomAnchorRules("x", 1, 2),
+    };
+    const rooms = synchronizeRoomAnchors([...state.slab.rooms, added], "x");
+    expect(rooms[0].anchors.bottom.x.end).toEqual(anchor("outer-wall"));
+    expect(rooms[1].anchors.bottom.x.end).toEqual(
+      anchor("outer-wall", 0, "auto"),
+    );
+  });
+
+  it("用户选择inner-wall后调整顺序仍完整保留", () => {
+    const state = stateWithRooms("x", [
+      [4200, 3600],
+      [3600, 3600],
+      [3000, 3600],
+    ]);
+    state.slab.rooms[0].anchors.top.x.start = anchor("inner-wall");
+    const rooms = synchronizeRoomAnchors(
+      [state.slab.rooms[1], state.slab.rooms[2], state.slab.rooms[0]],
+      "x",
+    );
+    expect(rooms[2].anchors.top.x.start).toEqual(anchor("inner-wall"));
+  });
+
+  it("manual值在排序、删除和添加后保持不变", () => {
+    const state = stateWithRooms("x", [
+      [4200, 3600],
+      [3600, 3600],
+      [3000, 3600],
+    ]);
+    state.slab.rooms[1].anchors.bottom.x.end = anchor("manual", 333);
+    const added: SlabRoom = {
+      id: "room-3",
+      name: "房间D",
+      spanX: 2800,
+      spanY: 3600,
+      anchors: createDefaultRoomAnchorRules("x", 3, 4),
+    };
+    const rooms = synchronizeRoomAnchors(
+      [state.slab.rooms[1], state.slab.rooms[2], added],
+      "x",
+    );
+    expect(rooms[0].anchors.bottom.x.end).toEqual(anchor("manual", 333));
+  });
+
+  it("auto端点在房间位置改变后按首中末拓扑更新", () => {
+    const state = stateWithRooms("x", [
+      [4200, 3600],
+      [3600, 3600],
+      [3000, 3600],
+    ]);
+    const rooms = synchronizeRoomAnchors(
+      [state.slab.rooms[2], state.slab.rooms[0], state.slab.rooms[1]],
+      "x",
+    );
+    expect(rooms[0].anchors.bottom.x.start.source).toBe("outer-wall");
+    expect(rooms[0].anchors.bottom.x.end.source).toBe("inner-wall");
+    expect(rooms[1].anchors.bottom.x.start.source).toBe("inner-wall");
+    expect(rooms[1].anchors.bottom.x.end.source).toBe("inner-wall");
+    expect(rooms[2].anchors.bottom.x.end.source).toBe("outer-wall");
+    expect(rooms.flatMap((room) => [
+      room.anchors.bottom.x.start.origin,
+      room.anchors.bottom.x.end.origin,
+    ])).toEqual(["auto", "auto", "auto", "auto", "auto", "auto"]);
+  });
+
+  it("恢复自动后重新使用当前位置拓扑默认值", () => {
+    const state = stateWithRooms("x", [
+      [4200, 3600],
+      [3600, 3600],
+    ]);
+    state.slab.rooms[0].anchors.top.x.end = anchor("outer-wall");
+    const rooms = restoreRoomAnchorToAuto(
+      state.slab.rooms,
+      "x",
+      state.slab.rooms[0].id,
+      "top",
+      "x",
+      "end",
+    );
+    expect(rooms[0].anchors.top.x.end).toEqual(
+      anchor("inner-wall", 0, "auto"),
+    );
+  });
+
+  it("旧数据缺少origin时按拓扑和手动规则推断", () => {
+    const state = stateWithRooms("x", [
+      [4200, 3600],
+      [3600, 3600],
+    ]);
+    delete (state.slab.rooms[0].anchors.bottom.x.start as { origin?: AnchorOrigin }).origin;
+    state.slab.rooms[0].anchors.bottom.x.end = {
+      source: "outer-wall",
+      manualValue: 0,
+    } as AnchorRule;
+    state.slab.rooms[1].anchors.bottom.x.start = {
+      source: "manual",
+      manualValue: 321,
+    } as AnchorRule;
+    const rooms = synchronizeRoomAnchors(state.slab.rooms, "x");
+    expect(rooms[0].anchors.bottom.x.start.origin).toBe("auto");
+    expect(rooms[0].anchors.bottom.x.end.origin).toBe("user");
+    expect(rooms[1].anchors.bottom.x.start).toEqual(anchor("manual", 321));
+  });
+});
+
+describe("严格校验和结果关联", () => {
+  it("通墙垂直方向锚固不一致时不读取第一间房代替", () => {
+    const state = xThroughState();
+    state.slab.rooms[1].anchors.top.y.start = anchor("inner-wall");
+    const calculation = calculateSlabResults(state);
+    expect(calculation.isValid).toBe(false);
+    expect(calculation.errors).toContain(
+      "通墙组合区垂直方向尺寸或锚固不一致，请统一设置或拆分连续区。",
+    );
+    expect(calculation.throughWall).toBeNull();
+    expect(calculation.results).toEqual([]);
+    expect(calculation.totalWeightKg).toBeNull();
+  });
+
+  it("通墙方向错误时不退回普通面筋结果", () => {
+    const state = xThroughState();
+    state.through.direction = "y";
+    const calculation = calculateSlabResults(state);
+    expect(calculation.isValid).toBe(false);
+    expect(calculation.results).toEqual([]);
+    expect(calculation.totalWeightKg).toBeNull();
+  });
+
+  it("房间重名仍使用roomId和scopeId关联结果", () => {
+    const state = stateWithRooms("x", [
+      [4200, 3600],
+      [3600, 3600],
+    ]);
+    state.slab.rooms[0].name = "同名房间";
+    state.slab.rooms[1].name = "同名房间";
+    const results = calculateSlabResults(state).results;
+    const roomResults = results.filter((result) => result.roomId);
+    expect(new Set(roomResults.map((result) => result.roomId))).toEqual(
+      new Set(["room-0", "room-1"]),
+    );
+    expect(roomResults.every((result) => result.scopeId === result.roomId)).toBe(true);
+  });
+
+  it("房间ID重复时结果和重量均为空", () => {
+    const state = stateWithRooms("x", [
+      [4200, 3600],
+      [3600, 3600],
+    ]);
+    state.slab.rooms[1].id = state.slab.rooms[0].id;
+    const calculation = calculateSlabResults(state);
+    expect(calculation.errors).toContain("房间ID必须唯一");
+    expect(calculation.results).toEqual([]);
+    expect(calculation.totalWeightKg).toBeNull();
+  });
+
+  it("保护层占满计算宽度时结果无效", () => {
+    const state = cloneDefaultSlabCalculatorState();
+    state.slab.countMode = "cover";
+    state.slab.cover = 1800;
+    const calculation = calculateSlabResults(state);
+    expect(calculation.isValid).toBe(false);
+    expect(calculation.errors.some((error) => error.includes("必须大于两倍保护层"))).toBe(true);
+    expect(calculation.results).toEqual([]);
+    expect(calculation.totalWeightKg).toBeNull();
+  });
+
+  it("手动锚固为0时不生成工程结果", () => {
+    const state = cloneDefaultSlabCalculatorState();
+    state.slab.rooms[0].anchors.bottom.x.start = anchor("manual", 0);
+    const calculation = calculateSlabResults(state);
+    expect(calculation.isValid).toBe(false);
+    expect(calculation.results).toEqual([]);
+    expect(calculation.totalWeightKg).toBeNull();
+  });
+
+  it("非法排列、锚固来源和增加模式均被拒绝", () => {
+    const state = cloneDefaultSlabCalculatorState();
+    state.slab.arrangement = "diagonal" as RoomArrangement;
+    state.top.x.extraMode = "none" as TopExtraMode;
+    state.slab.rooms[0].anchors.bottom.x.start = {
+      ...anchor("outer-wall"),
+      source: "beam" as AnchorSource,
+    };
+    const calculation = calculateSlabResults(state);
+    expect(calculation.errors).toContain("房间排列方向无效");
+    expect(calculation.errors).toContain("面筋X向增加位置无效");
+    expect(calculation.errors.some((error) => error.includes("锚固来源无效"))).toBe(true);
+    expect(calculation.results).toEqual([]);
+    expect(calculation.totalWeightKg).toBeNull();
+  });
+
+  it("固定X向通墙样例保留39根且墙厚不进入根数", () => {
+    const calculation = calculateSlabResults(xThroughState());
+    const through = calculation.throughWall;
+    expect(through?.netSpanTotal).toBe(7800);
+    expect(through?.intermediateWallTotal).toBe(240);
+    expect(through?.throughBar.singleLengthM).toBeCloseTo(9.28, 6);
+    expect(through?.throughBar.count).toBe(18);
+    expect(through?.throughBar.totalLengthM).toBeCloseTo(167.04, 6);
+    expect(through?.throughBar.weightKg).toBeCloseTo(102.99, 2);
+    expect(through?.perpendicularBar.count).toBe(39);
+    expect(through?.perpendicularBar.count).not.toBe(41);
+    expect(through?.perpendicularBar.singleLengthM).toBeCloseTo(4.84, 6);
+    expect(through?.perpendicularBar.totalLengthM).toBeCloseTo(188.76, 6);
+    expect(through?.perpendicularBar.weightKg).toBeCloseTo(116.38, 2);
+  });
+
+  it("Y向通墙按对称规则使用净尺寸计算垂直筋根数", () => {
+    const through = calculateSlabResults(yThroughState()).throughWall;
+    expect(through?.direction).toBe("y");
+    expect(through?.netSpanTotal).toBe(6600);
+    expect(through?.intermediateWallTotal).toBe(240);
+    expect(through?.throughBar.singleLengthM).toBeCloseTo(8.08, 6);
+    expect(through?.throughBar.count).toBe(21);
+    expect(through?.perpendicularBar.count).toBe(33);
+    expect(through?.perpendicularBar.singleLengthM).toBeCloseTo(5.44, 6);
+  });
+});
+
 describe("无效输入安全性", () => {
   it("无效数字、负数和0不会产生NaN或Infinity", () => {
     const state = stateWithRooms("x", [
@@ -396,20 +648,14 @@ describe("无效输入安全性", () => {
     state.slab.cover = Number.POSITIVE_INFINITY;
     state.bottom.x.diameter = 0;
     state.top.y.spacing = 0;
-    state.slab.rooms[0].anchors.top.x.start = { source: "manual", manualValue: -1 };
+    state.slab.rooms[0].anchors.top.x.start = anchor("manual", -1);
     state.through.enabled = true;
     state.through.direction = "x";
 
     const calculation = calculateSlabResults(state);
     expect(calculation.isValid).toBe(false);
     expect(calculation.throughWall).toBeNull();
-    expect(calculation.results.length).toBeGreaterThan(0);
-    calculation.results.forEach((result) => {
-      expect(Number.isFinite(result.count)).toBe(true);
-      expect(Number.isFinite(result.singleLengthM)).toBe(true);
-      expect(Number.isFinite(result.totalLengthM)).toBe(true);
-      expect(Number.isFinite(result.weightKg)).toBe(true);
-    });
-    expect(Number.isFinite(calculation.totalWeightKg)).toBe(true);
+    expect(calculation.results).toEqual([]);
+    expect(calculation.totalWeightKg).toBeNull();
   });
 });
