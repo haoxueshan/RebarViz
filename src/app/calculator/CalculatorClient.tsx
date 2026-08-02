@@ -1,7 +1,18 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { AlertCircle, Calculator, RotateCcw, Ruler, Sigma } from 'lucide-react';
+import { useMemo, useRef, useState } from 'react';
+import {
+  AlertCircle,
+  ArrowDown,
+  ArrowUp,
+  BrickWall,
+  Calculator,
+  Plus,
+  RotateCcw,
+  Ruler,
+  Sigma,
+  Trash2,
+} from 'lucide-react';
 import {
   MAX_VISIBLE_SVG_BARS,
   calculateRebar,
@@ -17,6 +28,16 @@ import {
   type RebarInputs,
   type RebarLayer,
 } from './calculator';
+import {
+  applyThroughWallResult,
+  calculateTopThroughWall,
+  createDefaultThroughWallState,
+  type ThroughDirection,
+  type ThroughRoom,
+  type ThroughWallCalculation,
+  type ThroughWallResult,
+  type TopThroughWallState,
+} from '@/lib/top-through-wall-calculator';
 
 const X_COLOR = '#2563eb';
 const Y_COLOR = '#f97316';
@@ -151,10 +172,299 @@ function DirectionCard({
   );
 }
 
+interface ThroughWallSettingsProps {
+  throughWall: TopThroughWallState;
+  slab: CalculatorState['slab'];
+  calculation: ThroughWallCalculation;
+  onChange: (value: TopThroughWallState) => void;
+}
+
+function ThroughWallSettings({ throughWall, slab, calculation, onChange }: ThroughWallSettingsProps) {
+  const nextRoomId = useRef(3);
+  const activeDirection = throughWall.direction === 'y' ? 'y' : 'x';
+  const directionLabel = activeDirection === 'x' ? '东西向' : '南北向';
+  const perpendicularLabel = activeDirection === 'x' ? '南北向净宽' : '东西向净宽';
+
+  const updateRoom = (roomId: string, patch: Partial<ThroughRoom>) => {
+    const rooms = throughWall.rooms.map((room, index) => {
+      if (room.id !== roomId) return room;
+      const isLast = index === throughWall.rooms.length - 1;
+      return {
+        ...room,
+        ...patch,
+        wallAfter: isLast ? 0 : (patch.wallAfter ?? room.wallAfter),
+        continuousWithNext: isLast ? false : (patch.continuousWithNext ?? room.continuousWithNext),
+      };
+    });
+    onChange({ ...throughWall, rooms });
+  };
+
+  const addRoom = () => {
+    const roomNumber = nextRoomId.current;
+    nextRoomId.current += 1;
+    const direction = throughWall.direction === 'y' ? 'y' : 'x';
+    const rooms = throughWall.rooms.map((room, index) => (
+      index === throughWall.rooms.length - 1
+        ? { ...room, wallAfter: room.wallAfter || 240, continuousWithNext: true }
+        : room
+    ));
+    rooms.push({
+      id: `through-room-${roomNumber}`,
+      name: `房间${String.fromCharCode(64 + Math.min(roomNumber, 26))}`,
+      netSpan: direction === 'x' ? slab.spanX : slab.spanY,
+      perpendicularSpan: direction === 'x' ? slab.spanY : slab.spanX,
+      wallAfter: 0,
+      continuousWithNext: false,
+    });
+    onChange({ ...throughWall, rooms });
+  };
+
+  const removeRoom = (roomId: string) => {
+    if (throughWall.rooms.length <= 1) return;
+    const rooms = throughWall.rooms
+      .filter((room) => room.id !== roomId)
+      .map((room, index, allRooms) => (
+        index === allRooms.length - 1
+          ? { ...room, wallAfter: 0, continuousWithNext: false }
+          : room
+      ));
+    onChange({
+      ...throughWall,
+      rooms,
+      enabled: rooms.length >= 2 ? throughWall.enabled : false,
+      direction: rooms.length >= 2 ? throughWall.direction : 'none',
+    });
+  };
+
+  const moveRoom = (index: number, offset: -1 | 1) => {
+    const target = index + offset;
+    if (target < 0 || target >= throughWall.rooms.length) return;
+    const gaps = throughWall.rooms.slice(0, -1).map((room) => ({
+      wallAfter: room.wallAfter,
+      continuousWithNext: room.continuousWithNext,
+    }));
+    const reordered = [...throughWall.rooms];
+    [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
+    const rooms = reordered.map((room, roomIndex) => (
+      roomIndex === reordered.length - 1
+        ? { ...room, wallAfter: 0, continuousWithNext: false }
+        : { ...room, ...gaps[roomIndex] }
+    ));
+    onChange({ ...throughWall, rooms });
+  };
+
+  const toggleEnabled = () => {
+    if (!throughWall.enabled && throughWall.rooms.length < 2) return;
+    onChange({
+      ...throughWall,
+      enabled: !throughWall.enabled,
+      direction: throughWall.enabled ? 'none' : activeDirection,
+    });
+  };
+
+  const changeDirection = (direction: Exclude<ThroughDirection, 'none'>) => {
+    onChange({ ...throughWall, enabled: true, direction });
+  };
+
+  return (
+    <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+      <SectionTitle
+        number="4"
+        title="面筋通墙设置"
+        description="多个房间沿同一直线连续布置时，通墙结果直接替换对应面筋，不与原面筋重复累计。"
+      />
+
+      <div className="rounded-2xl border border-blue-100 bg-blue-50/60 p-4">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <span className="mb-2 block text-xs font-medium text-slate-600">面筋通墙</span>
+            <button
+              type="button"
+              role="switch"
+              aria-label="启用面筋通墙"
+              aria-checked={throughWall.enabled}
+              disabled={!throughWall.enabled && throughWall.rooms.length < 2}
+              onClick={toggleEnabled}
+              className="inline-flex items-center gap-3 rounded-xl disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
+            >
+              <span className={`relative h-6 w-11 rounded-full transition ${throughWall.enabled ? 'bg-blue-600' : 'bg-slate-300'}`}>
+                <span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-all ${throughWall.enabled ? 'left-6' : 'left-1'}`} />
+              </span>
+              <span className="text-sm font-medium text-slate-800">
+                {throughWall.enabled ? '已启用通墙计算' : '未启用通墙计算'}
+              </span>
+            </button>
+          </div>
+
+          <div>
+            <span className="mb-2 block text-xs font-medium text-slate-600">通墙方向</span>
+            <div className="inline-flex rounded-xl border border-slate-200 bg-white p-1">
+              {([
+                { value: 'x' as const, label: 'X向：西 → 东' },
+                { value: 'y' as const, label: 'Y向：南 → 北' },
+              ]).map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  disabled={!throughWall.enabled}
+                  aria-pressed={throughWall.enabled && throughWall.direction === option.value}
+                  onClick={() => changeDirection(option.value)}
+                  className={`rounded-lg px-3 py-2 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-45 ${
+                    throughWall.enabled && throughWall.direction === option.value
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-900">连续房间</h3>
+          <p className="mt-1 text-xs leading-5 text-slate-500">
+            每个房间填写{directionLabel}净掏空尺寸及{perpendicularLabel}；墙厚只记录在相邻房间之间。
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={addRoom}
+          className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 text-xs font-semibold text-blue-700 transition hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-200"
+        >
+          <Plus className="h-4 w-4" />新增房间
+        </button>
+      </div>
+
+      <div className="mt-4 space-y-4">
+        {throughWall.rooms.map((room, index) => {
+          const isLast = index === throughWall.rooms.length - 1;
+          return (
+            <div key={room.id} className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+              <div className="mb-4 flex flex-wrap items-center gap-2">
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white text-xs font-bold text-blue-600 shadow-sm">
+                  {index + 1}
+                </span>
+                <input
+                  aria-label={`第${index + 1}个房间名称`}
+                  value={room.name}
+                  onChange={(event) => updateRoom(room.id, { name: event.target.value })}
+                  className="h-9 min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                />
+                <div className="ml-auto flex items-center gap-1">
+                  <button
+                    type="button"
+                    aria-label={`${room.name}上移`}
+                    disabled={index === 0}
+                    onClick={() => moveRoom(index, -1)}
+                    className="rounded-lg p-2 text-slate-500 transition hover:bg-white hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-30"
+                  >
+                    <ArrowUp className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`${room.name}下移`}
+                    disabled={isLast}
+                    onClick={() => moveRoom(index, 1)}
+                    className="rounded-lg p-2 text-slate-500 transition hover:bg-white hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-30"
+                  >
+                    <ArrowDown className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`删除${room.name}`}
+                    disabled={throughWall.rooms.length <= 1}
+                    onClick={() => removeRoom(room.id)}
+                    className="rounded-lg p-2 text-slate-500 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-30"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <NumberField
+                  id={`${room.id}-net-span`}
+                  label={`${directionLabel}净掏空尺寸`}
+                  value={room.netSpan}
+                  min={1}
+                  invalid={room.netSpan <= 0}
+                  onChange={(value) => updateRoom(room.id, { netSpan: value })}
+                />
+                <NumberField
+                  id={`${room.id}-perpendicular-span`}
+                  label={perpendicularLabel}
+                  value={room.perpendicularSpan}
+                  min={1}
+                  invalid={room.perpendicularSpan <= 0}
+                  onChange={(value) => updateRoom(room.id, { perpendicularSpan: value })}
+                />
+                <NumberField
+                  id={`${room.id}-wall-after`}
+                  label={isLast ? '最后一间后墙厚（固定）' : '与下一间中间墙厚'}
+                  value={room.wallAfter}
+                  min={0}
+                  readOnly={isLast}
+                  invalid={room.wallAfter < 0 || (isLast && room.wallAfter !== 0)}
+                  onChange={(value) => updateRoom(room.id, { wallAfter: value })}
+                />
+              </div>
+
+              {!isLast && (
+                <label className="mt-3 inline-flex cursor-pointer items-center gap-2 text-xs text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={room.continuousWithNext}
+                    onChange={(event) => updateRoom(room.id, { continuousWithNext: event.target.checked })}
+                    className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  与下一间房在同一直线上连续
+                </label>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {calculation.result && (
+        <div className="mt-4 grid gap-3 rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4 text-xs text-emerald-800 sm:grid-cols-3">
+          <span>连续房间：{calculation.result.roomCount} 间</span>
+          <span>净尺寸合计：{calculation.result.netSpanTotal} mm</span>
+          <span>中间墙合计：{calculation.result.intermediateWallTotal} mm</span>
+        </div>
+      )}
+
+      {throughWall.enabled && calculation.errors.length > 0 && (
+        <p className="mt-4 flex items-start gap-2 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-700">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          通墙设置无效，结果暂按单房间面筋规则显示。请根据提示修正房间数据。
+        </p>
+      )}
+    </section>
+  );
+}
+
 interface DiagramLineProps {
   direction: RebarDirection;
   count: number;
   layer: RebarLayer;
+}
+
+function allocateVisibleCounts(counts: number[]): number[] {
+  const safeCounts = counts.map((count) => Math.max(Math.trunc(count), 0));
+  let remaining = MAX_VISIBLE_SVG_BARS;
+  let remainingGroups = safeCounts.filter((count) => count > 0).length;
+
+  return safeCounts.map((count) => {
+    if (count <= 0 || remaining <= 0 || remainingGroups <= 0) return 0;
+    const allocation = Math.min(count, Math.ceil(remaining / remainingGroups));
+    remaining -= allocation;
+    remainingGroups -= 1;
+    return allocation;
+  });
 }
 
 function DiagramLines({ direction, count, layer }: DiagramLineProps) {
@@ -181,7 +491,223 @@ function DiagramLines({ direction, count, layer }: DiagramLineProps) {
   });
 }
 
-function SlabDiagram({ state, result }: { state: CalculatorState; result: ReturnType<typeof calculateRebar> }) {
+interface ThroughRoomSegment {
+  id: string;
+  name: string;
+  start: number;
+  end: number;
+  wallEnd: number;
+  netSpan: number;
+}
+
+function buildRoomSegments(
+  rooms: ThroughRoom[],
+  result: ThroughWallResult,
+  start: number,
+  availableLength: number,
+): ThroughRoomSegment[] {
+  const pathLength = result.netSpanTotal + result.intermediateWallTotal;
+  const scale = pathLength > 0 ? availableLength / pathLength : 0;
+  let cursor = start;
+
+  return rooms.map((room) => {
+    const roomStart = cursor;
+    const roomEnd = roomStart + room.netSpan * scale;
+    const wallEnd = roomEnd + room.wallAfter * scale;
+    cursor = wallEnd;
+    return {
+      id: room.id,
+      name: room.name,
+      start: roomStart,
+      end: roomEnd,
+      wallEnd,
+      netSpan: room.netSpan,
+    };
+  });
+}
+
+function allocateRoomLineCounts(total: number, rooms: ThroughRoom[]): number[] {
+  const netTotal = rooms.reduce((sum, room) => sum + Math.max(room.netSpan, 0), 0);
+  let remaining = total;
+
+  return rooms.map((room, index) => {
+    if (index === rooms.length - 1) return remaining;
+    const count = netTotal > 0 ? Math.min(remaining, Math.round(total * room.netSpan / netTotal)) : 0;
+    remaining -= count;
+    return count;
+  });
+}
+
+function ThroughWallDiagram({
+  throughWall,
+  result,
+}: {
+  throughWall: TopThroughWallState;
+  result: ThroughWallResult;
+}) {
+  const isX = result.direction === 'x';
+  const [throughVisible, perpendicularVisible] = allocateVisibleCounts([
+    result.throughBar.count,
+    result.perpendicularBar.count,
+  ]);
+  const perpendicularRoomCounts = allocateRoomLineCounts(perpendicularVisible, throughWall.rooms);
+  const segments = buildRoomSegments(
+    throughWall.rooms,
+    result,
+    isX ? 70 : 55,
+    isX ? 380 : 280,
+  );
+  const throughColor = isX ? X_COLOR : Y_COLOR;
+  const perpendicularColor = isX ? Y_COLOR : X_COLOR;
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
+      <div className="mb-3 flex flex-wrap gap-x-5 gap-y-2 text-xs text-slate-500" aria-label="通墙图示线型">
+        <span className="inline-flex items-center gap-2">
+          <span className="w-6 border-t-2 border-dashed" style={{ borderColor: throughColor }} />
+          {isX ? 'X向' : 'Y向'}通墙面筋
+        </span>
+        <span className="inline-flex items-center gap-2">
+          <span className="w-6 border-t-2 border-dashed" style={{ borderColor: perpendicularColor }} />
+          垂直方向面筋
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <BrickWall className="h-3.5 w-3.5 text-slate-500" />中间墙
+        </span>
+      </div>
+
+      <svg
+        className="block h-auto w-full"
+        viewBox="0 0 520 390"
+        role="img"
+        aria-labelledby="through-wall-svg-title through-wall-svg-desc"
+      >
+        <title id="through-wall-svg-title">多房间面筋通墙方向图</title>
+        <desc id="through-wall-svg-desc">
+          {isX
+            ? 'X向面筋沿西向东连续穿过中间墙，Y向面筋仅在各房间内沿南北方向布置。'
+            : 'Y向面筋沿南向北连续穿过中间墙，X向面筋仅在各房间内沿东西方向布置。'}
+        </desc>
+
+        <text x="260" y="23" textAnchor="middle" className="fill-slate-700 text-[13px] font-semibold">北（+Y）</text>
+        <text x="260" y="382" textAnchor="middle" className="fill-slate-700 text-[13px] font-semibold">南（−Y）</text>
+        <text x="25" y="199" textAnchor="middle" className="fill-slate-700 text-[13px] font-semibold">西</text>
+        <text x="495" y="199" textAnchor="middle" className="fill-slate-700 text-[13px] font-semibold">东</text>
+
+        {segments.map((segment, index) => {
+          const isLast = index === segments.length - 1;
+          if (isX) {
+            return (
+              <g key={segment.id}>
+                <rect x={segment.start} y="55" width={Math.max(segment.end - segment.start, 0)} height="280" rx="4" className="fill-slate-50 stroke-slate-300" strokeWidth="1.5" />
+                <text x={(segment.start + segment.end) / 2} y="75" textAnchor="middle" className="fill-slate-500 text-[11px]">{segment.name}</text>
+                {!isLast && segment.wallEnd > segment.end && (
+                  <rect x={segment.end} y="48" width={segment.wallEnd - segment.end} height="294" className="fill-slate-400/60 stroke-slate-500" strokeWidth="1" />
+                )}
+              </g>
+            );
+          }
+          return (
+            <g key={segment.id}>
+              <rect x="75" y={segment.start} width="370" height={Math.max(segment.end - segment.start, 0)} rx="4" className="fill-slate-50 stroke-slate-300" strokeWidth="1.5" />
+              <text x="95" y={(segment.start + segment.end) / 2} dominantBaseline="middle" className="fill-slate-500 text-[11px]">{segment.name}</text>
+              {!isLast && segment.wallEnd > segment.end && (
+                <rect x="68" y={segment.end} width="384" height={segment.wallEnd - segment.end} className="fill-slate-400/60 stroke-slate-500" strokeWidth="1" />
+              )}
+            </g>
+          );
+        })}
+
+        {Array.from({ length: throughVisible }, (_, index) => {
+          const ratio = throughVisible === 1 ? 0.5 : index / (throughVisible - 1);
+          return isX ? (
+            <line
+              key={`through-x-${index}`}
+              x1="70"
+              x2="450"
+              y1={62 + ratio * 266}
+              y2={62 + ratio * 266}
+              stroke={X_COLOR}
+              strokeWidth="2"
+              strokeDasharray="7 4"
+              opacity="0.9"
+            />
+          ) : (
+            <line
+              key={`through-y-${index}`}
+              x1={82 + ratio * 356}
+              x2={82 + ratio * 356}
+              y1="55"
+              y2="335"
+              stroke={Y_COLOR}
+              strokeWidth="2"
+              strokeDasharray="7 4"
+              opacity="0.9"
+            />
+          );
+        })}
+
+        {segments.flatMap((segment, roomIndex) => {
+          const visible = perpendicularRoomCounts[roomIndex] ?? 0;
+          return Array.from({ length: visible }, (_, lineIndex) => {
+            const ratio = visible === 1 ? 0.5 : lineIndex / (visible - 1);
+            return isX ? (
+              <line
+                key={`perpendicular-y-${segment.id}-${lineIndex}`}
+                x1={segment.start + 5 + ratio * Math.max(segment.end - segment.start - 10, 0)}
+                x2={segment.start + 5 + ratio * Math.max(segment.end - segment.start - 10, 0)}
+                y1="62"
+                y2="328"
+                stroke={Y_COLOR}
+                strokeWidth="2"
+                strokeDasharray="7 4"
+                opacity="0.78"
+              />
+            ) : (
+              <line
+                key={`perpendicular-x-${segment.id}-${lineIndex}`}
+                x1="82"
+                x2="438"
+                y1={segment.start + 5 + ratio * Math.max(segment.end - segment.start - 10, 0)}
+                y2={segment.start + 5 + ratio * Math.max(segment.end - segment.start - 10, 0)}
+                stroke={X_COLOR}
+                strokeWidth="2"
+                strokeDasharray="7 4"
+                opacity="0.78"
+              />
+            );
+          });
+        })}
+      </svg>
+      <p className="mt-2 text-xs leading-5 text-slate-400">
+        图示仅表达方向和连续关系，钢筋线总计最多显示 {MAX_VISIBLE_SVG_BARS} 条；实际计算根数不截断。
+      </p>
+    </div>
+  );
+}
+
+function SlabDiagram({
+  state,
+  result,
+  throughWall,
+  throughCalculation,
+}: {
+  state: CalculatorState;
+  result: ReturnType<typeof calculateRebar>;
+  throughWall: TopThroughWallState;
+  throughCalculation: ThroughWallCalculation;
+}) {
+  if (throughCalculation.result) {
+    return <ThroughWallDiagram throughWall={throughWall} result={throughCalculation.result} />;
+  }
+
+  const [bottomYVisible, bottomXVisible, topYVisible, topXVisible] = allocateVisibleCounts([
+    result.bottomY.count,
+    result.bottomX.count,
+    result.topY.count,
+    result.topX.count,
+  ]);
+
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
       <div className="mb-3 flex flex-wrap gap-x-5 gap-y-2 text-xs text-slate-500" aria-label="图示线型">
@@ -214,10 +740,10 @@ function SlabDiagram({ state, result }: { state: CalculatorState; result: Return
         <text x="25" y="199" textAnchor="middle" className="fill-slate-700 text-[13px] font-semibold">西</text>
         <text x="495" y="199" textAnchor="middle" className="fill-slate-700 text-[13px] font-semibold">东</text>
         <rect x="65" y="45" width="390" height="300" rx="6" className="fill-slate-100 stroke-slate-300" strokeWidth="2" />
-        <DiagramLines direction="y" count={result.bottomY.count} layer="bottom" />
-        <DiagramLines direction="x" count={result.bottomX.count} layer="bottom" />
-        <DiagramLines direction="y" count={result.topY.count} layer="top" />
-        <DiagramLines direction="x" count={result.topX.count} layer="top" />
+        <DiagramLines direction="y" count={bottomYVisible} layer="bottom" />
+        <DiagramLines direction="x" count={bottomXVisible} layer="bottom" />
+        <DiagramLines direction="y" count={topYVisible} layer="top" />
+        <DiagramLines direction="x" count={topXVisible} layer="top" />
         <text x="260" y="365" textAnchor="middle" className="fill-slate-500 text-[12px]">
           东西净尺寸 X = {state.slab.spanX} mm
         </text>
@@ -232,7 +758,7 @@ function SlabDiagram({ state, result }: { state: CalculatorState; result: Return
         </text>
       </svg>
       <p className="mt-2 text-xs leading-5 text-slate-400">
-        图中每组最多显示 {MAX_VISIBLE_SVG_BARS} 条线；计算结果始终使用实际根数。
+        图中钢筋线总计最多显示 {MAX_VISIBLE_SVG_BARS} 条；计算结果始终使用实际根数。
       </p>
     </div>
   );
@@ -276,7 +802,7 @@ function ResultTable({ bars }: { bars: CalculatedBar[] }) {
                       style={{ color: isX ? X_COLOR : Y_COLOR }}
                     >
                       <span className="h-1 w-5 rounded-full" style={{ backgroundColor: isX ? X_COLOR : Y_COLOR }} />
-                      {isX ? 'X向' : 'Y向'}
+                      {isX ? 'X向' : 'Y向'}{bar.throughWall ? '通墙' : ''}
                     </span>
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-right">Φ{bar.diameter}</td>
@@ -298,9 +824,24 @@ function ResultTable({ bars }: { bars: CalculatedBar[] }) {
 
 export function CalculatorClient() {
   const [state, setState] = useState<CalculatorState>(() => createDefaultCalculatorState());
+  const [throughWall, setThroughWall] = useState<TopThroughWallState>(() => createDefaultThroughWallState());
   const topInputs = useMemo(() => resolveTopInputs(state), [state]);
-  const result = useMemo(() => calculateRebar(state), [state]);
-  const validationMessages = useMemo(() => validateCalculatorState(state), [state]);
+  const baseResult = useMemo(() => calculateRebar(state), [state]);
+  const throughCalculation = useMemo(
+    () => calculateTopThroughWall(state, throughWall),
+    [state, throughWall],
+  );
+  const result = useMemo(
+    () => applyThroughWallResult(baseResult, throughCalculation),
+    [baseResult, throughCalculation],
+  );
+  const validationMessages = useMemo(
+    () => Array.from(new Set([
+      ...validateCalculatorState(state),
+      ...throughCalculation.errors,
+    ])),
+    [state, throughCalculation.errors],
+  );
 
   const updateSlabNumber = (key: 'spanX' | 'spanY' | 'cover', value: number) => {
     setState((current) => ({
@@ -338,7 +879,10 @@ export function CalculatorClient() {
     setState((current) => setTopFollowMode(current, !current.topFollowsBottom));
   };
 
-  const reset = () => setState(createDefaultCalculatorState());
+  const reset = () => {
+    setState(createDefaultCalculatorState());
+    setThroughWall(createDefaultThroughWallState());
+  };
 
   return (
     <main className="min-h-[calc(100dvh-3.5rem)] bg-slate-100/80 px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
@@ -479,12 +1023,19 @@ export function CalculatorClient() {
                   : '当前面筋西、东、南、北四端锚固均为手动输入。'}
               </p>
             </section>
+
+            <ThroughWallSettings
+              throughWall={throughWall}
+              slab={state.slab}
+              calculation={throughCalculation}
+              onChange={setThroughWall}
+            />
           </div>
 
           <section className="self-start rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6 xl:sticky xl:top-20">
             <div className="mb-5 flex items-start justify-between gap-4">
               <div className="flex items-start gap-3">
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-xs font-bold text-blue-600">4</span>
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-xs font-bold text-blue-600">5</span>
                 <div>
                   <h2 className="text-base font-semibold text-slate-900">计算结果</h2>
                   <p className="mt-1 text-sm leading-6 text-slate-500">四项钢筋独立计算，长度与重量按要求保留小数位。</p>
@@ -510,7 +1061,12 @@ export function CalculatorClient() {
             )}
 
             <div className="grid gap-5">
-              <SlabDiagram state={state} result={result} />
+              <SlabDiagram
+                state={state}
+                result={result}
+                throughWall={throughWall}
+                throughCalculation={throughCalculation}
+              />
               <ResultTable bars={result.bars} />
             </div>
 
@@ -530,14 +1086,20 @@ export function CalculatorClient() {
               <div className="flex items-start gap-2 rounded-xl bg-slate-50 p-3">
                 <Ruler className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" />
                 <span>
-                  {state.slab.countMode === 'cover'
-                    ? '根数：ceil（（垂直方向净尺寸 − 2 × 保护层）÷ 间距）+ 1'
-                    : '根数：ceil（垂直方向净尺寸 ÷ 间距）'}
+                  {throughCalculation.result
+                    ? `通墙方向根数按共同垂直净宽 ${throughCalculation.result.perpendicularSpan} mm；垂直方向根数按房间净尺寸合计 ${throughCalculation.result.netSpanTotal} mm，均不计中间墙。`
+                    : state.slab.countMode === 'cover'
+                      ? '根数：ceil（（垂直方向净尺寸 − 2 × 保护层）÷ 间距）+ 1'
+                      : '根数：ceil（垂直方向净尺寸 ÷ 间距）'}
                 </span>
               </div>
               <div className="flex items-start gap-2 rounded-xl bg-slate-50 p-3">
                 <Calculator className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" />
-                <span>单根长度 = 运行方向净尺寸 + 第一端锚固 + 第二端锚固</span>
+                <span>
+                  {throughCalculation.result
+                    ? `通墙单根长度 = 净尺寸合计 ${throughCalculation.result.netSpanTotal} + 中间墙合计 ${throughCalculation.result.intermediateWallTotal} + 路径最外侧两端锚固。`
+                    : '单根长度 = 运行方向净尺寸 + 第一端锚固 + 第二端锚固'}
+                </span>
               </div>
             </div>
           </section>

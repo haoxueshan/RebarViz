@@ -38,6 +38,7 @@ export interface CalculatedBar {
   singleLengthM: number;
   totalLengthM: number;
   weightKg: number;
+  throughWall: boolean;
 }
 
 export interface CalculatorResult {
@@ -133,14 +134,15 @@ export function theoreticalUnitWeight(diameter: number): number {
   return finiteOrZero(Math.PI * diameter * diameter / 4 * 7850 / 1_000_000);
 }
 
-function calculateBar(
+export function calculateBarByDimensions(
   layer: RebarLayer,
   direction: RebarDirection,
   bar: RebarInputs,
   slab: SlabInputs,
+  runSize: number,
+  perpendicularSize: number,
+  throughWall = false,
 ): CalculatedBar {
-  const runSize = direction === 'x' ? slab.spanX : slab.spanY;
-  const perpendicularSize = direction === 'x' ? slab.spanY : slab.spanX;
   const count = countBars(perpendicularSize, bar.spacing, slab.cover, slab.countMode);
   const singleLengthM = finiteOrZero((runSize + bar.firstAnchor + bar.secondAnchor) / 1000);
   const totalLengthM = finiteOrZero(count * singleLengthM);
@@ -155,15 +157,16 @@ function calculateBar(
     singleLengthM,
     totalLengthM,
     weightKg,
+    throughWall,
   };
 }
 
 export function calculateRebar(state: CalculatorState): CalculatorResult {
   const top = resolveTopInputs(state);
-  const bottomX = calculateBar('bottom', 'x', state.bottom.x, state.slab);
-  const bottomY = calculateBar('bottom', 'y', state.bottom.y, state.slab);
-  const topX = calculateBar('top', 'x', top.x, state.slab);
-  const topY = calculateBar('top', 'y', top.y, state.slab);
+  const bottomX = calculateBarByDimensions('bottom', 'x', state.bottom.x, state.slab, state.slab.spanX, state.slab.spanY);
+  const bottomY = calculateBarByDimensions('bottom', 'y', state.bottom.y, state.slab, state.slab.spanY, state.slab.spanX);
+  const topX = calculateBarByDimensions('top', 'x', top.x, state.slab, state.slab.spanX, state.slab.spanY);
+  const topY = calculateBarByDimensions('top', 'y', top.y, state.slab, state.slab.spanY, state.slab.spanX);
   const bars = [bottomX, bottomY, topX, topY];
   const totalWeightKg = finiteOrZero(bars.reduce((total, bar) => total + bar.weightKg, 0));
 
