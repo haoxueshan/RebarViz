@@ -13,8 +13,10 @@ import {
 import {
   calculateSlabResults,
   cloneDefaultSlabCalculatorState,
+  createDefaultRoomAnchorRules,
   resolveBottomAnchor,
   resolveTopAnchor,
+  synchronizeRoomAnchors,
   type AnchorRule,
   type AnchorSource,
   type BarDirection,
@@ -22,6 +24,7 @@ import {
   type BarResult,
   type BarSettings,
   type RoomArrangement,
+  type SlabCalculation,
   type SlabCalculatorState,
   type SlabRoom,
 } from "@/lib/slab-calculator";
@@ -163,6 +166,11 @@ type BarSettingsCardProps = {
   settings: BarSettings;
   state: SlabCalculatorState;
   onChange: (settings: BarSettings) => void;
+  onAnchorChange: (
+    roomId: string,
+    endpoint: "start" | "end",
+    rule: AnchorRule,
+  ) => void;
 };
 
 function BarSettingsCard({
@@ -172,6 +180,7 @@ function BarSettingsCard({
   settings,
   state,
   onChange,
+  onAnchorChange,
 }: BarSettingsCardProps) {
   const [startLabel, endLabel] = endLabels(direction);
   return (
@@ -194,21 +203,32 @@ function BarSettingsCard({
           onChange={(spacing) => onChange({ ...settings, spacing })}
         />
       </div>
-      <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        <AnchorRuleField
-          label={startLabel}
-          rule={settings.startAnchor}
-          layer={layer}
-          state={state}
-          onChange={(startAnchor) => onChange({ ...settings, startAnchor })}
-        />
-        <AnchorRuleField
-          label={endLabel}
-          rule={settings.endAnchor}
-          layer={layer}
-          state={state}
-          onChange={(endAnchor) => onChange({ ...settings, endAnchor })}
-        />
+      <div className="mt-4 space-y-3">
+        <p className="text-xs font-medium text-slate-500">各房间端部锚固</p>
+        {state.slab.rooms.map((room) => {
+          const rules = room.anchors[layer][direction];
+          return (
+            <div key={room.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <p className="mb-2 text-sm font-semibold text-slate-700">{room.name}</p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <AnchorRuleField
+                  label={startLabel}
+                  rule={rules.start}
+                  layer={layer}
+                  state={state}
+                  onChange={(rule) => onAnchorChange(room.id, "start", rule)}
+                />
+                <AnchorRuleField
+                  label={endLabel}
+                  rule={rules.end}
+                  layer={layer}
+                  state={state}
+                  onChange={(rule) => onAnchorChange(room.id, "end", rule)}
+                />
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -321,8 +341,35 @@ function anchorResultLabel(source: AnchorSource, value: number): string {
 
 function ResultsTable({ results }: { results: BarResult[] }) {
   return (
-    <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-      <table className="min-w-[1120px] w-full text-left text-sm">
+    <>
+      <div className="space-y-3 sm:hidden" data-testid="mobile-result-cards">
+        {results.map((result) => (
+          <article key={result.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="font-semibold text-slate-900">{result.scopeName}</h3>
+                <p className="mt-1 text-sm text-slate-600">
+                  {result.layer === "bottom" ? "地筋" : "面筋"} · {result.direction.toUpperCase()}向
+                </p>
+              </div>
+              <span className={`rounded-full px-2 py-1 text-xs font-medium ${result.throughWall ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-600"}`}>
+                {result.throughWall ? "通墙" : "普通"}
+              </span>
+            </div>
+            <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+              <div><dt className="text-xs text-slate-500">钢筋直径</dt><dd className="mt-1 font-medium">Φ{result.diameter}</dd></div>
+              <div><dt className="text-xs text-slate-500">根数</dt><dd className="mt-1 font-medium">{result.count}根</dd></div>
+              <div><dt className="text-xs text-slate-500">单根长度</dt><dd className="mt-1 font-medium">{result.singleLengthM.toFixed(3)}m</dd></div>
+              <div><dt className="text-xs text-slate-500">总长度</dt><dd className="mt-1 font-medium">{result.totalLengthM.toFixed(3)}m</dd></div>
+              <div className="col-span-2"><dt className="text-xs text-slate-500">重量</dt><dd className="mt-1 text-lg font-semibold text-slate-900">{result.weightKg.toFixed(2)}kg</dd></div>
+              <div><dt className="text-xs text-slate-500">起点锚固</dt><dd className="mt-1 font-medium">{anchorResultLabel(result.startAnchorSource, result.startAnchor)}</dd></div>
+              <div><dt className="text-xs text-slate-500">终点锚固</dt><dd className="mt-1 font-medium">{anchorResultLabel(result.endAnchorSource, result.endAnchor)}</dd></div>
+            </dl>
+          </article>
+        ))}
+      </div>
+      <div className="hidden overflow-x-auto rounded-xl border border-slate-200 bg-white sm:block">
+        <table className="min-w-[1120px] w-full text-left text-sm">
         <thead className="bg-slate-100 text-xs uppercase tracking-wide text-slate-600">
           <tr>
             <th className="px-3 py-3">房间/路径</th>
@@ -361,18 +408,20 @@ function ResultsTable({ results }: { results: BarResult[] }) {
             </tr>
           ))}
         </tbody>
-      </table>
-    </div>
+        </table>
+      </div>
+    </>
   );
 }
 
 function SlabDiagram({
   state,
-  results,
+  calculation,
 }: {
   state: SlabCalculatorState;
-  results: BarResult[];
+  calculation: SlabCalculation;
 }) {
+  const results = calculation.results;
   const rooms = state.slab.rooms;
   const horizontal = state.slab.arrangement !== "y";
   const count = Math.max(rooms.length, 1);
@@ -383,14 +432,9 @@ function SlabDiagram({
   const frameH = 270;
   const roomW = horizontal ? (frameW - gap * (count - 1)) / count : frameW;
   const roomH = horizontal ? frameH : (frameH - gap * (count - 1)) / count;
-  const throughDirection =
-    state.through.enabled && state.through.direction !== "none"
-      ? state.through.direction
-      : null;
-  const visible: React.ReactNode[] = [];
-  const pushLine = (node: React.ReactNode) => {
-    if (visible.length < 60) visible.push(node);
-  };
+  const throughDirection = calculation.throughWall?.direction ?? null;
+  const normalLines: React.ReactNode[] = [];
+  const throughLines: React.ReactNode[] = [];
 
   rooms.forEach((room, roomIndex) => {
     const x = frameX + (horizontal ? roomIndex * (roomW + gap) : 0);
@@ -403,23 +447,23 @@ function SlabDiagram({
 
     for (let line = 1; line <= localLineCountX; line += 1) {
       const lineY = y + (line * roomH) / (localLineCountX + 1);
-      pushLine(<line key={`bx-${room.id}-${line}`} x1={x + 8} y1={lineY} x2={x + roomW - 8} y2={lineY} stroke="#2563eb" strokeWidth="2" />);
+      normalLines.push(<line key={`bx-${room.id}-${line}`} x1={x + 8} y1={lineY} x2={x + roomW - 8} y2={lineY} stroke="#2563eb" strokeWidth="2" />);
     }
     for (let line = 1; line <= localLineCountY; line += 1) {
       const lineX = x + (line * roomW) / (localLineCountY + 1);
-      pushLine(<line key={`by-${room.id}-${line}`} x1={lineX} y1={y + 8} x2={lineX} y2={y + roomH - 8} stroke="#059669" strokeWidth="2" />);
+      normalLines.push(<line key={`by-${room.id}-${line}`} x1={lineX} y1={y + 8} x2={lineX} y2={y + roomH - 8} stroke="#059669" strokeWidth="2" />);
     }
 
     if (throughDirection !== "x") {
       for (let line = 1; line <= 3; line += 1) {
         const lineY = y + (line * roomH) / 4 + 4;
-        pushLine(<line key={`tx-${room.id}-${line}`} x1={x + 8} y1={lineY} x2={x + roomW - 8} y2={lineY} stroke="#2563eb" strokeWidth="2" strokeDasharray="7 5" />);
+        normalLines.push(<line key={`tx-${room.id}-${line}`} x1={x + 8} y1={lineY} x2={x + roomW - 8} y2={lineY} stroke="#2563eb" strokeWidth="2" strokeDasharray="7 5" />);
       }
     }
     if (throughDirection !== "y") {
       for (let line = 1; line <= 3; line += 1) {
         const lineX = x + (line * roomW) / 4 + 4;
-        pushLine(<line key={`ty-${room.id}-${line}`} x1={lineX} y1={y + 8} x2={lineX} y2={y + roomH - 8} stroke="#059669" strokeWidth="2" strokeDasharray="7 5" />);
+        normalLines.push(<line key={`ty-${room.id}-${line}`} x1={lineX} y1={y + 8} x2={lineX} y2={y + roomH - 8} stroke="#059669" strokeWidth="2" strokeDasharray="7 5" />);
       }
     }
   });
@@ -427,18 +471,19 @@ function SlabDiagram({
   if (throughDirection === "x") {
     for (let line = 1; line <= 4; line += 1) {
       const y = frameY + (line * frameH) / 5;
-      pushLine(<line key={`through-x-${line}`} x1={frameX + 5} y1={y} x2={frameX + frameW - 5} y2={y} stroke="#2563eb" strokeWidth="3" strokeDasharray="8 5" />);
+      throughLines.push(<line key={`through-x-${line}`} data-through-line="x" x1={frameX + 5} y1={y} x2={frameX + frameW - 5} y2={y} stroke="#2563eb" strokeWidth="3" strokeDasharray="8 5" />);
     }
   }
   if (throughDirection === "y") {
     for (let line = 1; line <= 4; line += 1) {
       const x = frameX + (line * frameW) / 5;
-      pushLine(<line key={`through-y-${line}`} x1={x} y1={frameY + 5} x2={x} y2={frameY + frameH - 5} stroke="#059669" strokeWidth="3" strokeDasharray="8 5" />);
+      throughLines.push(<line key={`through-y-${line}`} data-through-line="y" x1={x} y1={frameY + 5} x2={x} y2={frameY + frameH - 5} stroke="#059669" strokeWidth="3" strokeDasharray="8 5" />);
     }
   }
 
-  const throughStart = state.through.startAnchor.source;
-  const throughEnd = state.through.endAnchor.source;
+  const visible = [...throughLines, ...normalLines].slice(0, 60);
+  const throughStart = calculation.throughWall?.throughBar.startAnchorSource;
+  const throughEnd = calculation.throughWall?.throughBar.endAnchorSource;
 
   return (
     <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white p-3">
@@ -455,9 +500,19 @@ function SlabDiagram({
               </text>
               {index < rooms.length - 1 && (
                 horizontal ? (
-                  <rect x={x + roomW} y={frameY} width={gap} height={frameH} fill="#cbd5e1" />
+                  <>
+                    <rect x={x + roomW} y={frameY} width={gap} height={frameH} fill="#cbd5e1" />
+                    <text x={x + roomW + gap / 2} y={frameY - 8} textAnchor="middle" fontSize="10" fill="#475569">
+                      内墙{state.slab.innerWallThickness}mm
+                    </text>
+                  </>
                 ) : (
-                  <rect x={frameX} y={y + roomH} width={frameW} height={gap} fill="#cbd5e1" />
+                  <>
+                    <rect x={frameX} y={y + roomH} width={frameW} height={gap} fill="#cbd5e1" />
+                    <text x={frameX + frameW - 4} y={y + roomH + gap - 2} textAnchor="end" fontSize="10" fill="#475569">
+                      内墙{state.slab.innerWallThickness}mm
+                    </text>
+                  </>
                 )
               )}
             </g>
@@ -467,7 +522,7 @@ function SlabDiagram({
         <text x="60" y="380" fontSize="12" fill="#2563eb">蓝色：X向</text>
         <text x="150" y="380" fontSize="12" fill="#059669">绿色：Y向</text>
         <text x="240" y="380" fontSize="12" fill="#475569">实线：地筋　虚线：面筋</text>
-        {throughDirection && (
+        {throughDirection && throughStart && throughEnd && (
           <>
             <text x="60" y="25" fontSize="12" fill="#92400e">
               通墙路径起点：{sourceLabel(throughStart)}
@@ -478,7 +533,7 @@ function SlabDiagram({
           </>
         )}
       </svg>
-      <p className="mt-2 text-xs text-slate-500">图示最多绘制60条代表线；实际根数始终使用完整计算结果。</p>
+      <p className="mt-2 text-xs text-slate-500">示意图不按比例；最多绘制60条代表线，实际根数始终使用完整计算结果。</p>
     </div>
   );
 }
@@ -491,22 +546,30 @@ export function CalculatorClient() {
 
   const setArrangement = (arrangement: RoomArrangement) => {
     setState((current) => {
-      let rooms = current.slab.rooms;
+      const fallbackRoom: SlabRoom = {
+        id: "room-a",
+        name: "房间A",
+        spanX: 4200,
+        spanY: 3600,
+        anchors: createDefaultRoomAnchorRules(arrangement, 0, 1),
+      };
+      let rooms = current.slab.rooms.length > 0 ? current.slab.rooms : [fallbackRoom];
       if (arrangement === "single") {
-        rooms = [rooms[0] ?? { id: "room-a", name: "房间A", spanX: 4200, spanY: 3600 }];
+        rooms = [rooms[0]];
       } else if (rooms.length < 2) {
-        const first = rooms[0] ?? { id: "room-a", name: "房间A", spanX: 4200, spanY: 3600 };
+        const first = rooms[0];
         rooms = [
           first,
           {
             id: `room-${Date.now()}`,
             name: "房间B",
-            spanX: 3600,
+            spanX: arrangement === "y" ? first.spanX : 3600,
             spanY: arrangement === "x" ? first.spanY : 3600,
+            anchors: createDefaultRoomAnchorRules(arrangement, 1, 2),
           },
         ];
-        if (arrangement === "y") rooms[1].spanX = first.spanX;
       }
+      rooms = synchronizeRoomAnchors(rooms, arrangement);
       return {
         ...current,
         slab: { ...current.slab, arrangement, rooms },
@@ -540,7 +603,26 @@ export function CalculatorClient() {
       const target = index + offset;
       if (target < 0 || target >= rooms.length) return current;
       [rooms[index], rooms[target]] = [rooms[target], rooms[index]];
-      return { ...current, slab: { ...current.slab, rooms } };
+      return {
+        ...current,
+        slab: {
+          ...current.slab,
+          rooms: synchronizeRoomAnchors(rooms, current.slab.arrangement),
+        },
+      };
+    });
+  };
+
+  const deleteRoom = (id: string) => {
+    setState((current) => {
+      const rooms = current.slab.rooms.filter((room) => room.id !== id);
+      return {
+        ...current,
+        slab: {
+          ...current.slab,
+          rooms: synchronizeRoomAnchors(rooms, current.slab.arrangement),
+        },
+      };
     });
   };
 
@@ -552,6 +634,38 @@ export function CalculatorClient() {
     setState((current) => ({
       ...current,
       [layer]: { ...current[layer], [direction]: settings },
+    }));
+  };
+
+  const updateRoomAnchor = (
+    roomId: string,
+    layer: BarLayer,
+    direction: BarDirection,
+    endpoint: "start" | "end",
+    rule: AnchorRule,
+  ) => {
+    setState((current) => ({
+      ...current,
+      slab: {
+        ...current.slab,
+        rooms: current.slab.rooms.map((room) =>
+          room.id === roomId
+            ? {
+                ...room,
+                anchors: {
+                  ...room.anchors,
+                  [layer]: {
+                    ...room.anchors[layer],
+                    [direction]: {
+                      ...room.anchors[layer][direction],
+                      [endpoint]: { ...rule },
+                    },
+                  },
+                },
+              }
+            : room,
+        ),
+      },
     }));
   };
 
@@ -616,15 +730,7 @@ export function CalculatorClient() {
                   arrangement={state.slab.arrangement}
                   onChange={(next) => updateRoom(room.id, next)}
                   onMove={(offset) => moveRoom(index, offset)}
-                  onDelete={() =>
-                    setState((current) => ({
-                      ...current,
-                      slab: {
-                        ...current.slab,
-                        rooms: current.slab.rooms.filter((item) => item.id !== room.id),
-                      },
-                    }))
-                  }
+                  onDelete={() => deleteRoom(room.id)}
                 />
               ))}
             </div>
@@ -640,10 +746,19 @@ export function CalculatorClient() {
                       name: `房间${String.fromCharCode(65 + nextIndex)}`,
                       spanX: current.slab.arrangement === "y" ? (first?.spanX ?? 4200) : 3600,
                       spanY: current.slab.arrangement === "x" ? (first?.spanY ?? 3600) : 3600,
+                      anchors: createDefaultRoomAnchorRules(
+                        current.slab.arrangement,
+                        nextIndex,
+                        nextIndex + 1,
+                      ),
                     };
+                    const rooms = synchronizeRoomAnchors(
+                      [...current.slab.rooms, room],
+                      current.slab.arrangement,
+                    );
                     return {
                       ...current,
-                      slab: { ...current.slab, rooms: [...current.slab.rooms, room] },
+                      slab: { ...current.slab, rooms },
                     };
                   })
                 }
@@ -725,6 +840,9 @@ export function CalculatorClient() {
                 settings={state.bottom.x}
                 state={state}
                 onChange={(settings) => updateBar("bottom", "x", settings)}
+                onAnchorChange={(roomId, endpoint, rule) =>
+                  updateRoomAnchor(roomId, "bottom", "x", endpoint, rule)
+                }
               />
               <BarSettingsCard
                 title="地筋 Y向"
@@ -733,6 +851,9 @@ export function CalculatorClient() {
                 settings={state.bottom.y}
                 state={state}
                 onChange={(settings) => updateBar("bottom", "y", settings)}
+                onAnchorChange={(roomId, endpoint, rule) =>
+                  updateRoomAnchor(roomId, "bottom", "y", endpoint, rule)
+                }
               />
             </div>
           </Section>
@@ -750,6 +871,9 @@ export function CalculatorClient() {
                 settings={state.top.x}
                 state={state}
                 onChange={(settings) => updateBar("top", "x", settings)}
+                onAnchorChange={(roomId, endpoint, rule) =>
+                  updateRoomAnchor(roomId, "top", "x", endpoint, rule)
+                }
               />
               <BarSettingsCard
                 title="面筋 Y向"
@@ -758,6 +882,9 @@ export function CalculatorClient() {
                 settings={state.top.y}
                 state={state}
                 onChange={(settings) => updateBar("top", "y", settings)}
+                onAnchorChange={(roomId, endpoint, rule) =>
+                  updateRoomAnchor(roomId, "top", "y", endpoint, rule)
+                }
               />
             </div>
 
@@ -849,7 +976,7 @@ export function CalculatorClient() {
             {calculation.errors.length > 0 && (
               <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
                 <div className="mb-2 flex items-center gap-2 font-semibold">
-                  <AlertCircle size={17} /> 请修正以下输入
+                  <AlertCircle size={17} /> 当前结果无效，请修正以下输入
                 </div>
                 <ul className="list-disc space-y-1 pl-5">
                   {calculation.errors.map((error) => (
@@ -877,13 +1004,18 @@ export function CalculatorClient() {
             )}
 
             <ResultsTable results={calculation.results} />
-            <div className="mt-4 rounded-xl bg-slate-900 p-5 text-white">
+            <div className={`mt-4 rounded-xl p-5 text-white ${calculation.isValid ? "bg-slate-900" : "bg-rose-800"}`}>
               <p className="text-sm text-slate-300">全部钢筋合计重量</p>
-              <p className="mt-1 text-3xl font-bold">{calculation.totalWeightKg.toFixed(2)} kg</p>
+              <p className="mt-1 text-3xl font-bold">
+                {calculation.isValid ? `${calculation.totalWeightKg.toFixed(2)} kg` : "--"}
+              </p>
+              {!calculation.isValid && (
+                <p className="mt-2 text-sm text-rose-100">输入无效，安全预览不能作为工程计算结果。</p>
+              )}
             </div>
 
             <div className="mt-5">
-              <SlabDiagram state={state} results={calculation.results} />
+              <SlabDiagram state={state} calculation={calculation} />
             </div>
 
             <div className="mt-4 grid gap-3 text-xs leading-5 text-slate-600 md:grid-cols-2">
