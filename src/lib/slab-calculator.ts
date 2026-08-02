@@ -78,6 +78,7 @@ export type SlabCalculatorState = {
 export type BarResult = {
   id: string;
   scopeId: string;
+  scopeType: "room" | "through";
   roomId?: string;
   scopeName: string;
   layer: BarLayer;
@@ -404,6 +405,7 @@ export function theoreticalUnitWeight(diameter: number): number {
 type CreateBarInput = {
   id: string;
   scopeId: string;
+  scopeType: "room" | "through";
   roomId?: string;
   scopeName: string;
   layer: BarLayer;
@@ -457,6 +459,7 @@ function createBarResult(input: CreateBarInput): BarResult {
   return {
     id: input.id,
     scopeId: input.scopeId,
+    scopeType: input.scopeType,
     roomId: input.roomId,
     scopeName: input.scopeName,
     layer: input.layer,
@@ -494,6 +497,7 @@ export function calculateRoomBar(
   return createBarResult({
     id: `${room.id}-${layer}-${direction}`,
     scopeId: room.id,
+    scopeType: "room",
     roomId: room.id,
     scopeName: room.name,
     layer,
@@ -513,10 +517,7 @@ function allEqual(values: number[]): boolean {
 }
 
 function anchorRulesEquivalent(a: AnchorRule, b: AnchorRule): boolean {
-  return (
-    a.source === b.source &&
-    (a.source !== "manual" || a.manualValue === b.manualValue)
-  );
+  return a.source === b.source && a.manualValue === b.manualValue;
 }
 
 export function haveConsistentPerpendicularTopAnchors(
@@ -586,6 +587,7 @@ export function calculateTopThroughWall(
   const throughBar = createBarResult({
     id: `through-top-${direction}`,
     scopeId: `through-${direction}`,
+    scopeType: "through",
     scopeName,
     layer: "top",
     direction,
@@ -601,6 +603,7 @@ export function calculateTopThroughWall(
   const perpendicularBar = createBarResult({
     id: `through-area-top-${perpendicularDirection}`,
     scopeId: `through-area-${perpendicularDirection}`,
+    scopeType: "through",
     scopeName: `${scopeName}组合区`,
     layer: "top",
     direction: perpendicularDirection,
@@ -717,13 +720,6 @@ export function validateSlabCalculator(input: SlabCalculatorState): string[] {
   if (slab.arrangement === "single" && slab.rooms.length !== 1) {
     errors.push("单房间模式只能保留一个房间");
   }
-  if (slab.arrangement === "x" && !allEqual(slab.rooms.map((room) => room.spanY))) {
-    errors.push("房间垂直方向尺寸不一致，需要拆分钢筋连续区");
-  }
-  if (slab.arrangement === "y" && !allEqual(slab.rooms.map((room) => room.spanX))) {
-    errors.push("房间垂直方向尺寸不一致，需要拆分钢筋连续区");
-  }
-
   if (slab.countMode === "cover" && Number.isFinite(slab.cover) && slab.cover >= 0) {
     slab.rooms.forEach((room, index) => {
       const name = room.name.trim() || `房间${index + 1}`;

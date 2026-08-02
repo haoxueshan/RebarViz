@@ -228,7 +228,22 @@ describe("面筋通墙回归", () => {
     inconsistent.slab.rooms[1].spanY = 3500;
     const calculation = calculateSlabResults(inconsistent);
     expect(calculation.throughWall).toBeNull();
-    expect(calculation.errors).toContain("房间垂直方向尺寸不一致，需要拆分钢筋连续区");
+    expect(calculation.errors).toContain(
+      "通墙组合区垂直方向尺寸或锚固不一致，请统一设置或拆分连续区。",
+    );
+  });
+
+  it("普通多房间允许垂直尺寸不一致", () => {
+    const state = xThroughState();
+    state.through.enabled = false;
+    state.through.direction = "none";
+    state.slab.rooms[1].spanY = 3300;
+
+    const calculation = calculateSlabResults(state);
+
+    expect(calculation.isValid).toBe(true);
+    expect(calculation.results).toHaveLength(8);
+    expect(calculation.totalWeightKg).not.toBeNull();
   });
 });
 
@@ -534,6 +549,21 @@ describe("严格校验和结果关联", () => {
       "通墙组合区垂直方向尺寸或锚固不一致，请统一设置或拆分连续区。",
     );
     expect(calculation.throughWall).toBeNull();
+    expect(calculation.results).toEqual([]);
+    expect(calculation.totalWeightKg).toBeNull();
+  });
+
+  it("通墙垂直锚固签名比较墙体端保留的手动值", () => {
+    const state = xThroughState();
+    state.slab.rooms[1].anchors.top.y.start = {
+      source: "outer-wall",
+      manualValue: 550,
+      origin: "user",
+    };
+
+    const calculation = calculateSlabResults(state);
+
+    expect(calculation.isValid).toBe(false);
     expect(calculation.results).toEqual([]);
     expect(calculation.totalWeightKg).toBeNull();
   });
