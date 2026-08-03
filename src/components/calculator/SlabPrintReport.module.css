@@ -1,0 +1,286 @@
+.report {
+  display: none;
+}
+
+@page {
+  size: A4 landscape;
+  margin: 10mm;
+}
+
+@media print {
+  :global(body > header),
+  :global(.slab-results-screen) {
+    display: none !important;
+  }
+
+  :global(html),
+  :global(body) {
+    width: auto !important;
+    min-width: 0 !important;
+    height: auto !important;
+    overflow: visible !important;
+    background: #fff !important;
+    color: #000 !important;
+  }
+
+  :global(body) {
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .report {
+    display: block !important;
+    width: 100%;
+    color: #111;
+    background: #fff;
+    font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+    font-size: 8.5pt;
+    line-height: 1.4;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .report *,
+  .report *::before,
+  .report *::after {
+    box-sizing: border-box;
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+
+  .reportHeader {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8mm;
+    padding-bottom: 3mm;
+    border-bottom: 1.5pt solid #111;
+  }
+
+  .brand {
+    margin: 0 0 1mm;
+    font-size: 10pt;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+  }
+
+  .reportHeader h1 {
+    margin: 0;
+    font-size: 20pt;
+    line-height: 1.2;
+  }
+
+  .reportMeta {
+    display: grid;
+    min-width: 82mm;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 3mm;
+    margin: 0;
+  }
+
+  .reportMeta div,
+  .parameterGrid div {
+    min-width: 0;
+  }
+
+  .reportMeta dt,
+  .parameterGrid dt {
+    color: #444;
+    font-size: 7.5pt;
+  }
+
+  .reportMeta dd,
+  .parameterGrid dd {
+    margin: 0.5mm 0 0;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+  }
+
+  .summarySection {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 3mm;
+    margin-top: 4mm;
+  }
+
+  .summaryCard {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 3mm;
+    padding: 2.5mm 3mm;
+    border: 1pt solid #333;
+    background: #f2f2f2;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .summaryCard strong {
+    font-size: 14pt;
+    white-space: nowrap;
+  }
+
+  .section {
+    margin-top: 4mm;
+  }
+
+  .section > h2 {
+    margin: 0 0 2mm;
+    padding-bottom: 1mm;
+    border-bottom: 0.75pt solid #777;
+    font-size: 11pt;
+  }
+
+  .parameterGrid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 2mm 4mm;
+    margin: 0 0 2.5mm;
+    padding: 2.5mm;
+    border: 0.75pt solid #777;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-size: 8pt;
+  }
+
+  .table thead {
+    display: table-header-group;
+  }
+
+  .table th,
+  .table td {
+    padding: 1.5mm 1.2mm;
+    border: 0.6pt solid #555;
+    vertical-align: top;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .table th {
+    background: #e8e8e8;
+    color: #111;
+    font-weight: 700;
+    text-align: left;
+  }
+
+  .table tr,
+  .subtotalRow {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .diagramSection {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .diagramSection > div {
+    max-width: 210mm;
+    margin: 0 auto;
+    overflow: visible !important;
+    border: 0.75pt solid #777 !important;
+    padding: 1.5mm !important;
+  }
+
+  .diagramSection svg {
+    display: block;
+    width: 100% !important;
+    height: auto !important;
+    max-height: 78mm;
+    overflow: visible !important;
+  }
+
+  .resultGroup {
+    margin-top: 3mm;
+  }
+
+  .groupHeading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 5mm;
+    padding: 1.5mm 2mm;
+    border: 0.75pt solid #555;
+    border-bottom: 0;
+    background: #f4f4f4;
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  .groupHeading h3 {
+    margin: 0;
+    font-size: 9pt;
+  }
+
+  .groupHeading span {
+    font-size: 7.5pt;
+    overflow-wrap: anywhere;
+  }
+
+  .detailTable {
+    font-size: 7.2pt;
+  }
+
+  .detailTable small {
+    display: block;
+    margin-top: 0.5mm;
+    color: #333;
+    font-size: 6.8pt;
+  }
+
+  .subtotalRow td {
+    background: #f0f0f0;
+    font-weight: 700;
+  }
+
+  .subtotalRow td:first-child {
+    text-align: right;
+  }
+
+  .colSequence { width: 4%; }
+  .colScope { width: 11%; }
+  .colType { width: 13%; }
+  .colSpec { width: 8%; }
+  .colCount { width: 6%; }
+  .colLength { width: 8%; }
+  .colAnchor { width: 16%; }
+  .colWeight { width: 10%; }
+
+  .notes {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .notes ul {
+    margin: 0;
+    padding-left: 5mm;
+  }
+
+  .notes li {
+    margin: 0.8mm 0;
+  }
+
+  .footer {
+    margin-top: 5mm;
+    padding-top: 2mm;
+    border-top: 0.75pt solid #777;
+    color: #333;
+    font-size: 7pt;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .footer p {
+    margin: 0.5mm 0;
+  }
+
+  .pageNumber::after {
+    content: "第 " counter(page) " 页";
+  }
+}

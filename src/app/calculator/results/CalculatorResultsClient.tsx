@@ -1,10 +1,24 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { flushSync } from "react-dom";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Calculator, ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  ArrowLeft,
+  Calculator,
+  ChevronLeft,
+  ChevronRight,
+  Printer,
+} from "lucide-react";
+import { SlabPrintReport } from "@/components/calculator/SlabPrintReport";
 import { SlabResultsDiagram } from "@/components/calculator/SlabDiagrams";
 import { countModeLabel, type BarResult, type CountMode } from "@/lib/slab-calculator";
+import {
+  formatAnchorLabel,
+  formatCountFormula,
+  formatExtraModeLabel,
+  isPrintableCalculationRecord,
+} from "@/lib/slab-calculator-report";
 import {
   DEFAULT_RESULT_UI_STATE,
   RESULT_KEY,
@@ -22,44 +36,6 @@ import {
 
 const fieldClass =
   "min-h-11 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
-
-function anchorLabel(result: BarResult, endpoint: "start" | "end") {
-  const source = endpoint === "start" ? result.startAnchorSource : result.endAnchorSource;
-  const value = endpoint === "start" ? result.startAnchor : result.endAnchor;
-  const label = source === "inner-wall" ? "内墙" : source === "outer-wall" ? "外墙" : "手动";
-  if (result.layer === "bottom" || source === "manual") {
-    return `${label}${value.toFixed(0)}mm${source === "manual" ? "（最终值）" : ""}`;
-  }
-  const applied = endpoint === "start" ? result.startExtraApplied : result.endExtraApplied;
-  return `${label}${value.toFixed(0)}mm（${applied ? `已增加${result.topExtraValue.toFixed(0)}mm` : "未增加"}）`;
-}
-
-function extraModeLabel(result: BarResult) {
-  if (result.layer === "bottom" || !result.topExtraMode) return "不适用";
-  if (result.topExtraMode === "both") return "两端增加";
-  const start = result.direction === "x" ? "西端" : "南端";
-  const end = result.direction === "x" ? "东端" : "北端";
-  const prefix = result.throughWall ? "最" : "";
-  return `${prefix}${result.topExtraMode === "start" ? start : end}增加`;
-}
-
-function countFormula(
-  calculationWidth: number,
-  spacing: number,
-  cover: number,
-  countMode: CountMode,
-): string {
-  if (countMode === "cover") {
-    return `ceil((${calculationWidth} - 2 × ${cover}) / ${spacing}) + 1`;
-  }
-  if (countMode === "round") {
-    return `max(1, round(${calculationWidth} / ${spacing}))`;
-  }
-  if (countMode === "floor") {
-    return `max(1, floor(${calculationWidth} / ${spacing}))`;
-  }
-  return `ceil(${calculationWidth} / ${spacing})`;
-}
 
 function ResultFormula({
   result,
@@ -80,9 +56,9 @@ function ResultFormula({
     <div className="space-y-1 text-xs leading-5 text-slate-600">
       <p>单根长度：{lengthParts.join(" + ")} = {(result.singleLengthM * 1000).toFixed(0)}mm</p>
       <p>
-        根数：{countFormula(result.calculationWidthMm, result.spacing, cover, countMode)} = {result.count}根
+        根数：{formatCountFormula(result.calculationWidthMm, result.spacing, cover, countMode)} = {result.count}根
       </p>
-      <p>面筋增加作用端：{extraModeLabel(result)}</p>
+      <p>面筋增加作用端：{formatExtraModeLabel(result)}</p>
       <p>总长度：{result.count} × {result.singleLengthM.toFixed(3)} = {result.totalLengthM.toFixed(3)}m</p>
       <p>单位重量：π × {result.diameter}² × 7850 ÷ 4 ÷ 1,000,000 = {result.unitWeightKgM.toFixed(4)}kg/m</p>
       <p>重量：{result.totalLengthM.toFixed(3)} × {result.unitWeightKgM.toFixed(4)} = {result.weightKg.toFixed(2)}kg</p>
@@ -118,8 +94,8 @@ function ResultGroupCard({
               <div><p className="text-xs text-slate-500">规格/根数</p><p className="font-semibold">Φ{result.diameter} · {result.count}根</p></div>
               <div><p className="text-xs text-slate-500">单根/总长度</p><p className="font-semibold">{result.singleLengthM.toFixed(3)}m / {result.totalLengthM.toFixed(3)}m</p></div>
               <div><p className="text-xs text-slate-500">重量</p><p className="text-lg font-bold text-slate-900">{result.weightKg.toFixed(2)}kg</p></div>
-              <div><p className="text-xs text-slate-500">起点锚固</p><p className="font-medium">{anchorLabel(result, "start")}</p></div>
-              <div><p className="text-xs text-slate-500">终点锚固</p><p className="font-medium">{anchorLabel(result, "end")}</p></div>
+              <div><p className="text-xs text-slate-500">起点锚固</p><p className="font-medium">{formatAnchorLabel(result, "start")}</p></div>
+              <div><p className="text-xs text-slate-500">终点锚固</p><p className="font-medium">{formatAnchorLabel(result, "end")}</p></div>
               <div className="sm:col-span-2"><ResultFormula result={result} countMode={countMode} cover={cover} /></div>
             </div>
           </article>
@@ -134,6 +110,7 @@ export function CalculatorResultsClient() {
   const [record, setRecord] = useState<StoredCalculationRecord | null>(null);
   const [ui, setUi] = useState<ResultUiState>(DEFAULT_RESULT_UI_STATE);
   const [loading, setLoading] = useState(true);
+  const [printedAt, setPrintedAt] = useState(() => new Date().toISOString());
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -170,6 +147,7 @@ export function CalculatorResultsClient() {
   }
 
   const calculation = record.calculation;
+  const printable = isPrintableCalculationRecord(record);
   const total = calculation.totalWeightKg ?? 0;
   const bottomWeight = calculation.results.filter((result) => result.layer === "bottom").reduce((sum, result) => sum + result.weightKg, 0);
   const topWeight = calculation.results.filter((result) => result.layer === "top").reduce((sum, result) => sum + result.weightKg, 0);
@@ -198,9 +176,16 @@ export function CalculatorResultsClient() {
     router.push("/calculator");
   };
 
+  const printAllResults = () => {
+    if (!printable) return;
+    flushSync(() => setPrintedAt(new Date().toISOString()));
+    window.print();
+  };
+
   return (
-    <main className="min-h-screen bg-gradient-to-b from-slate-100 to-white px-3 py-6 sm:px-6 lg:px-8">
-      <div className="mx-auto max-w-7xl">
+    <>
+      <main className="slab-results-screen min-h-screen bg-gradient-to-b from-slate-100 to-white px-3 py-6 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-7xl">
         <header className="rounded-2xl bg-slate-900 p-5 text-white shadow-lg sm:p-7">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
@@ -208,7 +193,21 @@ export function CalculatorResultsClient() {
               <h1 className="text-2xl font-bold sm:text-3xl">楼板钢筋计算结果</h1>
               <p className="mt-2 text-sm text-slate-300">计算时间：{new Date(record.calculatedAt).toLocaleString("zh-CN", { hour12: false })}</p>
             </div>
-            <button type="button" onClick={returnToInput} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-white/20 bg-white/10 px-4 py-2 text-sm font-medium hover:bg-white/20"><ArrowLeft size={16} />返回修改参数</button>
+            <div className="max-w-md space-y-2">
+              <div className="flex flex-wrap justify-end gap-2">
+                {printable && (
+                  <button type="button" onClick={printAllResults} className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-blue-500 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-400">
+                    <Printer size={17} />打印全部结果
+                  </button>
+                )}
+                <button type="button" onClick={returnToInput} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-white/20 bg-white/10 px-4 py-2 text-sm font-medium hover:bg-white/20"><ArrowLeft size={16} />返回修改参数</button>
+              </div>
+              {printable && (
+                <p className="text-right text-xs leading-5 text-slate-300">
+                  打印将包含全部正式计算结果，不受当前筛选和分页影响。
+                </p>
+              )}
+            </div>
           </div>
         </header>
 
@@ -234,8 +233,8 @@ export function CalculatorResultsClient() {
               <div className="mt-4 space-y-1 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
                 <p>通墙摘要：{calculation.throughWall.direction.toUpperCase()}向 · 净尺寸{calculation.throughWall.netSpanTotal}mm · 中间墙{calculation.throughWall.intermediateWallTotal}mm</p>
                 <p>单根长度：{calculation.throughWall.netSpanTotal} + {calculation.throughWall.intermediateWallTotal} + {calculation.throughWall.throughBar.startAnchor} + {calculation.throughWall.throughBar.endAnchor} = {(calculation.throughWall.throughBar.singleLengthM * 1000).toFixed(0)}mm</p>
-                <p>通墙方向根数：{countFormula(calculation.throughWall.throughBar.calculationWidthMm, calculation.throughWall.throughBar.spacing, record.inputSnapshot.slab.cover, record.inputSnapshot.slab.countMode)} = {calculation.throughWall.throughBar.count}根</p>
-                <p>垂直方向根数：{countFormula(calculation.throughWall.perpendicularBar.calculationWidthMm, calculation.throughWall.perpendicularBar.spacing, record.inputSnapshot.slab.cover, record.inputSnapshot.slab.countMode)} = {calculation.throughWall.perpendicularBar.count}根（不计中间墙）</p>
+                <p>通墙方向根数：{formatCountFormula(calculation.throughWall.throughBar.calculationWidthMm, calculation.throughWall.throughBar.spacing, record.inputSnapshot.slab.cover, record.inputSnapshot.slab.countMode)} = {calculation.throughWall.throughBar.count}根</p>
+                <p>垂直方向根数：{formatCountFormula(calculation.throughWall.perpendicularBar.calculationWidthMm, calculation.throughWall.perpendicularBar.spacing, record.inputSnapshot.slab.cover, record.inputSnapshot.slab.countMode)} = {calculation.throughWall.perpendicularBar.count}根（不计中间墙）</p>
               </div>
             )}
           </section>
@@ -264,7 +263,9 @@ export function CalculatorResultsClient() {
           <button type="button" onClick={() => setUi((current) => ({ ...current, page: pagination.pageCount }))} disabled={pagination.page === pagination.pageCount} className={fieldClass}>末页</button>
           <label className="flex items-center gap-2 text-sm text-slate-600">跳至<input aria-label="输入页码" type="number" min={1} max={pagination.pageCount} value={pagination.page} onChange={(event) => setUi((current) => ({ ...current, page: Number(event.target.value) || 1 }))} className={`${fieldClass} w-20`} />页</label>
         </nav>
-      </div>
-    </main>
+        </div>
+      </main>
+      {printable && <SlabPrintReport record={record} printedAt={printedAt} />}
+    </>
   );
 }

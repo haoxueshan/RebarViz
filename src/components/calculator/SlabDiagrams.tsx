@@ -89,9 +89,11 @@ function lineCounts(results: BarResult[], roomId: string, direction: "x" | "y") 
 export function SlabResultsDiagram({
   state,
   calculation,
+  showNote = true,
 }: {
   state: SlabCalculatorState;
   calculation: SlabCalculation;
+  showNote?: boolean;
 }) {
   const layout = frame(state);
   const normalLines: ReactNode[] = [];
@@ -159,7 +161,11 @@ export function SlabResultsDiagram({
         <text x="240" y="380" fontSize="12" fill="#475569">实线：地筋　虚线：面筋</text>
         {throughExtraLabel && <text x="640" y="400" textAnchor="end" fontSize="12" fill="#92400e">通墙面筋增加：{throughExtraLabel}</text>}
       </svg>
-      <p className="mt-2 text-xs text-slate-500">最多绘制60条代表线；真实根数始终读取完整计算记录。</p>
+      {showNote && (
+        <p className="mt-2 text-xs text-slate-500">
+          最多绘制60条代表线；真实根数始终读取完整计算记录。
+        </p>
+      )}
     </div>
   );
 }
