@@ -16,6 +16,7 @@ import { SlabLayoutDiagram } from "@/components/calculator/SlabDiagrams";
 import {
   calculateSlabResults,
   cloneDefaultSlabCalculatorState,
+  countModeLabel,
   createDefaultRoomAnchorRules,
   normalizeSlabCalculatorState,
   resolveBottomAnchor,
@@ -29,6 +30,7 @@ import {
   type BarDirection,
   type BarLayer,
   type BarSettings,
+  type CountMode,
   type RoomArrangement,
   type SlabCalculatorState,
   type SlabRoom,
@@ -691,7 +693,7 @@ export function CalculatorClient() {
                   <NumberField label="外墙厚度" value={state.slab.outerWallThickness} onChange={(outerWallThickness) => updateBusinessState((current) => ({ ...current, slab: { ...current.slab, outerWallThickness } }))} />
                   <NumberField label="保护层" value={state.slab.cover} onChange={(cover) => updateBusinessState((current) => ({ ...current, slab: { ...current.slab, cover } }))} />
                   <NumberField label="面筋锚固增加值" value={state.slab.topAnchorExtra} onChange={(topAnchorExtra) => updateBusinessState((current) => ({ ...current, slab: { ...current.slab, topAnchorExtra } }))} />
-                  <label><span className={labelClass}>根数算法</span><select className={fieldClass} value={state.slab.countMode} onChange={(event) => updateBusinessState((current) => ({ ...current, slab: { ...current.slab, countMode: event.target.value as "project" | "cover" } }))}><option value="project">项目算法</option><option value="cover">保护层算法</option></select></label>
+                  <label><span className={labelClass}>根数算法</span><select className={fieldClass} value={state.slab.countMode} onChange={(event) => updateBusinessState((current) => ({ ...current, slab: { ...current.slab, countMode: event.target.value as CountMode } }))}><option value="project">项目算法</option><option value="cover">保护层算法</option><option value="round">四舍五入算法</option><option value="floor">向下取整算法</option></select></label>
                 </div>
                 <p className="mt-3 text-xs text-slate-500">中间墙共 {Math.max(state.slab.rooms.length - 1, 0)} 道，由房间拓扑自动确定；普通多房间允许尺寸不同，只有通墙时才校验垂直尺寸一致。</p>
               </CollapsibleSection>
@@ -729,7 +731,7 @@ export function CalculatorClient() {
                 <dl className="mt-3 grid grid-cols-2 gap-3 text-sm">
                   <div><dt className="text-xs text-slate-500">排列</dt><dd className="font-semibold">{state.slab.arrangement === "single" ? "单房间" : `${state.slab.arrangement.toUpperCase()}向 · ${state.slab.rooms.length}间`}</dd></div>
                   <div><dt className="text-xs text-slate-500">墙厚</dt><dd className="font-semibold">内{state.slab.innerWallThickness} / 外{state.slab.outerWallThickness}mm</dd></div>
-                  <div><dt className="text-xs text-slate-500">根数算法</dt><dd className="font-semibold">{state.slab.countMode === "project" ? "项目算法" : "保护层算法"}</dd></div>
+                  <div><dt className="text-xs text-slate-500">根数算法</dt><dd className="font-semibold">{countModeLabel(state.slab.countMode)}</dd></div>
                   <div><dt className="text-xs text-slate-500">通墙</dt><dd className="font-semibold">{state.through.enabled ? `${state.through.direction.toUpperCase()}向面筋` : "关闭"}</dd></div>
                 </dl>
                 <p className="mt-3 rounded-lg bg-blue-50 p-3 text-xs leading-5 text-blue-800">此处只核对输入参数，不显示任何正式长度、根数或工程重量。</p>

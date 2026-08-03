@@ -1,4 +1,4 @@
-export type CountMode = "project" | "cover";
+export type CountMode = "project" | "cover" | "round" | "floor";
 export type RoomArrangement = "single" | "x" | "y";
 export type AnchorSource = "inner-wall" | "outer-wall" | "manual";
 export type AnchorOrigin = "auto" | "user";
@@ -394,7 +394,23 @@ export function countBars(
     );
     return Math.ceil(effectiveWidth / spacing) + 1;
   }
+  if (mode === "round") {
+    return Math.max(1, Math.round(perpendicularSpan / spacing));
+  }
+  if (mode === "floor") {
+    return Math.max(1, Math.floor(perpendicularSpan / spacing));
+  }
   return Math.ceil(perpendicularSpan / spacing);
+}
+
+export function countModeLabel(mode: CountMode): string {
+  const labels: Record<CountMode, string> = {
+    project: "项目算法",
+    cover: "保护层算法",
+    round: "四舍五入算法",
+    floor: "向下取整算法",
+  };
+  return labels[mode];
 }
 
 export function theoreticalUnitWeight(diameter: number): number {
@@ -658,7 +674,7 @@ export function validateSlabCalculator(input: SlabCalculatorState): string[] {
   if (!(["single", "x", "y"] as string[]).includes(slab.arrangement)) {
     errors.push("房间排列方向无效");
   }
-  if (!(["project", "cover"] as string[]).includes(slab.countMode)) {
+  if (!(["project", "cover", "round", "floor"] as string[]).includes(slab.countMode)) {
     errors.push("根数算法无效");
   }
   if (slab.rooms.length === 0) errors.push("至少需要一个房间");

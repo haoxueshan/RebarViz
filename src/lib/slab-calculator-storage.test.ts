@@ -72,6 +72,32 @@ describe("正式计算记录", () => {
       calculation: { ...record.calculation, totalWeightKg: 0 },
     }))).toBeNull();
   });
+
+  it("round和floor草稿及正式结果能够保存并恢复", () => {
+    const roundState = xRooms(true);
+    roundState.slab.countMode = "round";
+    const record = createCalculationRecord(
+      roundState,
+      calculateSlabResults(roundState),
+    );
+    expect(
+      parseCalculationRecord(JSON.stringify(record))?.inputSnapshot.slab.countMode,
+    ).toBe("round");
+
+    const floorState = cloneDefaultSlabCalculatorState();
+    floorState.slab.countMode = "floor";
+    const draft = parseDraftRecord(JSON.stringify({
+      schemaVersion: CALCULATOR_SCHEMA_VERSION,
+      savedAt: "2026-08-03T00:00:00.000Z",
+      state: floorState,
+      ui: {
+        openSections: { base: true, bottom: true, top: true, through: false },
+        bottomDirection: "x",
+        topDirection: "x",
+      },
+    }));
+    expect(draft?.state.slab.countMode).toBe("floor");
+  });
 });
 
 describe("结果分组、筛选和分页", () => {

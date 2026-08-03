@@ -12,6 +12,7 @@ import {
   type AnchorOrigin,
   type AnchorRule,
   type AnchorSource,
+  type CountMode,
   type RoomArrangement,
   type SlabCalculatorState,
   type SlabRoom,
@@ -66,6 +67,83 @@ function yThroughState(): SlabCalculatorState {
   state.through.endAnchor = anchor("outer-wall");
   return state;
 }
+
+describe("根数算法", () => {
+  it("四舍五入算法按比例取整且至少返回1根", () => {
+    expect(countBars(3350, 200, 15, "round")).toBe(17);
+    expect(countBars(3300, 200, 15, "round")).toBe(17);
+    expect(countBars(100, 200, 15, "round")).toBe(1);
+  });
+
+  it("向下取整算法按比例取整且至少返回1根", () => {
+    expect(countBars(3350, 200, 15, "floor")).toBe(16);
+    expect(countBars(3300, 200, 15, "floor")).toBe(16);
+    expect(countBars(100, 200, 15, "floor")).toBe(1);
+  });
+
+  it("项目算法和保护层算法保持原公式", () => {
+    expect(countBars(3350, 200, 15, "project")).toBe(17);
+    expect(countBars(3350, 200, 15, "cover")).toBe(18);
+  });
+
+  it("普通房间使用所选算法并据此重新计算重量", () => {
+    const roundState = cloneDefaultSlabCalculatorState();
+    roundState.slab.rooms[0].spanY = 3350;
+    roundState.slab.countMode = "round";
+    const roundResult = calculateSlabResults(roundState).results.find(
+      (result) => result.roomId === "room-a" && result.layer === "top" && result.direction === "x",
+    );
+
+    const floorState = structuredClone(roundState);
+    floorState.slab.countMode = "floor";
+    const floorResult = calculateSlabResults(floorState).results.find(
+      (result) => result.roomId === "room-a" && result.layer === "top" && result.direction === "x",
+    );
+
+    expect(roundResult?.count).toBe(17);
+    expect(floorResult?.count).toBe(16);
+    expect(roundResult?.weightKg).toBeCloseTo(
+      17 * (roundResult?.singleLengthM ?? 0) * (roundResult?.unitWeightKgM ?? 0),
+      10,
+    );
+    expect(floorResult?.weightKg).toBeCloseTo(
+      16 * (floorResult?.singleLengthM ?? 0) * (floorResult?.unitWeightKgM ?? 0),
+      10,
+    );
+    expect(roundResult!.weightKg).toBeGreaterThan(floorResult!.weightKg);
+  });
+
+  it("通墙方向和垂直组合筋统一使用四舍五入或向下取整算法", () => {
+    const roundState = stateWithRooms("x", [
+      [4200, 3350],
+      [3500, 3350],
+    ]);
+    roundState.through.enabled = true;
+    roundState.through.direction = "x";
+    roundState.slab.countMode = "round";
+    const roundThrough = calculateSlabResults(roundState).throughWall;
+
+    const floorState = structuredClone(roundState);
+    floorState.slab.countMode = "floor";
+    const floorThrough = calculateSlabResults(floorState).throughWall;
+
+    expect(roundThrough?.throughBar.count).toBe(17);
+    expect(roundThrough?.perpendicularBar.count).toBe(39);
+    expect(floorThrough?.throughBar.count).toBe(16);
+    expect(floorThrough?.perpendicularBar.count).toBe(38);
+  });
+
+  it("非法根数算法继续使正式结果无效", () => {
+    const state = cloneDefaultSlabCalculatorState();
+    state.slab.countMode = "truncate" as CountMode;
+
+    const calculation = calculateSlabResults(state);
+
+    expect(calculation.errors).toContain("根数算法无效");
+    expect(calculation.results).toEqual([]);
+    expect(calculation.totalWeightKg).toBeNull();
+  });
+});
 
 describe("锚固解析", () => {
   it("地筋内墙锚固等于内墙厚度", () => {

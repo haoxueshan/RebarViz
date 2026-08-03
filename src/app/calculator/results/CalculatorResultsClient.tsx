@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Calculator, ChevronLeft, ChevronRight } from "lucide-react";
 import { SlabResultsDiagram } from "@/components/calculator/SlabDiagrams";
-import type { BarResult } from "@/lib/slab-calculator";
+import { countModeLabel, type BarResult, type CountMode } from "@/lib/slab-calculator";
 import {
   DEFAULT_RESULT_UI_STATE,
   RESULT_KEY,
@@ -43,13 +43,31 @@ function extraModeLabel(result: BarResult) {
   return `${prefix}${result.topExtraMode === "start" ? start : end}增加`;
 }
 
+function countFormula(
+  calculationWidth: number,
+  spacing: number,
+  cover: number,
+  countMode: CountMode,
+): string {
+  if (countMode === "cover") {
+    return `ceil((${calculationWidth} - 2 × ${cover}) / ${spacing}) + 1`;
+  }
+  if (countMode === "round") {
+    return `max(1, round(${calculationWidth} / ${spacing}))`;
+  }
+  if (countMode === "floor") {
+    return `max(1, floor(${calculationWidth} / ${spacing}))`;
+  }
+  return `ceil(${calculationWidth} / ${spacing})`;
+}
+
 function ResultFormula({
   result,
   countMode,
   cover,
 }: {
   result: BarResult;
-  countMode: "project" | "cover";
+  countMode: CountMode;
   cover: number;
 }) {
   const lengthParts = [
@@ -62,9 +80,7 @@ function ResultFormula({
     <div className="space-y-1 text-xs leading-5 text-slate-600">
       <p>单根长度：{lengthParts.join(" + ")} = {(result.singleLengthM * 1000).toFixed(0)}mm</p>
       <p>
-        根数：{countMode === "project"
-          ? `ceil(${result.calculationWidthMm} / ${result.spacing})`
-          : `ceil((${result.calculationWidthMm} - 2 × ${cover}) / ${result.spacing}) + 1`} = {result.count}根
+        根数：{countFormula(result.calculationWidthMm, result.spacing, cover, countMode)} = {result.count}根
       </p>
       <p>面筋增加作用端：{extraModeLabel(result)}</p>
       <p>总长度：{result.count} × {result.singleLengthM.toFixed(3)} = {result.totalLengthM.toFixed(3)}m</p>
@@ -80,7 +96,7 @@ function ResultGroupCard({
   cover,
 }: {
   group: ResultGroup;
-  countMode: "project" | "cover";
+  countMode: CountMode;
   cover: number;
 }) {
   return (
@@ -208,7 +224,7 @@ export function CalculatorResultsClient() {
             <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
               <div><dt className="text-slate-500">排列/房间数</dt><dd className="font-semibold">{record.inputSnapshot.slab.arrangement.toUpperCase()} · {record.inputSnapshot.slab.rooms.length}间</dd></div>
               <div><dt className="text-slate-500">内墙/外墙</dt><dd className="font-semibold">{record.inputSnapshot.slab.innerWallThickness} / {record.inputSnapshot.slab.outerWallThickness}mm</dd></div>
-              <div><dt className="text-slate-500">保护层/根数算法</dt><dd className="font-semibold">{record.inputSnapshot.slab.cover}mm · {record.inputSnapshot.slab.countMode === "project" ? "项目算法" : "保护层算法"}</dd></div>
+              <div><dt className="text-slate-500">保护层/根数算法</dt><dd className="font-semibold">{record.inputSnapshot.slab.cover}mm · {countModeLabel(record.inputSnapshot.slab.countMode)}</dd></div>
               <div><dt className="text-slate-500">面筋锚固增加</dt><dd className="font-semibold">{record.inputSnapshot.slab.topAnchorExtra}mm</dd></div>
             </dl>
             <div className="mt-4 space-y-2">
@@ -218,7 +234,8 @@ export function CalculatorResultsClient() {
               <div className="mt-4 space-y-1 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
                 <p>通墙摘要：{calculation.throughWall.direction.toUpperCase()}向 · 净尺寸{calculation.throughWall.netSpanTotal}mm · 中间墙{calculation.throughWall.intermediateWallTotal}mm</p>
                 <p>单根长度：{calculation.throughWall.netSpanTotal} + {calculation.throughWall.intermediateWallTotal} + {calculation.throughWall.throughBar.startAnchor} + {calculation.throughWall.throughBar.endAnchor} = {(calculation.throughWall.throughBar.singleLengthM * 1000).toFixed(0)}mm</p>
-                <p>垂直方向根数：ceil({calculation.throughWall.netSpanTotal} / {calculation.throughWall.perpendicularBar.spacing}) = {calculation.throughWall.perpendicularBar.count}根（不计中间墙）</p>
+                <p>通墙方向根数：{countFormula(calculation.throughWall.throughBar.calculationWidthMm, calculation.throughWall.throughBar.spacing, record.inputSnapshot.slab.cover, record.inputSnapshot.slab.countMode)} = {calculation.throughWall.throughBar.count}根</p>
+                <p>垂直方向根数：{countFormula(calculation.throughWall.perpendicularBar.calculationWidthMm, calculation.throughWall.perpendicularBar.spacing, record.inputSnapshot.slab.cover, record.inputSnapshot.slab.countMode)} = {calculation.throughWall.perpendicularBar.count}根（不计中间墙）</p>
               </div>
             )}
           </section>
