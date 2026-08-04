@@ -299,6 +299,7 @@ export function SlabPrintDialog({
                           <label key={result.id} className="flex min-h-11 cursor-pointer items-center gap-3 text-sm text-slate-700">
                             <input
                               type="checkbox"
+                              data-result-id={result.id}
                               checked={selectedIds.has(result.id)}
                               onChange={() => toggleResult(result.id)}
                               className="h-5 w-5 shrink-0 accent-blue-600"

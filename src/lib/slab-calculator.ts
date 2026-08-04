@@ -1,3 +1,9 @@
+import {
+  allocateLargestRemainder,
+  buildRoomBoundaryZones,
+  type RoomBoundaryZone,
+} from "./slab-room-topology";
+
 export type CountMode = "project" | "round" | "floor";
 export type RoomArrangement = "single" | "x" | "y";
 export type AnchorSource = "inner-wall" | "outer-wall" | "manual";
@@ -74,6 +80,24 @@ export type SlabCalculatorState = {
   through: TopThroughRule;
 };
 
+export type BarLengthMode = "uniform" | "zoned";
+
+export type BarLengthVariant = {
+  id: string;
+  perpendicularStartMm: number;
+  perpendicularEndMm: number;
+  count: number;
+  startAnchorSource: AnchorSource;
+  endAnchorSource: AnchorSource;
+  startAnchor: number;
+  endAnchor: number;
+  startExtraApplied: boolean;
+  endExtraApplied: boolean;
+  singleLengthM: number;
+  totalLengthM: number;
+  weightKg: number;
+};
+
 export type BarResult = {
   id: string;
   scopeId: string;
@@ -101,6 +125,8 @@ export type BarResult = {
   intermediateWallMm: number;
   calculationWidthMm: number;
   spacing: number;
+  lengthMode: BarLengthMode;
+  lengthVariants: BarLengthVariant[];
 };
 
 export type ThroughWallResult = {
@@ -416,6 +442,12 @@ export function theoreticalUnitWeight(diameter: number): number {
   return (Math.PI * diameter * diameter * 7850) / 4 / 1_000_000;
 }
 
+type BarLengthZoneInput = {
+  perpendicularStartMm: number;
+  perpendicularEndMm: number;
+  anchorRules: DirectionAnchorRules;
+};
+
 type CreateBarInput = {
   id: string;
   scopeId: string;
@@ -432,7 +464,43 @@ type CreateBarInput = {
   slab: SlabBaseState;
   anchorRules: DirectionAnchorRules;
   topExtraMode?: TopExtraMode;
+  lengthZones?: BarLengthZoneInput[];
 };
+
+function stableDimensionId(value: number): string {
+  return Number(value.toFixed(6)).toString();
+}
+
+function sameAnchorRule(left: AnchorRule, right: AnchorRule): boolean {
+  return (
+    left.source === right.source &&
+    left.manualValue === right.manualValue
+  );
+}
+
+function mergeLengthZones(zones: BarLengthZoneInput[]): BarLengthZoneInput[] {
+  return zones.reduce<BarLengthZoneInput[]>((merged, zone) => {
+    const previous = merged.at(-1);
+    if (
+      previous &&
+      previous.perpendicularEndMm === zone.perpendicularStartMm &&
+      sameAnchorRule(previous.anchorRules.start, zone.anchorRules.start) &&
+      sameAnchorRule(previous.anchorRules.end, zone.anchorRules.end)
+    ) {
+      previous.perpendicularEndMm = zone.perpendicularEndMm;
+      return merged;
+    }
+    merged.push({
+      perpendicularStartMm: zone.perpendicularStartMm,
+      perpendicularEndMm: zone.perpendicularEndMm,
+      anchorRules: {
+        start: copyAnchor(zone.anchorRules.start),
+        end: copyAnchor(zone.anchorRules.end),
+      },
+    });
+    return merged;
+  }, []);
+}
 
 function createBarResult(input: CreateBarInput): BarResult {
   const topExtraMode = input.layer === "top" ? (input.topExtraMode ?? "both") : undefined;
@@ -442,32 +510,80 @@ function createBarResult(input: CreateBarInput): BarResult {
   const endExtraSelected = topExtraMode
     ? shouldApplyTopExtra(topExtraMode, "end")
     : false;
-  const startExtraApplied =
-    input.layer === "top" &&
-    startExtraSelected &&
-    input.anchorRules.start.source !== "manual";
-  const endExtraApplied =
-    input.layer === "top" &&
-    endExtraSelected &&
-    input.anchorRules.end.source !== "manual";
-  const startAnchor =
-    input.layer === "bottom"
-      ? resolveBottomAnchor(input.anchorRules.start, input.slab)
-      : resolveTopAnchor(input.anchorRules.start, input.slab, startExtraSelected);
-  const endAnchor =
-    input.layer === "bottom"
-      ? resolveBottomAnchor(input.anchorRules.end, input.slab)
-      : resolveTopAnchor(input.anchorRules.end, input.slab, endExtraSelected);
   const count = countBars(
     input.perpendicularSpan,
     input.settings.spacing,
     input.slab.countMode,
   );
   const intermediateWallMm = input.intermediateWallMm ?? 0;
-  const lengthMm = input.runSpan + intermediateWallMm + startAnchor + endAnchor;
-  const singleLengthM = lengthMm / 1000;
-  const totalLengthM = count * singleLengthM;
   const unitWeightKgM = theoreticalUnitWeight(input.settings.diameter);
+  const lengthZones = mergeLengthZones(
+    input.lengthZones?.length
+      ? input.lengthZones
+      : [
+          {
+            perpendicularStartMm: 0,
+            perpendicularEndMm: input.perpendicularSpan,
+            anchorRules: input.anchorRules,
+          },
+        ],
+  );
+  const variantCounts = allocateLargestRemainder(
+    count,
+    lengthZones.map(
+      (zone) => zone.perpendicularEndMm - zone.perpendicularStartMm,
+    ),
+  );
+  const lengthVariants = lengthZones.map<BarLengthVariant>((zone, index) => {
+    const startAnchorSource = zone.anchorRules.start.source;
+    const endAnchorSource = zone.anchorRules.end.source;
+    const startExtraApplied =
+      input.layer === "top" &&
+      startExtraSelected &&
+      startAnchorSource !== "manual";
+    const endExtraApplied =
+      input.layer === "top" &&
+      endExtraSelected &&
+      endAnchorSource !== "manual";
+    const startAnchor =
+      input.layer === "bottom"
+        ? resolveBottomAnchor(zone.anchorRules.start, input.slab)
+        : resolveTopAnchor(zone.anchorRules.start, input.slab, startExtraSelected);
+    const endAnchor =
+      input.layer === "bottom"
+        ? resolveBottomAnchor(zone.anchorRules.end, input.slab)
+        : resolveTopAnchor(zone.anchorRules.end, input.slab, endExtraSelected);
+    const singleLengthM =
+      (input.runSpan + intermediateWallMm + startAnchor + endAnchor) / 1000;
+    const variantCount = variantCounts[index] ?? 0;
+    const totalLengthM = variantCount * singleLengthM;
+    return {
+      id: `${input.id}:zone:${stableDimensionId(zone.perpendicularStartMm)}-${stableDimensionId(zone.perpendicularEndMm)}:${startAnchorSource}-${endAnchorSource}`,
+      perpendicularStartMm: zone.perpendicularStartMm,
+      perpendicularEndMm: zone.perpendicularEndMm,
+      count: variantCount,
+      startAnchorSource,
+      endAnchorSource,
+      startAnchor,
+      endAnchor,
+      startExtraApplied,
+      endExtraApplied,
+      singleLengthM,
+      totalLengthM,
+      weightKg: totalLengthM * unitWeightKgM,
+    };
+  });
+  const firstVariant = lengthVariants[0];
+  const totalLengthM = lengthVariants.reduce(
+    (sum, variant) => sum + variant.totalLengthM,
+    0,
+  );
+  const weightKg = lengthVariants.reduce(
+    (sum, variant) => sum + variant.weightKg,
+    0,
+  );
+  const singleLengthM =
+    count > 0 ? totalLengthM / count : (firstVariant?.singleLengthM ?? 0);
 
   return {
     id: input.id,
@@ -483,20 +599,60 @@ function createBarResult(input: CreateBarInput): BarResult {
     singleLengthM,
     totalLengthM,
     unitWeightKgM,
-    weightKg: totalLengthM * unitWeightKgM,
-    startAnchorSource: input.anchorRules.start.source,
-    endAnchorSource: input.anchorRules.end.source,
-    startAnchor,
-    endAnchor,
+    weightKg,
+    startAnchorSource: firstVariant?.startAnchorSource ?? input.anchorRules.start.source,
+    endAnchorSource: firstVariant?.endAnchorSource ?? input.anchorRules.end.source,
+    startAnchor:
+      firstVariant?.startAnchor ?? resolveBottomAnchor(input.anchorRules.start, input.slab),
+    endAnchor:
+      firstVariant?.endAnchor ?? resolveBottomAnchor(input.anchorRules.end, input.slab),
     topExtraMode,
     topExtraValue: input.layer === "top" ? input.slab.topAnchorExtra : 0,
-    startExtraApplied,
-    endExtraApplied,
+    startExtraApplied: firstVariant?.startExtraApplied ?? false,
+    endExtraApplied: firstVariant?.endExtraApplied ?? false,
     netRunSpanMm: input.runSpan,
     intermediateWallMm,
     calculationWidthMm: input.perpendicularSpan,
     spacing: input.settings.spacing,
+    lengthMode: lengthVariants.length > 1 ? "zoned" : "uniform",
+    lengthVariants,
   };
+}
+
+function effectiveZoneAnchor(
+  configured: AnchorRule,
+  automaticSource: RoomBoundaryZone["startSource"],
+): AnchorRule {
+  return configured.origin === "user"
+    ? copyAnchor(configured)
+    : wallAnchor(automaticSource, "auto");
+}
+
+function roomLengthZones(
+  room: SlabRoom,
+  layer: BarLayer,
+  direction: BarDirection,
+  slab: SlabBaseState,
+): BarLengthZoneInput[] | undefined {
+  if (slab.arrangement !== direction || slab.rooms.length <= 1) {
+    return undefined;
+  }
+  const roomIndex = slab.rooms.findIndex((candidate) => candidate.id === room.id);
+  if (roomIndex < 0) return undefined;
+  const configured = room.anchors[layer][direction];
+  return buildRoomBoundaryZones(
+    slab.rooms,
+    slab.arrangement,
+    roomIndex,
+    direction,
+  ).map((zone) => ({
+    perpendicularStartMm: zone.perpendicularStartMm,
+    perpendicularEndMm: zone.perpendicularEndMm,
+    anchorRules: {
+      start: effectiveZoneAnchor(configured.start, zone.startSource),
+      end: effectiveZoneAnchor(configured.end, zone.endSource),
+    },
+  }));
 }
 
 export function calculateRoomBar(
@@ -522,6 +678,7 @@ export function calculateRoomBar(
     slab,
     anchorRules: room.anchors[layer][direction],
     topExtraMode,
+    lengthZones: roomLengthZones(room, layer, direction, slab),
   });
 }
 
@@ -767,6 +924,112 @@ export function validateSlabCalculator(input: SlabCalculatorState): string[] {
   return [...new Set(errors)];
 }
 
+const CALCULATION_SAFETY_ERROR =
+  "钢筋计算结果超出安全数值范围，请检查尺寸、间距、直径和锚固输入。";
+
+function nearlyEqual(left: number, right: number): boolean {
+  const scale = Math.max(1, Math.abs(left), Math.abs(right));
+  return Math.abs(left - right) <= Number.EPSILON * 32 * scale;
+}
+
+function isSafeBarResult(result: BarResult): boolean {
+  if (
+    !Number.isSafeInteger(result.count) ||
+    result.count <= 0 ||
+    !Array.isArray(result.lengthVariants) ||
+    result.lengthVariants.length === 0 ||
+    (result.lengthMode === "uniform" && result.lengthVariants.length !== 1) ||
+    (result.lengthMode === "zoned" && result.lengthVariants.length <= 1)
+  ) {
+    return false;
+  }
+  const positiveValues = [
+    result.diameter,
+    result.singleLengthM,
+    result.totalLengthM,
+    result.unitWeightKgM,
+    result.weightKg,
+    result.netRunSpanMm,
+    result.calculationWidthMm,
+    result.spacing,
+  ];
+  const nonNegativeValues = [
+    result.startAnchor,
+    result.endAnchor,
+    result.topExtraValue,
+    result.intermediateWallMm,
+  ];
+  if (
+    positiveValues.some((value) => !Number.isFinite(value) || value <= 0) ||
+    nonNegativeValues.some((value) => !Number.isFinite(value) || value < 0)
+  ) {
+    return false;
+  }
+
+  const variantIds = new Set<string>();
+  let variantCount = 0;
+  let variantLengthM = 0;
+  let variantWeightKg = 0;
+  let perpendicularCursorMm = 0;
+  for (const variant of result.lengthVariants) {
+    if (
+      variantIds.has(variant.id) ||
+      !Number.isSafeInteger(variant.count) ||
+      variant.count < 0 ||
+      !Number.isFinite(variant.perpendicularStartMm) ||
+      !Number.isFinite(variant.perpendicularEndMm) ||
+      variant.perpendicularStartMm < 0 ||
+      variant.perpendicularEndMm <= variant.perpendicularStartMm ||
+      !nearlyEqual(variant.perpendicularStartMm, perpendicularCursorMm) ||
+      !Number.isFinite(variant.startAnchor) ||
+      variant.startAnchor < 0 ||
+      !Number.isFinite(variant.endAnchor) ||
+      variant.endAnchor < 0 ||
+      !Number.isFinite(variant.singleLengthM) ||
+      variant.singleLengthM <= 0 ||
+      !Number.isFinite(variant.totalLengthM) ||
+      variant.totalLengthM < 0 ||
+      !Number.isFinite(variant.weightKg) ||
+      variant.weightKg < 0 ||
+      !nearlyEqual(
+        variant.singleLengthM * variant.count,
+        variant.totalLengthM,
+      ) ||
+      !nearlyEqual(
+        variant.totalLengthM * result.unitWeightKgM,
+        variant.weightKg,
+      )
+    ) {
+      return false;
+    }
+    variantIds.add(variant.id);
+    variantCount += variant.count;
+    variantLengthM += variant.totalLengthM;
+    variantWeightKg += variant.weightKg;
+    perpendicularCursorMm = variant.perpendicularEndMm;
+  }
+  return (
+    Number.isSafeInteger(variantCount) &&
+    variantCount === result.count &&
+    Number.isFinite(variantLengthM) &&
+    Number.isFinite(variantWeightKg) &&
+    nearlyEqual(perpendicularCursorMm, result.calculationWidthMm) &&
+    nearlyEqual(variantLengthM, result.totalLengthM) &&
+    nearlyEqual(variantWeightKg, result.weightKg) &&
+    nearlyEqual(result.singleLengthM * result.count, result.totalLengthM) &&
+    nearlyEqual(result.totalLengthM * result.unitWeightKgM, result.weightKg)
+  );
+}
+
+function hasSafeCalculatedResults(results: readonly BarResult[]): boolean {
+  if (results.length === 0 || !results.every(isSafeBarResult)) return false;
+  const totalWeightKg = results.reduce(
+    (sum, result) => sum + result.weightKg,
+    0,
+  );
+  return Number.isFinite(totalWeightKg) && totalWeightKg > 0;
+}
+
 export function calculateSlabResults(input: SlabCalculatorState): SlabCalculation {
   const state = normalizeSlabCalculatorState(input);
   const errors = validateSlabCalculator(state);
@@ -815,8 +1078,17 @@ export function calculateSlabResults(input: SlabCalculatorState): SlabCalculatio
         ),
       ]);
   const results = [...bottomResults, ...topResults];
+  if (!hasSafeCalculatedResults(results)) {
+    return {
+      results: [],
+      totalWeightKg: null,
+      throughWall: null,
+      errors: [CALCULATION_SAFETY_ERROR],
+      isValid: false,
+    };
+  }
   const totalWeightKg = results.reduce(
-    (sum, result) => sum + (Number.isFinite(result.weightKg) ? result.weightKg : 0),
+    (sum, result) => sum + result.weightKg,
     0,
   );
 

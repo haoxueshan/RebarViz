@@ -4,7 +4,7 @@
 
 @page {
   size: A4 landscape;
-  margin: 10mm;
+  margin: 10mm 10mm 18mm;
 }
 
 @media print {
@@ -94,6 +94,46 @@
     margin: 0.5mm 0 0;
     font-weight: 700;
     overflow-wrap: anywhere;
+  }
+
+  .diagramOnlyReport .reportHeader {
+    height: 12mm;
+    align-items: center;
+    gap: 4mm;
+    padding-bottom: 1mm;
+  }
+
+  .diagramOnlyReport .reportHeader > div:first-child {
+    flex: 0 0 45mm;
+  }
+
+  .diagramOnlyReport .brand {
+    margin: 0;
+    font-size: 7.5pt;
+    line-height: 1;
+  }
+
+  .diagramOnlyReport .reportHeader h1 {
+    font-size: 12pt;
+    line-height: 1.1;
+  }
+
+  .diagramOnlyReport .reportMeta {
+    flex: 1 1 auto;
+    min-width: 0;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 1.5mm;
+  }
+
+  .diagramOnlyReport .reportMeta dt {
+    font-size: 7pt;
+    line-height: 1.1;
+  }
+
+  .diagramOnlyReport .reportMeta dd {
+    margin-top: 0.2mm;
+    font-size: 7.5pt;
+    line-height: 1.1;
   }
 
   .summarySection {
@@ -186,56 +226,95 @@
     page-break-inside: avoid;
   }
 
-  .diagramSection {
+  .diagramSheet {
+    width: 267mm;
+    height: 166mm;
+    margin: 0 auto;
+    overflow: hidden;
     break-inside: avoid;
     page-break-inside: avoid;
   }
 
-  .diagramSection > div {
-    max-width: 210mm;
-    margin: 0 auto;
-    overflow: visible !important;
+  .diagramOnlyReport .diagramSheet {
+    margin-top: 2mm;
+  }
+
+  .diagramBreakBefore {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  .diagramBreakAfter {
+    break-after: page;
+    page-break-after: always;
+  }
+
+  .diagramHeading {
+    display: flex;
+    min-height: 14mm;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8mm;
+    padding-bottom: 2mm;
+  }
+
+  .diagramHeading h2 {
+    margin: 0;
+    font-size: 12pt;
+  }
+
+  .diagramHeading p {
+    max-width: 118mm;
+    margin: 1mm 0 0;
+    color: #333;
+    font-size: 7.5pt;
+  }
+
+  .diagramCanvas {
+    width: 267mm;
+    height: 150mm;
+    overflow: hidden;
+  }
+
+  .diagramCanvas > div {
+    width: 100% !important;
+    height: 100% !important;
+    overflow: hidden !important;
     border: 0.75pt solid #777 !important;
     padding: 1.5mm !important;
   }
 
-  .diagramSection svg {
+  .diagramCanvas svg {
     display: block;
     width: 100% !important;
-    height: auto !important;
-    max-height: 78mm;
+    height: 132mm !important;
+    max-width: none !important;
+    max-height: none !important;
     overflow: visible !important;
   }
 
-  .resultGroup {
-    margin-top: 3mm;
+  .diagramCanvas :global([data-testid="slab-diagram-result-legend"]) {
+    display: none !important;
   }
 
-  .groupHeading {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 5mm;
-    padding: 1.5mm 2mm;
-    border: 0.75pt solid #555;
-    border-bottom: 0;
-    background: #f4f4f4;
-    break-after: avoid;
-    page-break-after: avoid;
+  .diagramCanvas :global([data-testid="slab-diagram-key"]) {
+    display: grid !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    gap: 0.6mm 3mm !important;
+    min-height: 15mm;
+    padding: 1.2mm 2mm !important;
+    border-top: 0.6pt solid #777 !important;
+    font-size: 8pt !important;
+    line-height: 1.2;
   }
 
-  .groupHeading h3 {
-    margin: 0;
-    font-size: 9pt;
-  }
-
-  .groupHeading span {
-    font-size: 7.5pt;
-    overflow-wrap: anywhere;
+  .diagramCanvas :global([data-testid="slab-diagram-key"] > span) {
+    min-height: 0 !important;
+    white-space: nowrap;
   }
 
   .detailTable {
-    font-size: 7.2pt;
+    font-size: 7.5pt;
   }
 
   .detailTable small {
@@ -254,23 +333,45 @@
     text-align: right;
   }
 
-  .fullDetailTable .colSequence { width: 4%; }
-  .fullDetailTable .colScope { width: 10%; }
-  .fullDetailTable .colType { width: 11%; }
-  .fullDetailTable .colSpec { width: 7%; }
-  .fullDetailTable .colCount { width: 5%; }
-  .fullDetailTable .colLength { width: 7%; }
-  .fullDetailTable .colAnchor { width: 15%; }
-  .fullDetailTable .colExtra { width: 9%; }
-  .fullDetailTable .colWeight { width: 10%; }
+  .groupRow th {
+    padding: 1.8mm 1.2mm;
+    border-top: 1.2pt solid #222;
+    background: #d9d9d9;
+    font-size: 8.2pt;
+  }
 
-  .compactDetailTable .colSequence { width: 5%; }
-  .compactDetailTable .colScope { width: 18%; }
-  .compactDetailTable .colType { width: 17%; }
-  .compactDetailTable .colSpec { width: 11%; }
-  .compactDetailTable .colCount { width: 8%; }
-  .compactDetailTable .colLength { width: 13%; }
-  .compactDetailTable .colWeight { width: 15%; }
+  .groupRow small {
+    font-size: 7.2pt;
+    font-weight: 400;
+  }
+
+  .variantRow td {
+    background: #fafafa;
+  }
+
+  .variantRow td:first-child,
+  .variantRow td:nth-child(2) {
+    padding-left: 2.5mm;
+  }
+
+  .fullDetailTable .colFigure { width: 5%; }
+  .fullDetailTable .colScope { width: 12%; }
+  .fullDetailTable .colType { width: 8%; }
+  .fullDetailTable .colSpec { width: 7%; }
+  .fullDetailTable .colCount { width: 7%; }
+  .fullDetailTable .colRun { width: 6%; }
+  .fullDetailTable .colAnchor { width: 13%; }
+  .fullDetailTable .colExtra { width: 10%; }
+  .fullDetailTable .colLength { width: 12%; }
+  .fullDetailTable .colWeight { width: 7%; }
+
+  .compactDetailTable .colFigure { width: 6%; }
+  .compactDetailTable .colScope { width: 19%; }
+  .compactDetailTable .colType { width: 13%; }
+  .compactDetailTable .colSpec { width: 10%; }
+  .compactDetailTable .colCount { width: 9%; }
+  .compactDetailTable .colLength { width: 15%; }
+  .compactDetailTable .colWeight { width: 13%; }
 
   .notes {
     break-inside: avoid;
@@ -286,21 +387,4 @@
     margin: 0.8mm 0;
   }
 
-  .footer {
-    margin-top: 5mm;
-    padding-top: 2mm;
-    border-top: 0.75pt solid #777;
-    color: #333;
-    font-size: 7pt;
-    break-inside: avoid;
-    page-break-inside: avoid;
-  }
-
-  .footer p {
-    margin: 0.5mm 0;
-  }
-
-  .pageNumber::after {
-    content: "第 " counter(page) " 页";
-  }
 }

@@ -13,11 +13,14 @@ import {
   buildSlabPrintReport,
   canPrintSlabReport,
   countModeFormulaText,
+  createResultFigureNumberMap,
   filteredPrintResultIds,
   formatAnchorLabel,
   formatCountFormula,
+  formatExtraModeLabel,
   isPrintableCalculationRecord,
   normalizePrintResultIds,
+  printSelectionSummary,
 } from "./slab-calculator-report";
 import {
   DEFAULT_SLAB_PRINT_SECTIONS,
@@ -52,6 +55,15 @@ function twoXRooms(through: boolean): SlabCalculatorState {
   );
   state.through.enabled = through;
   state.through.direction = through ? "x" : "none";
+  return state;
+}
+
+function twoUnequalXRooms(): SlabCalculatorState {
+  const state = twoXRooms(false);
+  state.slab.rooms[0].spanX = 3000;
+  state.slab.rooms[0].spanY = 3000;
+  state.slab.rooms[1].spanX = 3000;
+  state.slab.rooms[1].spanY = 6000;
   return state;
 }
 
@@ -164,6 +176,21 @@ describe("楼板计算打印模型", () => {
 });
 
 describe("打印范围与局部汇总", () => {
+  it("全部、当前筛选和自定义选择使用明确且互不混淆的范围文案", () => {
+    expect(printSelectionSummary("all", 8, 8)).toBe(
+      "全部正式结果 8/8项",
+    );
+    expect(printSelectionSummary("current-filters", 4, 8)).toBe(
+      "当前筛选 4/8项",
+    );
+    expect(printSelectionSummary("custom", 1, 8)).toBe(
+      "自定义选择 1/8项",
+    );
+    expect(printSelectionSummary("current-filters", 8, 8)).toBe(
+      "当前筛选 8/8项",
+    );
+  });
+
   it("全部选择包含所有正式结果并保持完整重量", () => {
     const { record } = makeReport(twoXRooms(false));
     const options = createDefaultSlabPrintOptions(record);
@@ -278,6 +305,27 @@ describe("打印范围与局部汇总", () => {
     expect(report.groups.every((group) => group.rows.length > 0)).toBe(true);
   });
 
+  it("图中R编号基于完整正式结果，局部选择不会重新编号", () => {
+    const { record } = makeReport(twoXRooms(false));
+    const numbers = createResultFigureNumberMap(record.calculation.results);
+    const selected = [
+      record.calculation.results.at(-1)!.id,
+      record.calculation.results[0].id,
+    ];
+    const report = buildSlabPrintReport(
+      record,
+      selectedOptions(record, selected, { rangeMode: "custom" }),
+    );
+
+    expect(report.rows.map((row) => row.figureNumber)).toEqual(
+      report.rows.map((row) => numbers.get(row.resultId)),
+    );
+    expect(report.rows.map((row) => row.figureNumber)).toContain("R01");
+    expect(report.rows.map((row) => row.figureNumber)).toContain(
+      `R${String(record.calculation.results.length).padStart(2, "0")}`,
+    );
+  });
+
   it("重复和不存在的ID被忽略且选择不会修改正式记录", () => {
     const { record } = makeReport(twoXRooms(false));
     const before = structuredClone(record);
@@ -382,6 +430,75 @@ describe("打印范围与局部汇总", () => {
   });
 });
 
+describe("多长度分区打印模型", () => {
+  it("父级结果显示多长度并展开稳定分区编号，重量只汇总一次", () => {
+    const { record, report } = makeReport(twoUnequalXRooms());
+    const row = report.rows.find(
+      (item) =>
+        item.roomId === "room-b" &&
+        item.layer === "bottom" &&
+        item.direction === "x",
+    );
+
+    expect(row).toBeDefined();
+    expect(row!.lengthMode).toBe("zoned");
+    expect(row!.variantRows).toHaveLength(2);
+    expect(row!.variantRows.map((variant) => variant.figureNumber)).toEqual([
+      `${row!.figureNumber}-A`,
+      `${row!.figureNumber}-B`,
+    ]);
+    expect(
+      row!.variantRows.reduce((sum, variant) => sum + variant.count, 0),
+    ).toBe(row!.count);
+    expect(
+      row!.variantRows.reduce(
+        (sum, variant) => sum + variant.representativeCount,
+        0,
+      ),
+    ).toBe(row!.representativeCount);
+    expect(
+      row!.variantRows.reduce(
+        (sum, variant) => sum + variant.totalLengthM,
+        0,
+      ),
+    ).toBeCloseTo(row!.totalLengthM, 12);
+    expect(
+      row!.variantRows.reduce((sum, variant) => sum + variant.weightKg, 0),
+    ).toBeCloseTo(row!.weightKg, 12);
+    expect(report.selectedTotalWeightKg).toBeCloseTo(
+      record.calculation.totalWeightKg!,
+      12,
+    );
+    expect(
+      report.specifications.reduce(
+        (sum, specification) => sum + specification.totalWeightKg,
+        0,
+      ),
+    ).toBeCloseTo(report.selectedTotalWeightKg, 12);
+  });
+
+  it("选择父级分区结果时包含全部分区但选择项仍只计一项", () => {
+    const { record } = makeReport(twoUnequalXRooms());
+    const result = record.calculation.results.find(
+      (item) =>
+        item.roomId === "room-b" &&
+        item.layer === "top" &&
+        item.direction === "x",
+    )!;
+    const report = buildSlabPrintReport(
+      record,
+      selectedOptions(record, [result.id], { rangeMode: "custom" }),
+    );
+
+    expect(report.selectedRowCount).toBe(1);
+    expect(report.rows).toHaveLength(1);
+    expect(report.rows[0].variantRows).toHaveLength(
+      result.lengthVariants.length,
+    );
+    expect(report.selectedTotalWeightKg).toBeCloseTo(result.weightKg, 12);
+  });
+});
+
 describe("打印报表根数算法", () => {
   const cases: Array<{
     mode: CountMode;
@@ -462,6 +579,15 @@ describe("打印报表根数算法", () => {
 
 describe("打印锚固文字", () => {
   it("自动内外墙、增加作用端和手动最终值均按正式结果显示", () => {
+    const defaultTopX = makeReport(
+      cloneDefaultSlabCalculatorState(),
+    ).record.calculation.results.find(
+      (result) => result.layer === "top" && result.direction === "x",
+    )!;
+    expect(defaultTopX.startExtraApplied).toBe(true);
+    expect(defaultTopX.endExtraApplied).toBe(true);
+    expect(formatExtraModeLabel(defaultTopX)).toBe("两端实际增加");
+
     const multi = makeReport(twoXRooms(false)).record.calculation.results;
     const bottomX = multi.find(
       (result) =>
@@ -498,6 +624,9 @@ describe("打印锚固文字", () => {
     expect(topX).toBeDefined();
     expect(formatAnchorLabel(topX!, "start")).toBe("手动550mm（最终值）");
     expect(formatAnchorLabel(topX!, "end")).toBe("外墙370mm（未增加）");
+    expect(formatExtraModeLabel(topX!)).toBe(
+      "手动锚固为最终值，未叠加增加值",
+    );
 
     state.top.x.extraMode = "both";
     const topXBoth = makeReport(state).record.calculation.results.find(
@@ -506,6 +635,21 @@ describe("打印锚固文字", () => {
     expect(formatAnchorLabel(topXBoth!, "start")).toBe("手动550mm（最终值）");
     expect(formatAnchorLabel(topXBoth!, "end")).toBe(
       "外墙620mm（已增加250mm）",
+    );
+    expect(formatExtraModeLabel(topXBoth!)).toBe("东端实际增加");
+
+    state.slab.rooms[0].anchors.top.x.end = {
+      source: "manual",
+      manualValue: 600,
+      origin: "user",
+    };
+    const bothManual = makeReport(state).record.calculation.results.find(
+      (result) => result.layer === "top" && result.direction === "x",
+    )!;
+    expect(bothManual.startExtraApplied).toBe(false);
+    expect(bothManual.endExtraApplied).toBe(false);
+    expect(formatExtraModeLabel(bothManual)).toBe(
+      "手动锚固为最终值，未叠加增加值",
     );
   });
 });

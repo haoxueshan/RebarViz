@@ -1,6 +1,7 @@
 import {
   type BarDirection,
   type BarLayer,
+  type BarLengthVariant,
   type BarResult,
   type CountMode,
   type RoomArrangement,
@@ -14,9 +15,30 @@ import {
   type SlabPrintSections,
   type StoredCalculationRecord,
 } from "./slab-calculator-storage";
+import {
+  allocateVariantRepresentativeCounts,
+  getRepresentativeCount,
+} from "./slab-diagram";
+
+export type SlabPrintVariantRow = {
+  figureNumber: string;
+  variantId: string;
+  perpendicularStartMm: number;
+  perpendicularEndMm: number;
+  rangeText: string;
+  count: number;
+  representativeCount: number;
+  startAnchorText: string;
+  endAnchorText: string;
+  extraModeText: string;
+  singleLengthM: number;
+  totalLengthM: number;
+  weightKg: number;
+};
 
 export type SlabPrintRow = {
   sequence: number;
+  figureNumber: string;
   resultId: string;
   scopeId: string;
   scopeName: string;
@@ -30,6 +52,10 @@ export type SlabPrintRow = {
   diameter: number;
   spacing: number;
   count: number;
+  representativeCount: number;
+  netRunSpanMm: number;
+  lengthMode: "uniform" | "zoned";
+  variantRows: SlabPrintVariantRow[];
   singleLengthM: number;
   totalLengthM: number;
   startAnchorText: string;
@@ -70,11 +96,24 @@ export type SlabPrintReportModel = {
   selectedTopWeightKg: number;
 };
 
-function anchorSourceLabel(result: BarResult, endpoint: "start" | "end") {
-  const source = endpoint === "start" ? result.startAnchorSource : result.endAnchorSource;
+function anchorSourceText(source: BarResult["startAnchorSource"]): string {
   if (source === "inner-wall") return "内墙";
   if (source === "outer-wall") return "外墙";
   return "手动";
+}
+
+function anchorText(
+  layer: BarLayer,
+  source: BarResult["startAnchorSource"],
+  value: number,
+  extraApplied: boolean,
+  topExtraValue: number,
+): string {
+  const label = anchorSourceText(source);
+  if (layer === "bottom" || source === "manual") {
+    return `${label}${value.toFixed(0)}mm${source === "manual" ? "（最终值）" : ""}`;
+  }
+  return `${label}${value.toFixed(0)}mm（${extraApplied ? `已增加${topExtraValue.toFixed(0)}mm` : "未增加"}）`;
 }
 
 export function formatAnchorLabel(
@@ -83,21 +122,68 @@ export function formatAnchorLabel(
 ): string {
   const source = endpoint === "start" ? result.startAnchorSource : result.endAnchorSource;
   const value = endpoint === "start" ? result.startAnchor : result.endAnchor;
-  const label = anchorSourceLabel(result, endpoint);
-  if (result.layer === "bottom" || source === "manual") {
-    return `${label}${value.toFixed(0)}mm${source === "manual" ? "（最终值）" : ""}`;
-  }
   const applied = endpoint === "start" ? result.startExtraApplied : result.endExtraApplied;
-  return `${label}${value.toFixed(0)}mm（${applied ? `已增加${result.topExtraValue.toFixed(0)}mm` : "未增加"}）`;
+  return anchorText(result.layer, source, value, applied, result.topExtraValue);
 }
 
 export function formatExtraModeLabel(result: BarResult): string {
-  if (result.layer === "bottom" || !result.topExtraMode) return "不适用";
-  if (result.topExtraMode === "both") return "两端增加";
+  if (result.layer === "bottom") return "不适用";
   const start = result.direction === "x" ? "西端" : "南端";
   const end = result.direction === "x" ? "东端" : "北端";
   const prefix = result.throughWall ? "最" : "";
-  return `${prefix}${result.topExtraMode === "start" ? start : end}增加`;
+  if (result.startExtraApplied && result.endExtraApplied) return "两端实际增加";
+  if (result.startExtraApplied) return `${prefix}${start}实际增加`;
+  if (result.endExtraApplied) return `${prefix}${end}实际增加`;
+  if (
+    result.startAnchorSource === "manual" ||
+    result.endAnchorSource === "manual"
+  ) {
+    return "手动锚固为最终值，未叠加增加值";
+  }
+  return "未实际增加";
+}
+
+export function createResultFigureNumberMap(
+  results: readonly BarResult[],
+): ReadonlyMap<string, string> {
+  const width = Math.max(2, String(results.length).length);
+  return new Map(
+    results.map((result, index) => [
+      result.id,
+      `R${String(index + 1).padStart(width, "0")}`,
+    ]),
+  );
+}
+
+export function formatVariantAnchorLabel(
+  result: BarResult,
+  variant: BarLengthVariant,
+  endpoint: "start" | "end",
+): string {
+  return anchorText(
+    result.layer,
+    endpoint === "start"
+      ? variant.startAnchorSource
+      : variant.endAnchorSource,
+    endpoint === "start" ? variant.startAnchor : variant.endAnchor,
+    endpoint === "start"
+      ? variant.startExtraApplied
+      : variant.endExtraApplied,
+    result.topExtraValue,
+  );
+}
+
+export function formatVariantExtraModeLabel(
+  result: BarResult,
+  variant: BarLengthVariant,
+): string {
+  return formatExtraModeLabel({
+    ...result,
+    startAnchorSource: variant.startAnchorSource,
+    endAnchorSource: variant.endAnchorSource,
+    startExtraApplied: variant.startExtraApplied,
+    endExtraApplied: variant.endExtraApplied,
+  });
 }
 
 export function formatCountFormula(
@@ -188,6 +274,17 @@ export function printRangeLabel(rangeMode: SlabPrintRangeMode): string {
   return "全部正式结果";
 }
 
+export function printSelectionSummary(
+  rangeMode: SlabPrintRangeMode,
+  selectedRowCount: number,
+  fullRowCount: number,
+): string {
+  const countText = `${selectedRowCount}/${fullRowCount}项`;
+  if (rangeMode === "current-filters") return `当前筛选 ${countText}`;
+  if (rangeMode === "custom") return `自定义选择 ${countText}`;
+  return `全部正式结果 ${countText}`;
+}
+
 export function canPrintSlabReport(
   model: SlabPrintReportModel,
   options: SlabPrintOptions,
@@ -223,35 +320,70 @@ export function buildSlabPrintReport(
       };
     })
     .filter((group) => group.results.length > 0);
+  const figureNumbers = createResultFigureNumberMap(
+    record.calculation.results,
+  );
+  const figureSequences = new Map(
+    record.calculation.results.map((result, index) => [result.id, index + 1]),
+  );
 
-  let sequence = 0;
   const groups = selectedGroups.map((group): SlabPrintGroup => ({
     scopeId: group.scopeId,
     scopeName: group.title,
     scopeType: group.scopeType,
     roomId: group.roomId,
     subtotalWeightKg: group.subtotalWeightKg,
-    rows: group.results.map((result): SlabPrintRow => ({
-      sequence: ++sequence,
-      resultId: result.id,
-      scopeId: group.scopeId,
-      scopeName: result.scopeName,
-      scopeType: group.scopeType,
-      roomId: group.roomId,
-      layer: result.layer,
-      direction: result.direction,
-      throughWall: result.throughWall,
-      typeDirectionText: barTypeDirectionLabel(result),
-      extraModeText: formatExtraModeLabel(result),
-      diameter: result.diameter,
-      spacing: result.spacing,
-      count: result.count,
-      singleLengthM: result.singleLengthM,
-      totalLengthM: result.totalLengthM,
-      startAnchorText: formatAnchorLabel(result, "start"),
-      endAnchorText: formatAnchorLabel(result, "end"),
-      weightKg: result.weightKg,
-    })),
+    rows: group.results.map((result): SlabPrintRow => {
+      const sequence = figureSequences.get(result.id) ?? 0;
+      const figureNumber = figureNumbers.get(result.id) ?? "R--";
+      const variantRepresentativeCounts = new Map(
+        allocateVariantRepresentativeCounts(result).map((allocation) => [
+          allocation.variantId,
+          allocation.count,
+        ]),
+      );
+      return {
+        sequence,
+        figureNumber,
+        resultId: result.id,
+        scopeId: group.scopeId,
+        scopeName: result.scopeName,
+        scopeType: group.scopeType,
+        roomId: group.roomId,
+        layer: result.layer,
+        direction: result.direction,
+        throughWall: result.throughWall,
+        typeDirectionText: barTypeDirectionLabel(result),
+        extraModeText: formatExtraModeLabel(result),
+        diameter: result.diameter,
+        spacing: result.spacing,
+        count: result.count,
+        representativeCount: getRepresentativeCount(result),
+        netRunSpanMm: result.netRunSpanMm,
+        lengthMode: result.lengthMode,
+        variantRows: result.lengthVariants.map((variant, index) => ({
+          figureNumber: `${figureNumber}-${String.fromCharCode(65 + index)}`,
+          variantId: variant.id,
+          perpendicularStartMm: variant.perpendicularStartMm,
+          perpendicularEndMm: variant.perpendicularEndMm,
+          rangeText: `${variant.perpendicularStartMm.toFixed(0)}–${variant.perpendicularEndMm.toFixed(0)}mm`,
+          count: variant.count,
+          representativeCount:
+            variantRepresentativeCounts.get(variant.id) ?? 0,
+          startAnchorText: formatVariantAnchorLabel(result, variant, "start"),
+          endAnchorText: formatVariantAnchorLabel(result, variant, "end"),
+          extraModeText: formatVariantExtraModeLabel(result, variant),
+          singleLengthM: variant.singleLengthM,
+          totalLengthM: variant.totalLengthM,
+          weightKg: variant.weightKg,
+        })),
+        singleLengthM: result.singleLengthM,
+        totalLengthM: result.totalLengthM,
+        startAnchorText: formatAnchorLabel(result, "start"),
+        endAnchorText: formatAnchorLabel(result, "end"),
+        weightKg: result.weightKg,
+      };
+    }),
   }));
   const rows = groups.flatMap((group) => group.rows);
 

@@ -18,8 +18,11 @@ import {
   formatAnchorLabel,
   formatCountFormula,
   formatExtraModeLabel,
+  formatVariantAnchorLabel,
+  formatVariantExtraModeLabel,
   buildSlabPrintReport,
   canPrintSlabReport,
+  createResultFigureNumberMap,
   filteredPrintResultIds,
   isPrintableCalculationRecord,
 } from "@/lib/slab-calculator-report";
@@ -62,6 +65,23 @@ function ResultFormula({
   result: BarResult;
   countMode: CountMode;
 }) {
+  if (result.lengthMode === "zoned") {
+    return (
+      <div className="space-y-1 text-xs leading-5 text-slate-600">
+        <p>
+          单根长度：本项包含{result.lengthVariants.length}种分区长度；
+          {result.singleLengthM.toFixed(3)}m 为按正式根数加权平均值，不代表统一单根长度。
+        </p>
+        <p>
+          根数：{formatCountFormula(result.calculationWidthMm, result.spacing, countMode)} = {result.count}根
+        </p>
+        <p>面筋增加作用端：按各分区实际锚固端确定</p>
+        <p>总长度：Σ（分区根数 × 分区单根长度）= {result.totalLengthM.toFixed(3)}m</p>
+        <p>单位重量：π × {result.diameter}² × 7850 ÷ 4 ÷ 1,000,000 = {result.unitWeightKgM.toFixed(4)}kg/m</p>
+        <p>重量：{result.totalLengthM.toFixed(3)} × {result.unitWeightKgM.toFixed(4)} = {result.weightKg.toFixed(2)}kg</p>
+      </div>
+    );
+  }
   const lengthParts = [
     result.netRunSpanMm,
     ...(result.intermediateWallMm > 0 ? [result.intermediateWallMm] : []),
@@ -82,12 +102,51 @@ function ResultFormula({
   );
 }
 
+function ResultVariantDetails({
+  result,
+  figureNumber,
+}: {
+  result: BarResult;
+  figureNumber: string;
+}) {
+  if (result.lengthMode !== "zoned") return null;
+  const rangeAxis = result.direction === "x" ? "Y" : "X";
+  return (
+    <div className="mt-3 overflow-hidden rounded-lg border border-amber-200 bg-white">
+      <div className="bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-950">
+        多长度分区明细（{rangeAxis}向分区）
+      </div>
+      <div className="divide-y divide-slate-200">
+        {result.lengthVariants.map((variant, index) => (
+          <div
+            key={variant.id}
+            data-variant-id={variant.id}
+            className="grid gap-2 px-3 py-3 text-xs sm:grid-cols-2 lg:grid-cols-4"
+          >
+            <p className="font-semibold text-slate-900">
+              {figureNumber}-{String.fromCharCode(65 + index)} · {rangeAxis}={variant.perpendicularStartMm.toFixed(0)}–{variant.perpendicularEndMm.toFixed(0)}mm
+            </p>
+            <p>根数：{variant.count}根 · 单根：{variant.singleLengthM.toFixed(3)}m</p>
+            <p>起点：{formatVariantAnchorLabel(result, variant, "start")}</p>
+            <p>终点：{formatVariantAnchorLabel(result, variant, "end")}</p>
+            <p className="sm:col-span-2">面筋增加：{formatVariantExtraModeLabel(result, variant)}</p>
+            <p>总长度：{variant.totalLengthM.toFixed(3)}m</p>
+            <p>重量：{variant.weightKg.toFixed(2)}kg</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ResultGroupCard({
   group,
   countMode,
+  figureNumbers,
 }: {
   group: ResultGroup;
   countMode: CountMode;
+  figureNumbers: ReadonlyMap<string, string>;
 }) {
   return (
     <section id={`scope-${group.scopeId}`} className="scroll-mt-20 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -101,19 +160,23 @@ function ResultGroupCard({
         </div>
       </div>
       <div className="mt-4 space-y-3">
-        {group.results.map((result) => (
-          <article key={result.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+        {group.results.map((result) => {
+          const figureNumber = figureNumbers.get(result.id) ?? "R--";
+          return (
+          <article key={result.id} data-result-id={result.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <div><p className="text-xs text-slate-500">类型/方向</p><p className="font-semibold">{result.layer === "bottom" ? "地筋" : "面筋"} · {result.direction.toUpperCase()}向{result.throughWall ? "通墙" : result.scopeType === "through" ? "组合区" : ""}</p></div>
+              <div><p className="text-xs text-slate-500">编号/类型/方向</p><p className="font-semibold">{figureNumber} · {result.layer === "bottom" ? "地筋" : "面筋"} · {result.direction.toUpperCase()}向{result.throughWall ? "通墙" : result.scopeType === "through" ? "组合区" : ""}</p></div>
               <div><p className="text-xs text-slate-500">规格/根数</p><p className="font-semibold">Φ{result.diameter} · {result.count}根</p></div>
-              <div><p className="text-xs text-slate-500">单根/总长度</p><p className="font-semibold">{result.singleLengthM.toFixed(3)}m / {result.totalLengthM.toFixed(3)}m</p></div>
+              <div><p className="text-xs text-slate-500">单根/总长度</p><p className="font-semibold">{result.lengthMode === "zoned" ? `多长度（${result.lengthVariants.length}区）` : `${result.singleLengthM.toFixed(3)}m`} / {result.totalLengthM.toFixed(3)}m</p></div>
               <div><p className="text-xs text-slate-500">重量</p><p className="text-lg font-bold text-slate-900">{result.weightKg.toFixed(2)}kg</p></div>
-              <div><p className="text-xs text-slate-500">起点锚固</p><p className="font-medium">{formatAnchorLabel(result, "start")}</p></div>
-              <div><p className="text-xs text-slate-500">终点锚固</p><p className="font-medium">{formatAnchorLabel(result, "end")}</p></div>
+              <div><p className="text-xs text-slate-500">起点锚固</p><p className="font-medium">{result.lengthMode === "zoned" ? "见分区明细" : formatAnchorLabel(result, "start")}</p></div>
+              <div><p className="text-xs text-slate-500">终点锚固</p><p className="font-medium">{result.lengthMode === "zoned" ? "见分区明细" : formatAnchorLabel(result, "end")}</p></div>
               <div className="sm:col-span-2"><ResultFormula result={result} countMode={countMode} /></div>
             </div>
+            <ResultVariantDetails result={result} figureNumber={figureNumber} />
           </article>
-        ))}
+          );
+        })}
       </div>
     </section>
   );
@@ -172,6 +235,21 @@ export function CalculatorResultsClient() {
   const currentFilteredResultIds = useMemo(
     () => (record ? filteredPrintResultIds(record, ui.filters) : []),
     [record, ui.filters],
+  );
+  const hasActiveFilters =
+    ui.filters.layer !== "all" ||
+    ui.filters.direction !== "all" ||
+    ui.filters.through !== "all";
+  const screenVisibleResultIds = useMemo(
+    () =>
+      hasActiveFilters
+        ? new Set(currentFilteredResultIds)
+        : undefined,
+    [currentFilteredResultIds, hasActiveFilters],
+  );
+  const figureNumbers = useMemo(
+    () => createResultFigureNumberMap(record?.calculation.results ?? []),
+    [record],
   );
 
   if (loading || !record) {
@@ -268,8 +346,7 @@ export function CalculatorResultsClient() {
           <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-5 text-emerald-950"><p className="text-sm">面筋重量</p><p className="mt-1 text-2xl font-bold">{topWeight.toFixed(2)}kg</p></div>
         </section>
 
-        <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.8fr)]">
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <h2 className="font-bold text-slate-900">计算参数快照</h2>
             <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
               <div><dt className="text-slate-500">排列/房间数</dt><dd className="font-semibold">{record.inputSnapshot.slab.arrangement.toUpperCase()} · {record.inputSnapshot.slab.rooms.length}间</dd></div>
@@ -288,9 +365,43 @@ export function CalculatorResultsClient() {
                 <p>垂直方向根数：{formatCountFormula(calculation.throughWall.perpendicularBar.calculationWidthMm, calculation.throughWall.perpendicularBar.spacing, record.inputSnapshot.slab.countMode)} = {calculation.throughWall.perpendicularBar.count}根（不计中间墙）</p>
               </div>
             )}
-          </section>
-          <SlabResultsDiagram state={record.inputSnapshot} calculation={calculation} />
-        </div>
+        </section>
+
+        <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm sm:p-5">
+          <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h2 className="font-bold text-slate-900">楼板钢筋计算二维示意图</h2>
+              <p className="mt-1 text-xs leading-5 text-slate-500">
+                {hasActiveFilters
+                  ? `二维图同步当前筛选：显示 ${currentFilteredResultIds.length}/${calculation.results.length} 项正式结果，不受结果分页影响。`
+                  : `当前显示全部 ${calculation.results.length} 项正式结果。`}
+              </p>
+            </div>
+            {hasActiveFilters && currentFilteredResultIds.length === 0 && (
+              <span className="rounded-lg bg-amber-100 px-3 py-2 text-xs font-semibold text-amber-900">
+                当前筛选无钢筋，图中仅保留房间和墙体。
+              </span>
+            )}
+          </div>
+          <div className="overflow-x-auto pb-1">
+            <div className="min-w-[720px]">
+              <SlabResultsDiagram
+                state={record.inputSnapshot}
+                calculation={calculation}
+                visibleResultIds={screenVisibleResultIds}
+                selectionContext={
+                  hasActiveFilters
+                    ? {
+                        kind: "current-filters",
+                        selectedCount: currentFilteredResultIds.length,
+                        totalCount: calculation.results.length,
+                      }
+                    : undefined
+                }
+              />
+            </div>
+          </div>
+        </section>
 
         <section className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4 shadow-sm sm:p-5">
           <div className="grid gap-3 md:grid-cols-5">
@@ -303,7 +414,7 @@ export function CalculatorResultsClient() {
         </section>
 
         <div className="mt-4 space-y-4">
-          {pagination.groups.length > 0 ? pagination.groups.map((group) => <ResultGroupCard key={group.scopeId} group={group} countMode={record.inputSnapshot.slab.countMode} />) : <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">当前筛选没有结果；全部重量仍为 {total.toFixed(2)}kg。</div>}
+          {pagination.groups.length > 0 ? pagination.groups.map((group) => <ResultGroupCard key={group.scopeId} group={group} countMode={record.inputSnapshot.slab.countMode} figureNumbers={figureNumbers} />) : <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">当前筛选没有结果；全部重量仍为 {total.toFixed(2)}kg。</div>}
         </div>
 
         <nav className="mt-5 flex flex-wrap items-center justify-center gap-2" aria-label="结果分页">

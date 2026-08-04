@@ -16,7 +16,7 @@ export const RESULT_PRINT_SETTINGS_KEY =
 export const RETURN_TO_INPUT_KEY = "rebarviz:slab-calculator:return-to-input:v1";
 
 export const CALCULATOR_SCHEMA_VERSION = 1;
-export const CALCULATOR_ALGORITHM_VERSION = "slab-calculator-2026-08-v2";
+export const CALCULATOR_ALGORITHM_VERSION = "slab-calculator-2026-08-v3";
 
 export type CalculationStatus =
   | "idle"
@@ -240,6 +240,116 @@ export function parseDraftRecord(raw: string | null): CalculatorDraftRecord | nu
   }
 }
 
+function sameNumber(left: number, right: number): boolean {
+  return (
+    Number.isFinite(left) &&
+    Number.isFinite(right) &&
+    Math.abs(left - right) <= 1e-8
+  );
+}
+
+function sameBarResult(left: BarResult, right: BarResult): boolean {
+  if (
+    left.id !== right.id ||
+    left.scopeId !== right.scopeId ||
+    left.scopeType !== right.scopeType ||
+    left.roomId !== right.roomId ||
+    left.scopeName !== right.scopeName ||
+    left.layer !== right.layer ||
+    left.direction !== right.direction ||
+    left.throughWall !== right.throughWall ||
+    left.count !== right.count ||
+    left.startAnchorSource !== right.startAnchorSource ||
+    left.endAnchorSource !== right.endAnchorSource ||
+    left.topExtraMode !== right.topExtraMode ||
+    left.startExtraApplied !== right.startExtraApplied ||
+    left.endExtraApplied !== right.endExtraApplied ||
+    left.lengthMode !== right.lengthMode ||
+    !Array.isArray(left.lengthVariants) ||
+    left.lengthVariants.length !== right.lengthVariants.length
+  ) {
+    return false;
+  }
+  const numericFields = [
+    "diameter",
+    "singleLengthM",
+    "totalLengthM",
+    "unitWeightKgM",
+    "weightKg",
+    "startAnchor",
+    "endAnchor",
+    "topExtraValue",
+    "netRunSpanMm",
+    "intermediateWallMm",
+    "calculationWidthMm",
+    "spacing",
+  ] as const;
+  if (numericFields.some((field) => !sameNumber(left[field], right[field]))) {
+    return false;
+  }
+  return left.lengthVariants.every((variant, index) => {
+    const expected = right.lengthVariants[index];
+    return (
+      variant.id === expected.id &&
+      variant.count === expected.count &&
+      variant.startAnchorSource === expected.startAnchorSource &&
+      variant.endAnchorSource === expected.endAnchorSource &&
+      variant.startExtraApplied === expected.startExtraApplied &&
+      variant.endExtraApplied === expected.endExtraApplied &&
+      sameNumber(variant.perpendicularStartMm, expected.perpendicularStartMm) &&
+      sameNumber(variant.perpendicularEndMm, expected.perpendicularEndMm) &&
+      sameNumber(variant.startAnchor, expected.startAnchor) &&
+      sameNumber(variant.endAnchor, expected.endAnchor) &&
+      sameNumber(variant.singleLengthM, expected.singleLengthM) &&
+      sameNumber(variant.totalLengthM, expected.totalLengthM) &&
+      sameNumber(variant.weightKg, expected.weightKg)
+    );
+  });
+}
+
+function sameCalculation(
+  stored: SlabCalculation,
+  recalculated: SlabCalculation,
+): boolean {
+  if (
+    stored.isValid !== recalculated.isValid ||
+    stored.totalWeightKg === null ||
+    recalculated.totalWeightKg === null ||
+    !sameNumber(stored.totalWeightKg, recalculated.totalWeightKg) ||
+    stored.results.length !== recalculated.results.length ||
+    stored.errors.length !== recalculated.errors.length ||
+    stored.errors.some((error, index) => error !== recalculated.errors[index]) ||
+    !stored.results.every((result, index) =>
+      sameBarResult(result, recalculated.results[index]),
+    )
+  ) {
+    return false;
+  }
+  if (!stored.throughWall || !recalculated.throughWall) {
+    return stored.throughWall === recalculated.throughWall;
+  }
+  return (
+    stored.throughWall.direction === recalculated.throughWall.direction &&
+    stored.throughWall.roomCount === recalculated.throughWall.roomCount &&
+    sameNumber(
+      stored.throughWall.netSpanTotal,
+      recalculated.throughWall.netSpanTotal,
+    ) &&
+    sameNumber(
+      stored.throughWall.intermediateWallTotal,
+      recalculated.throughWall.intermediateWallTotal,
+    ) &&
+    sameBarResult(
+      stored.throughWall.throughBar,
+      recalculated.throughWall.throughBar,
+    ) &&
+    sameBarResult(
+      stored.throughWall.perpendicularBar,
+      recalculated.throughWall.perpendicularBar,
+    )
+  );
+}
+
 export function parseCalculationRecord(
   raw: string | null,
 ): StoredCalculationRecord | null {
@@ -273,12 +383,15 @@ export function parseCalculationRecord(
     if (
       !recalculated.isValid ||
       recalculated.totalWeightKg === null ||
-      recalculated.results.length !== record.calculation.results.length ||
-      Math.abs(recalculated.totalWeightKg - record.calculation.totalWeightKg) > 1e-8
+      !sameCalculation(record.calculation, recalculated)
     ) {
       return null;
     }
-    return { ...record, inputSnapshot: normalizedInputSnapshot };
+    return {
+      ...record,
+      inputSnapshot: normalizedInputSnapshot,
+      calculation: recalculated,
+    };
   } catch {
     return null;
   }

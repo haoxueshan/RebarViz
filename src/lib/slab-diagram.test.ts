@@ -10,8 +10,13 @@ import {
   type SlabRoom,
 } from "./slab-calculator";
 import {
+  allocateRoomRepresentativeCounts,
+  allocateVariantRepresentativeCounts,
+  buildWorldLayout,
   buildSlabDiagramScene,
+  collectWorldBounds,
   formatDiagramExtraLabel,
+  getDiagramMarkerRect,
   getRepresentativeCount,
 } from "./slab-diagram";
 
@@ -107,7 +112,9 @@ describe("楼板二维场景坐标", () => {
     state.slab.outerWallThickness = 370;
     const scene = buildSlabDiagramScene(state);
     const inner = scene.walls.find((wall) => wall.kind === "inner")!;
-    const north = scene.walls.find((wall) => wall.id === "outer-north")!;
+    const north = scene.walls.find(
+      (wall) => wall.kind === "outer" && wall.orientation === "horizontal",
+    )!;
 
     expect(inner.rect.width / scene.scale).toBeCloseTo(240, 8);
     expect(north.rect.height / scene.scale).toBeCloseTo(370, 8);
@@ -135,6 +142,266 @@ describe("楼板二维场景坐标", () => {
     expect(finitePoint(scene.xAxis.start)).toBe(true);
     expect(finitePoint(scene.yAxis.end)).toBe(true);
     expect(scene.notes.some((note) => note.includes("安全绘图回退值"))).toBe(true);
+    expect(scene.walls.some((wall) => wall.label.includes("待完善"))).toBe(true);
+    expect(scene.rooms[0].label).toContain("待完善");
+  });
+
+  it("固定画布高度不随正式结果数量变化", () => {
+    const single = cloneDefaultSlabCalculatorState();
+    const many = roomsState(
+      "x",
+      Array.from({ length: 5 }, () => [3000, 3600]),
+    );
+    const singleCalculation = calculateSlabResults(single);
+    const manyCalculation = calculateSlabResults(many);
+    const oneResult = singleCalculation.results[0];
+
+    const oneScene = buildSlabDiagramScene(single, singleCalculation, {
+      visibleResultIds: new Set([oneResult.id]),
+    });
+    const manyScene = buildSlabDiagramScene(many, manyCalculation);
+
+    expect(oneScene.width).toBe(1000);
+    expect(oneScene.height).toBe(560);
+    expect(manyScene.width).toBe(oneScene.width);
+    expect(manyScene.height).toBe(oneScene.height);
+    expect(manyScene.plotRect).toEqual(oneScene.plotRect);
+  });
+});
+
+describe("阶梯墙体世界拓扑", () => {
+  it("X向不等高房间的内墙只覆盖重叠区且高房间西侧上部为外墙", () => {
+    const state = roomsState("x", [
+      [3000, 3000],
+      [3000, 6000],
+    ]);
+    const layout = buildWorldLayout(state);
+    const inner = layout.walls.find((wall) => wall.kind === "inner")!;
+    const highRoom = layout.rooms[1];
+    const exposedWest = layout.walls.find(
+      (wall) =>
+        wall.kind === "outer" &&
+        wall.outward === "west" &&
+        wall.adjacentRoomIds.includes(highRoom.id) &&
+        wall.rect.y >= 3000 - 1e-8,
+    );
+
+    expect(inner.rect).toMatchObject({ x: 3000, y: 0, width: 240, height: 3000 });
+    expect(exposedWest).toBeDefined();
+    expect(exposedWest!.rect.y).toBeCloseTo(3000, 8);
+    expect(exposedWest!.rect.height).toBeCloseTo(3000, 8);
+    expect(
+      layout.walls.some(
+        (wall) => wall.kind === "inner" && wall.rect.y + wall.rect.height > 3000 + 1e-8,
+      ),
+    ).toBe(false);
+  });
+
+  it("Y向不等宽房间按镜像规则形成局部内墙和阶梯外轮廓", () => {
+    const state = roomsState("y", [
+      [3000, 3000],
+      [6000, 3000],
+    ]);
+    const layout = buildWorldLayout(state);
+    const inner = layout.walls.find((wall) => wall.kind === "inner")!;
+    const wideRoom = layout.rooms[1];
+    const exposedSouth = layout.walls.find(
+      (wall) =>
+        wall.kind === "outer" &&
+        wall.outward === "south" &&
+        wall.adjacentRoomIds.includes(wideRoom.id) &&
+        wall.rect.x >= 3000 - 1e-8,
+    );
+
+    expect(inner.rect).toMatchObject({ x: 0, y: 3000, width: 3000, height: 240 });
+    expect(exposedSouth).toBeDefined();
+    expect(exposedSouth!.rect.x).toBeCloseTo(3000, 8);
+    expect(exposedSouth!.rect.width).toBeCloseTo(3000, 8);
+  });
+
+  it("三间不等高房间的墙段坐标均有限且内墙互不贯穿空白区", () => {
+    const state = roomsState("x", [
+      [3000, 3000],
+      [3000, 6000],
+      [3000, 4500],
+    ]);
+    const layout = buildWorldLayout(state);
+    const inner = layout.walls.filter((wall) => wall.kind === "inner");
+
+    expect(inner).toHaveLength(2);
+    expect(inner.map((wall) => wall.rect.height)).toEqual([3000, 4500]);
+    expect(layout.walls.every((wall) =>
+      [wall.rect.x, wall.rect.y, wall.rect.width, wall.rect.height].every(Number.isFinite),
+    )).toBe(true);
+  });
+});
+
+describe("diagram geometry audit regressions", () => {
+  it("fills the four convex outer-wall corners of a single room", () => {
+    const state = cloneDefaultSlabCalculatorState();
+    state.slab.outerWallThickness = 370;
+    const layout = buildWorldLayout(state);
+    const corners = layout.walls.filter(
+      (wall) => wall.kind === "outer" && wall.orientation === "corner",
+    );
+
+    expect(corners).toHaveLength(4);
+    expect(corners.map((wall) => wall.rect)).toEqual(
+      expect.arrayContaining([
+        { x: -370, y: -370, width: 370, height: 370 },
+        { x: 4200, y: -370, width: 370, height: 370 },
+        { x: -370, y: 3600, width: 370, height: 370 },
+        { x: 4200, y: 3600, width: 370, height: 370 },
+      ]),
+    );
+  });
+
+  it("does not fill the concave notch of unequal X-arranged rooms", () => {
+    const state = roomsState("x", [
+      [3000, 3000],
+      [3000, 6000],
+    ]);
+    state.slab.innerWallThickness = 240;
+    state.slab.outerWallThickness = 370;
+    const layout = buildWorldLayout(state);
+    const concavePatch = layout.walls.find(
+      (wall) =>
+        wall.orientation === "corner" &&
+        Math.abs(wall.rect.x - (3240 - 370)) < 1e-8 &&
+        Math.abs(wall.rect.y - 3000) < 1e-8,
+    );
+
+    expect(concavePatch).toBeUndefined();
+  });
+
+  it("maps formal variant coordinates into safely normalized room geometry", () => {
+    const state = cloneDefaultSlabCalculatorState();
+    state.slab.rooms[0].spanY = 2_000_000_000;
+    const calculation = calculateSlabResults(state);
+    const result = calculation.results.find(
+      (item) => item.layer === "bottom" && item.direction === "x",
+    )!;
+    const scene = buildSlabDiagramScene(state, calculation, {
+      visibleResultIds: new Set([result.id]),
+    });
+    const room = scene.rooms[0].rect;
+
+    expect(scene.barGroups[0].netSegments).not.toHaveLength(0);
+    expect(scene.barGroups[0].netSegments.every((segment) =>
+      segment.start.y >= room.y - 1e-8 &&
+      segment.start.y <= room.y + room.height + 1e-8,
+    )).toBe(true);
+  });
+
+  it("uses report-compatible result number width above 99 results", () => {
+    const state = roomsState(
+      "x",
+      Array.from({ length: 25 }, () => [3000, 3600]),
+    );
+    const calculation = calculateSlabResults(state);
+    const scene = buildSlabDiagramScene(state, calculation);
+
+    expect(calculation.results).toHaveLength(100);
+    expect(scene.barGroups[0].resultNumber).toBe("R001");
+    expect(scene.barGroups.at(-1)!.resultNumber).toBe("R100");
+  });
+
+  it("creates stable per-variant diagram markers away from the room center", () => {
+    const state = roomsState("x", [
+      [3000, 3000],
+      [3000, 6000],
+    ]);
+    const calculation = calculateSlabResults(state);
+    const result = calculation.results.find(
+      (item) =>
+        item.roomId === "room-1" &&
+        item.layer === "bottom" &&
+        item.direction === "x",
+    )!;
+    const scene = buildSlabDiagramScene(state, calculation, {
+      visibleResultIds: new Set([result.id]),
+    });
+    const group = scene.barGroups[0];
+    const room = scene.rooms.find((item) => item.id === "room-1")!.rect;
+    const roomCenterX = room.x + room.width / 2;
+
+    expect(group.lengthMode).toBe("zoned");
+    expect(group.markers.map((marker) => marker.label)).toEqual([
+      `${group.resultNumber}-A`,
+      `${group.resultNumber}-B`,
+    ]);
+    expect(group.markers.every((marker) => finitePoint(marker.point))).toBe(true);
+    expect(group.markers.every((marker) => Math.abs(marker.point.x - roomCenterX) > 1)).toBe(true);
+  });
+
+  it("uses wall tangent length when deciding whether a wall label fits", () => {
+    const state = roomsState("x", [
+      [1000, 50],
+      [1000, 50],
+    ]);
+    state.slab.innerWallThickness = 5000;
+    state.slab.outerWallThickness = 100;
+    const scene = buildSlabDiagramScene(state);
+    const inner = scene.walls.find(
+      (wall) => wall.kind === "inner" && wall.orientation === "vertical",
+    )!;
+
+    expect(inner.rect.width).toBeGreaterThan(72);
+    expect(inner.rect.height).toBeLessThan(72);
+    expect(inner.showLabel).toBe(false);
+  });
+
+  it("keeps narrow-room label boxes strictly inside their rooms", () => {
+    const scene = buildSlabDiagramScene(
+      roomsState("x", [
+        [100, 3600],
+        [10_000, 3600],
+      ]),
+    );
+
+    expect(scene.rooms[0].labelRect.width).toBeLessThan(52);
+    expect(scene.rooms.every((room) =>
+      room.labelRect.x >= room.rect.x - 1e-8 &&
+      room.labelRect.y >= room.rect.y - 1e-8 &&
+      room.labelRect.x + room.labelRect.width <= room.rect.x + room.rect.width + 1e-8 &&
+      room.labelRect.y + room.labelRect.height <= room.rect.y + room.rect.height + 1e-8,
+    )).toBe(true);
+  });
+
+  it("lays out four single-room result badges without collisions", () => {
+    const state = cloneDefaultSlabCalculatorState();
+    const calculation = calculateSlabResults(state);
+    const scene = buildSlabDiagramScene(state, calculation);
+    const markers = scene.barGroups.flatMap((group) => group.markers);
+    const markerRects = markers.map(getDiagramMarkerRect);
+    const overlaps = (
+      left: { x: number; y: number; width: number; height: number },
+      right: { x: number; y: number; width: number; height: number },
+    ) =>
+      left.x < right.x + right.width &&
+      left.x + left.width > right.x &&
+      left.y < right.y + right.height &&
+      left.y + left.height > right.y;
+
+    expect(markers.map((marker) => marker.label)).toEqual([
+      "R01",
+      "R02",
+      "R03",
+      "R04",
+    ]);
+    for (let left = 0; left < markerRects.length; left += 1) {
+      const rect = markerRects[left];
+      expect([rect.x, rect.y, rect.width, rect.height].every(Number.isFinite)).toBe(true);
+      expect(rect.x).toBeGreaterThanOrEqual(scene.plotRect.x);
+      expect(rect.y).toBeGreaterThanOrEqual(scene.plotRect.y);
+      expect(rect.x + rect.width).toBeLessThanOrEqual(scene.plotRect.x + scene.plotRect.width);
+      expect(rect.y + rect.height).toBeLessThanOrEqual(scene.plotRect.y + scene.plotRect.height);
+      expect(scene.rooms.every((room) => !overlaps(rect, room.labelRect))).toBe(true);
+      expect(scene.walls.every((wall) => !overlaps(rect, wall.rect))).toBe(true);
+      for (let right = left + 1; right < markerRects.length; right += 1) {
+        expect(overlaps(rect, markerRects[right])).toBe(false);
+      }
+    }
   });
 });
 
@@ -219,6 +486,29 @@ describe("正式结果代表线", () => {
     expect(scene.barGroups.every((group) => group.representativeCount >= 1)).toBe(true);
     expect(lastRoomGroups).toHaveLength(4);
     expect(totalNetLines).toBeGreaterThan(60);
+  });
+
+  it("分区代表线按正式分区根数分配且总数保持父级上限", () => {
+    const state = roomsState("x", [
+      [3000, 3000],
+      [3000, 6000],
+    ]);
+    const calculation = calculateSlabResults(state);
+    const result = calculation.results.find(
+      (item) => item.roomId === "room-1" && item.layer === "bottom" && item.direction === "x",
+    )!;
+    const allocated = allocateVariantRepresentativeCounts(result, 5);
+    const scene = buildSlabDiagramScene(state, calculation, {
+      visibleResultIds: new Set([result.id]),
+      maxLinesPerResult: 5,
+    });
+
+    expect(result.lengthMode).toBe("zoned");
+    expect(allocated.reduce((sum, item) => sum + item.count, 0)).toBe(5);
+    expect(scene.barGroups[0].representativeCount).toBe(5);
+    expect(scene.barGroups[0].variants.map((variant) => variant.representativeCount)).toEqual(
+      allocated.map((item) => item.count),
+    );
   });
 
   it("空visibleResultIds不绘制任何钢筋", () => {
@@ -343,8 +633,61 @@ describe("锚固、增加段与通墙选择", () => {
         (x) => x < innerWall.rect.x || x > innerWall.rect.x + innerWall.rect.width,
       ),
     ).toBe(true);
-    expect(xCoordinates.filter((x) => x > innerWall.rect.x).length).toBeGreaterThan(
-      xCoordinates.filter((x) => x < innerWall.rect.x).length,
-    );
+    expect(xCoordinates.filter((x) => x < innerWall.rect.x).length).toBe(2);
+    expect(xCoordinates.filter((x) => x > innerWall.rect.x + innerWall.rect.width).length).toBe(3);
+    const layout = buildWorldLayout(state);
+    expect(allocateRoomRepresentativeCounts(layout.rooms, "x", 5)).toEqual([2, 3]);
+  });
+
+  it("长手动锚固和增加段进入完整边界且投影后都留在画布内", () => {
+    const state = cloneDefaultSlabCalculatorState();
+    state.slab.rooms[0].anchors.top.x.start = manualAnchor(50_000);
+    state.slab.rooms[0].anchors.top.x.end = manualAnchor(75_000);
+    const calculation = calculateSlabResults(state);
+    const result = calculation.results.find(
+      (item) => item.layer === "top" && item.direction === "x",
+    )!;
+    const scene = buildSlabDiagramScene(state, calculation, {
+      visibleResultIds: new Set([result.id]),
+    });
+    const group = scene.barGroups[0];
+    const allSegments = [
+      ...group.netSegments,
+      ...group.startAnchorSegments,
+      ...group.endAnchorSegments,
+      ...group.extraSegments,
+    ];
+
+    expect(group.startAnchorSegments.some((segment) => segment.compressed)).toBe(true);
+    expect(group.endAnchorSegments.some((segment) => segment.compressed)).toBe(true);
+    expect(allSegments.every((segment) =>
+      [segment.start, segment.end].every((point) =>
+        point.x >= scene.plotRect.x - 1e-6 &&
+        point.x <= scene.plotRect.x + scene.plotRect.width + 1e-6 &&
+        point.y >= scene.plotRect.y - 1e-6 &&
+        point.y <= scene.plotRect.y + scene.plotRect.height + 1e-6,
+      ),
+    )).toBe(true);
+    expect(scene.worldBounds.minX).toBeLessThan(0);
+  });
+
+  it("完整世界边界包含全部房间、墙体和钢筋端点", () => {
+    const state = roomsState("x", [
+      [3000, 3000],
+      [3000, 6000],
+      [3000, 4500],
+    ]);
+    const calculation = calculateSlabResults(state);
+    const layout = buildWorldLayout(state);
+    const scene = buildSlabDiagramScene(state, calculation);
+    const bounds = collectWorldBounds(layout.rooms, layout.walls, []);
+
+    expect([bounds.minX, bounds.minY, bounds.maxX, bounds.maxY].every(Number.isFinite)).toBe(true);
+    expect(scene.rooms.every((room) =>
+      room.rect.x >= scene.plotRect.x - 1e-6 &&
+      room.rect.y >= scene.plotRect.y - 1e-6 &&
+      room.rect.x + room.rect.width <= scene.plotRect.x + scene.plotRect.width + 1e-6 &&
+      room.rect.y + room.rect.height <= scene.plotRect.y + scene.plotRect.height + 1e-6,
+    )).toBe(true);
   });
 });

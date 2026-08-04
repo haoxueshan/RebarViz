@@ -49,6 +49,10 @@ import {
   type CalculatorDraftUiState,
   type CalculatorSectionId,
 } from "@/lib/slab-calculator-storage";
+import {
+  buildRoomBoundaryZones,
+  type AutomaticWallSource,
+} from "@/lib/slab-room-topology";
 
 const fieldClass =
   "min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-500";
@@ -149,6 +153,7 @@ function AnchorRuleField({
   layer,
   state,
   applyTopExtra = true,
+  automaticSources,
   onChange,
   onRestoreAuto,
 }: {
@@ -157,6 +162,7 @@ function AnchorRuleField({
   layer: BarLayer;
   state: SlabCalculatorState;
   applyTopExtra?: boolean;
+  automaticSources?: readonly AutomaticWallSource[];
   onChange: (rule: AnchorRule) => void;
   onRestoreAuto?: () => void;
 }) {
@@ -168,6 +174,8 @@ function AnchorRuleField({
     rule.source === "inner-wall"
       ? state.slab.innerWallThickness
       : state.slab.outerWallThickness;
+  const hasMixedAutomaticBoundary =
+    rule.origin === "auto" && new Set(automaticSources).size > 1;
 
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-3">
@@ -200,7 +208,11 @@ function AnchorRuleField({
         <option value="outer-wall">外墙</option>
         <option value="manual">手动输入</option>
       </select>
-      {rule.source === "manual" ? (
+      {hasMixedAutomaticBoundary ? (
+        <p className="mt-2 rounded-md bg-blue-50 px-2 py-1.5 text-xs leading-5 text-blue-800">
+          自动分区：此端边界同时包含内墙和外墙，正式计算会按实际区段分别解析锚固。
+        </p>
+      ) : rule.source === "manual" ? (
         <div className="mt-2">
           <NumberField
             label="最终锚固"
@@ -341,9 +353,31 @@ function BarSettingsPanel({
         <div className="mt-4"><TopExtraModeSelector direction={direction} mode={extraMode} onChange={onExtraModeChange} /></div>
       )}
       <div className="mt-4 space-y-3">
-        {state.slab.rooms.map((room) => {
+        {state.slab.rooms.map((room, roomIndex) => {
           const rules = room.anchors[layer][direction];
-          const summary = `${startLabel}${sourceLabel(rules.start.source)} → ${endLabel}${sourceLabel(rules.end.source)}`;
+          const boundaryZones = buildRoomBoundaryZones(
+            state.slab.rooms,
+            state.slab.arrangement,
+            roomIndex,
+            direction,
+          );
+          const automaticSources = (endpoint: "start" | "end") => [
+            ...new Set(
+              boundaryZones.map((zone) =>
+                endpoint === "start" ? zone.startSource : zone.endSource,
+              ),
+            ),
+          ];
+          const endpointSummary = (
+            rule: AnchorRule,
+            endpoint: "start" | "end",
+          ) => {
+            const sources = automaticSources(endpoint);
+            return rule.origin === "auto" && sources.length > 1
+              ? "自动分区（内墙/外墙）"
+              : sourceLabel(rule.source);
+          };
+          const summary = `${startLabel}${endpointSummary(rules.start, "start")} → ${endLabel}${endpointSummary(rules.end, "end")}`;
           const customized = rules.start.origin === "user" || rules.end.origin === "user";
           return (
             <details key={`${room.id}:${layer}:${direction}`} className="rounded-xl border border-slate-200 bg-white">
@@ -357,6 +391,7 @@ function BarSettingsPanel({
                   layer={layer}
                   state={state}
                   applyTopExtra={extraMode ? shouldApplyTopExtra(extraMode, "start") : false}
+                  automaticSources={automaticSources("start")}
                   onChange={(rule) => onAnchorChange(room.id, "start", rule)}
                   onRestoreAuto={() => onRestoreAuto(room.id, "start")}
                 />
@@ -366,6 +401,7 @@ function BarSettingsPanel({
                   layer={layer}
                   state={state}
                   applyTopExtra={extraMode ? shouldApplyTopExtra(extraMode, "end") : false}
+                  automaticSources={automaticSources("end")}
                   onChange={(rule) => onAnchorChange(room.id, "end", rule)}
                   onRestoreAuto={() => onRestoreAuto(room.id, "end")}
                 />

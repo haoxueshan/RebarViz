@@ -18,6 +18,7 @@ import {
   type SlabRoom,
   type TopExtraMode,
 } from "./slab-calculator";
+import { allocateLargestRemainder } from "./slab-room-topology";
 
 function anchor(
   source: AnchorSource,
@@ -739,6 +740,222 @@ describe("无效输入安全性", () => {
     const calculation = calculateSlabResults(state);
     expect(calculation.isValid).toBe(false);
     expect(calculation.throughWall).toBeNull();
+    expect(calculation.results).toEqual([]);
+    expect(calculation.totalWeightKg).toBeNull();
+  });
+});
+
+describe("不等尺寸普通多房间分区", () => {
+  it("X向排列为较高房间生成内墙与外墙混合锚固分区", () => {
+    const state = stateWithRooms("x", [
+      [3000, 3000],
+      [3000, 6000],
+    ]);
+    const calculation = calculateSlabResults(state);
+    const result = calculation.results.find(
+      (item) => item.roomId === "room-1" && item.layer === "bottom" && item.direction === "x",
+    )!;
+
+    expect(result.lengthMode).toBe("zoned");
+    expect(result.count).toBe(40);
+    expect(result.lengthVariants).toHaveLength(2);
+    expect(result.lengthVariants.map((variant) => ({
+      range: [variant.perpendicularStartMm, variant.perpendicularEndMm],
+      count: variant.count,
+      sources: [variant.startAnchorSource, variant.endAnchorSource],
+      singleLengthM: variant.singleLengthM,
+    }))).toEqual([
+      {
+        range: [0, 3000],
+        count: 20,
+        sources: ["inner-wall", "outer-wall"],
+        singleLengthM: 3.61,
+      },
+      {
+        range: [3000, 6000],
+        count: 20,
+        sources: ["outer-wall", "outer-wall"],
+        singleLengthM: 3.74,
+      },
+    ]);
+    expect(result.totalLengthM).toBeCloseTo(147, 10);
+    expect(result.singleLengthM).toBeCloseTo(147 / 40, 10);
+  });
+
+  it("Y向排列按镜像规则为较宽房间生成分区", () => {
+    const state = stateWithRooms("y", [
+      [3000, 3000],
+      [6000, 3000],
+    ]);
+    const result = calculateSlabResults(state).results.find(
+      (item) => item.roomId === "room-1" && item.layer === "bottom" && item.direction === "y",
+    )!;
+
+    expect(result.lengthMode).toBe("zoned");
+    expect(result.lengthVariants.map((variant) => [
+      variant.perpendicularStartMm,
+      variant.perpendicularEndMm,
+      variant.startAnchorSource,
+      variant.endAnchorSource,
+    ])).toEqual([
+      [0, 3000, "inner-wall", "outer-wall"],
+      [3000, 6000, "outer-wall", "outer-wall"],
+    ]);
+  });
+
+  it("中间房间两侧高度不同形成稳定的多边界组合ID", () => {
+    const state = stateWithRooms("x", [
+      [3000, 3000],
+      [3000, 6000],
+      [3000, 4500],
+    ]);
+    const calculation = calculateSlabResults(state);
+    const result = calculation.results.find(
+      (item) => item.roomId === "room-1" && item.layer === "bottom" && item.direction === "x",
+    )!;
+    const recalculated = calculateSlabResults(structuredClone(state)).results.find(
+      (item) => item.id === result.id,
+    )!;
+
+    expect(result.lengthVariants.map((variant) => [
+      variant.perpendicularStartMm,
+      variant.perpendicularEndMm,
+      variant.startAnchorSource,
+      variant.endAnchorSource,
+    ])).toEqual([
+      [0, 3000, "inner-wall", "inner-wall"],
+      [3000, 4500, "outer-wall", "inner-wall"],
+      [4500, 6000, "outer-wall", "outer-wall"],
+    ]);
+    expect(result.lengthVariants.map((variant) => variant.id)).toEqual(
+      recalculated.lengthVariants.map((variant) => variant.id),
+    );
+    expect(new Set(result.lengthVariants.map((variant) => variant.id)).size).toBe(3);
+  });
+
+  it("分区最大余数分配严格保持父级根数、长度和重量不变量", () => {
+    const state = stateWithRooms("x", [
+      [3100, 3350],
+      [4200, 6100],
+      [2800, 4700],
+    ]);
+    state.slab.countMode = "round";
+    const calculation = calculateSlabResults(state);
+    const zoned = calculation.results.filter((result) => result.lengthMode === "zoned");
+
+    expect(zoned.length).toBeGreaterThan(0);
+    zoned.forEach((result) => {
+      expect(result.lengthVariants.reduce((sum, variant) => sum + variant.count, 0)).toBe(result.count);
+      expect(result.lengthVariants.reduce((sum, variant) => sum + variant.totalLengthM, 0)).toBe(result.totalLengthM);
+      expect(result.lengthVariants.reduce((sum, variant) => sum + variant.weightKg, 0)).toBe(result.weightKg);
+    });
+    expect(calculation.results.reduce((sum, result) => sum + result.weightKg, 0)).toBe(calculation.totalWeightKg);
+  });
+
+  it("最大余数法按净跨度分配代表配额且总数精确不变", () => {
+    const allocated = allocateLargestRemainder(5, [3000, 6000]);
+    expect(allocated).toEqual([2, 3]);
+    expect(allocated.reduce((sum, count) => sum + count, 0)).toBe(5);
+  });
+
+  it.each(["project", "round", "floor"] as const)(
+    "%s算法分区前后父级根数保持不变",
+    (countMode) => {
+      const state = stateWithRooms("x", [
+        [3100, 3350],
+        [4200, 6100],
+        [2800, 4700],
+      ]);
+      state.slab.countMode = countMode;
+      const result = calculateSlabResults(state).results.find(
+        (item) => item.roomId === "room-1" && item.layer === "bottom" && item.direction === "x",
+      )!;
+
+      expect(result.count).toBe(countBars(6100, state.bottom.x.spacing, countMode));
+      expect(result.lengthVariants.reduce((sum, variant) => sum + variant.count, 0))
+        .toBe(result.count);
+    },
+  );
+
+  it("手动锚固覆盖对应端全部分区且不叠加面筋增加值", () => {
+    const state = stateWithRooms("x", [
+      [3000, 3000],
+      [3000, 6000],
+    ]);
+    state.slab.rooms[1].anchors.top.x.start = anchor("manual", 550);
+    const result = calculateSlabResults(state).results.find(
+      (item) => item.roomId === "room-1" && item.layer === "top" && item.direction === "x",
+    )!;
+
+    expect(result.lengthMode).toBe("uniform");
+    expect(result.lengthVariants).toHaveLength(1);
+    expect(result.lengthVariants[0].startAnchorSource).toBe("manual");
+    expect(result.lengthVariants[0].startAnchor).toBe(550);
+    expect(result.lengthVariants[0].startExtraApplied).toBe(false);
+    expect(result.lengthVariants[0].endAnchor).toBe(620);
+    expect(result.lengthVariants[0].endExtraApplied).toBe(true);
+  });
+
+  it("相同尺寸多房间保持原统一锚固和长度结果", () => {
+    const state = stateWithRooms("x", [
+      [4200, 3600],
+      [3600, 3600],
+      [3000, 3600],
+    ]);
+    const result = calculateSlabResults(state).results.find(
+      (item) => item.roomId === "room-1" && item.layer === "bottom" && item.direction === "x",
+    )!;
+
+    expect(result.lengthMode).toBe("uniform");
+    expect(result.lengthVariants).toHaveLength(1);
+    expect(result.singleLengthM).toBeCloseTo(4.08, 12);
+    expect(result.totalLengthM).toBeCloseTo(97.92, 12);
+  });
+});
+
+describe("正式结果数值安全", () => {
+  it("有限但会令宽度除以间距溢出的输入不会生成正式结果", () => {
+    const state = cloneDefaultSlabCalculatorState();
+    state.slab.rooms[0].spanY = 1e300;
+    state.bottom.x.spacing = 1e-300;
+    state.top.x.spacing = 1e-300;
+
+    const calculation = calculateSlabResults(state);
+
+    expect(calculation.isValid).toBe(false);
+    expect(calculation.results).toEqual([]);
+    expect(calculation.totalWeightKg).toBeNull();
+    expect(calculation.throughWall).toBeNull();
+    expect(calculation.errors).toContain(
+      "钢筋计算结果超出安全数值范围，请检查尺寸、间距、直径和锚固输入。",
+    );
+  });
+
+  it("超过安全整数范围的有限根数被拒绝", () => {
+    const state = cloneDefaultSlabCalculatorState();
+    state.slab.rooms[0].spanY = Number.MAX_SAFE_INTEGER + 1;
+    state.bottom.x.spacing = 1;
+    state.top.x.spacing = 1;
+
+    const calculation = calculateSlabResults(state);
+
+    expect(calculation.isValid).toBe(false);
+    expect(calculation.results).toEqual([]);
+    expect(calculation.totalWeightKg).toBeNull();
+  });
+
+  it("有限输入造成非有限总长度或重量时整个计算无效", () => {
+    const state = cloneDefaultSlabCalculatorState();
+    state.slab.rooms[0].spanX = Number.MAX_VALUE;
+    state.slab.rooms[0].spanY = 1e9;
+    state.bottom.x.spacing = 1;
+    state.top.x.spacing = 1;
+    state.bottom.y.spacing = Number.MAX_VALUE;
+    state.top.y.spacing = Number.MAX_VALUE;
+
+    const calculation = calculateSlabResults(state);
+
+    expect(calculation.isValid).toBe(false);
     expect(calculation.results).toEqual([]);
     expect(calculation.totalWeightKg).toBeNull();
   });

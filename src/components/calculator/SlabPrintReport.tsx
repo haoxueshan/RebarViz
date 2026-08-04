@@ -4,7 +4,7 @@ import {
   arrangementLabel,
   buildSlabPrintReport,
   countModeFormulaText,
-  printRangeLabel,
+  printSelectionSummary,
 } from "@/lib/slab-calculator-report";
 import type {
   SlabPrintOptions,
@@ -22,6 +22,13 @@ function formatDateTime(value: string): string {
   return new Date(value).toLocaleString("zh-CN", { hour12: false });
 }
 
+function escapeCssString(value: string): string {
+  return value
+    .replaceAll("\\", "\\\\")
+    .replaceAll('"', '\\"')
+    .replaceAll("\n", "\\A ");
+}
+
 function layerLabel(layer: "bottom" | "top"): string {
   return layer === "bottom" ? "地筋" : "面筋";
 }
@@ -34,10 +41,48 @@ export function SlabPrintReport({
   const model = buildSlabPrintReport(record, options);
   const { slab } = record.inputSnapshot;
   const throughWall = record.calculation.throughWall;
-  const visibleResultIds = new Set(model.rows.map((row) => row.resultId));
+  const visibleResultIds = model.isFullSelection
+    ? undefined
+    : new Set(model.rows.map((row) => row.resultId));
+  const rangeSummary = printSelectionSummary(
+    options.rangeMode,
+    model.selectedRowCount,
+    model.fullRowCount,
+  );
+  const contentBeforeDiagram =
+    options.sections.weightSummary ||
+    options.sections.parameters ||
+    options.sections.roomDimensions;
+  const contentAfterDiagram =
+    options.sections.specificationSummary ||
+    options.sections.resultDetails ||
+    options.sections.calculationNotes;
+  const diagramOnly =
+    options.sections.diagram && !contentBeforeDiagram && !contentAfterDiagram;
+  const footerContent = escapeCssString(
+    `RebarViz　打印时间：${formatDateTime(printedAt)}　算法版本：${record.algorithmVersion}\n` +
+      "计算结果仅供钢筋工程量估算、下料复核和学习参考，不替代设计图纸、现行规范及工程师审核。当前结果未计施工损耗。",
+  );
 
   return (
-    <article className={styles.report} aria-label="楼板钢筋计算打印报表">
+    <>
+    <style media="print">{`@page {
+      @bottom-center {
+        content: "${footerContent}";
+        width: 267mm;
+        padding-top: 1.5mm;
+        border-top: 0.75pt solid #777;
+        color: #333;
+        font: 7pt/1.25 Arial, "Microsoft YaHei", sans-serif;
+        text-align: left;
+        white-space: pre-wrap;
+      }
+    }`}</style>
+    <article
+      className={`${styles.report} ${diagramOnly ? styles.diagramOnlyReport : ""}`}
+      aria-label="楼板钢筋计算打印报表"
+      data-testid="slab-print-report"
+    >
       <header className={styles.reportHeader}>
         <div>
           <p className={styles.brand}>RebarViz</p>
@@ -58,7 +103,7 @@ export function SlabPrintReport({
           </div>
           <div>
             <dt>本次打印范围</dt>
-            <dd>{printRangeLabel(options.rangeMode)}</dd>
+            <dd>{rangeSummary}</dd>
           </div>
           <div>
             <dt>选择数量</dt>
@@ -134,14 +179,42 @@ export function SlabPrintReport({
       )}
 
       {options.sections.diagram && (
-        <section className={`${styles.section} ${styles.diagramSection}`}>
-          <h2>钢筋示意图</h2>
-          <SlabResultsDiagram
-            state={record.inputSnapshot}
-            calculation={record.calculation}
-            visibleResultIds={visibleResultIds}
-            showNote={false}
-          />
+        <section
+          data-testid="slab-print-diagram-sheet"
+          className={`${styles.section} ${styles.diagramSheet} ${
+            contentBeforeDiagram ? styles.diagramBreakBefore : ""
+          } ${contentAfterDiagram ? styles.diagramBreakAfter : ""}`}
+        >
+          <div className={styles.diagramHeading}>
+            <div>
+              <h2>楼板钢筋计算二维示意图</h2>
+              <p>{rangeSummary}</p>
+            </div>
+            <p>≈ 表示锚固视觉长度经过压缩，工程数值以正式结果和下方明细为准。</p>
+          </div>
+          <div className={styles.diagramCanvas}>
+            <SlabResultsDiagram
+              state={record.inputSnapshot}
+              calculation={record.calculation}
+              visibleResultIds={visibleResultIds}
+              selectionContext={
+                options.rangeMode === "current-filters"
+                  ? {
+                      kind: "current-filters",
+                      selectedCount: model.selectedRowCount,
+                      totalCount: model.fullRowCount,
+                    }
+                  : options.rangeMode === "custom"
+                    ? {
+                        kind: "custom",
+                        selectedCount: model.selectedRowCount,
+                        totalCount: model.fullRowCount,
+                      }
+                    : undefined
+              }
+              showNote={false}
+            />
+          </div>
         </section>
       )}
 
@@ -177,31 +250,28 @@ export function SlabPrintReport({
 
       {options.sections.resultDetails && (
         <section className={styles.section}>
-          <h2>分组钢筋明细</h2>
-          {model.groups.map((group) => (
-            <section className={styles.resultGroup} key={group.scopeId}>
-              <div className={styles.groupHeading}>
-                <h3>{group.scopeName}</h3>
-                <span>{group.scopeType === "through" ? "通墙组合区" : `房间 ID：${group.roomId}`}</span>
-              </div>
-              <table className={`${styles.table} ${styles.detailTable} ${options.detailMode === "full" ? styles.fullDetailTable : styles.compactDetailTable}`}>
+          <h2>图中编号与分组钢筋明细</h2>
+          <table
+            data-testid="slab-print-result-legend"
+            className={`${styles.table} ${styles.detailTable} ${options.detailMode === "full" ? styles.fullDetailTable : styles.compactDetailTable}`}
+          >
               {options.detailMode === "full" ? (
                 <colgroup>
-                  <col className={styles.colSequence} />
+                  <col className={styles.colFigure} />
                   <col className={styles.colScope} />
                   <col className={styles.colType} />
                   <col className={styles.colSpec} />
                   <col className={styles.colCount} />
-                  <col className={styles.colLength} />
-                  <col className={styles.colLength} />
+                  <col className={styles.colRun} />
                   <col className={styles.colAnchor} />
                   <col className={styles.colAnchor} />
                   <col className={styles.colExtra} />
+                  <col className={styles.colLength} />
                   <col className={styles.colWeight} />
                 </colgroup>
               ) : (
                 <colgroup>
-                  <col className={styles.colSequence} />
+                  <col className={styles.colFigure} />
                   <col className={styles.colScope} />
                   <col className={styles.colType} />
                   <col className={styles.colSpec} />
@@ -213,43 +283,78 @@ export function SlabPrintReport({
               )}
               <thead>
                 <tr>
-                  <th>序号</th>
-                  <th>房间/组合区</th>
+                  <th>图中编号</th>
+                  <th>房间/组合区与分区范围</th>
                   <th>类型与方向</th>
                   <th>规格</th>
-                  <th>根数</th>
-                  <th>单根长度</th>
-                  <th>总长度</th>
+                  <th>{options.detailMode === "full" ? "正式根数/图示线" : "根数"}</th>
+                  {options.detailMode === "full" && <th>净跨</th>}
                   {options.detailMode === "full" && <th>起点锚固</th>}
                   {options.detailMode === "full" && <th>终点锚固</th>}
                   {options.detailMode === "full" && <th>面筋增加位置</th>}
+                  <th>{options.detailMode === "full" ? "单根/总长度" : "单根长度"}</th>
+                  {options.detailMode === "compact" && <th>总长度</th>}
                   <th>重量</th>
                 </tr>
               </thead>
-              <tbody>
-                {group.rows.map((row) => (
-                  <tr key={row.resultId}>
-                    <td>{row.sequence}</td>
-                    <td>{row.scopeName}</td>
-                    <td>{row.typeDirectionText}</td>
-                    <td>Φ{row.diameter}@{row.spacing}</td>
-                    <td>{row.count} 根</td>
-                    <td>{row.singleLengthM.toFixed(3)} m</td>
-                    <td>{row.totalLengthM.toFixed(3)} m</td>
-                    {options.detailMode === "full" && <td>{row.startAnchorText}</td>}
-                    {options.detailMode === "full" && <td>{row.endAnchorText}</td>}
-                    {options.detailMode === "full" && <td>{row.extraModeText}</td>}
-                    <td>{row.weightKg.toFixed(2)} kg</td>
+              {model.groups.map((group) => (
+                <tbody key={group.scopeId} data-scope-id={group.scopeId}>
+                  <tr className={styles.groupRow}>
+                    <th colSpan={options.detailMode === "full" ? 11 : 8}>
+                      {group.scopeName}　
+                      <small>{group.scopeType === "through" ? "通墙组合区" : `房间 ID：${group.roomId}`}</small>
+                    </th>
                   </tr>
-                ))}
-                <tr className={styles.subtotalRow}>
-                  <td colSpan={options.detailMode === "full" ? 10 : 7}>本组重量小计</td>
-                  <td>{group.subtotalWeightKg.toFixed(2)} kg</td>
-                </tr>
-              </tbody>
-              </table>
-            </section>
-          ))}
+                  {group.rows.flatMap((row) => {
+                    const parentRow = (
+                      <tr key={row.resultId} data-result-id={row.resultId}>
+                        <td><strong>{row.figureNumber}</strong></td>
+                        <td>{row.scopeName}{row.lengthMode === "zoned" && <small>多长度，共{row.variantRows.length}个分区</small>}</td>
+                        <td>{row.typeDirectionText}</td>
+                        <td>Φ{row.diameter}@{row.spacing}</td>
+                        <td>{row.count} 根{options.detailMode === "full" && <small>图示 {row.representativeCount} 条</small>}</td>
+                        {options.detailMode === "full" && <td>{row.netRunSpanMm.toFixed(0)} mm</td>}
+                        {options.detailMode === "full" && <td>{row.lengthMode === "zoned" ? "见分区行" : row.startAnchorText}</td>}
+                        {options.detailMode === "full" && <td>{row.lengthMode === "zoned" ? "见分区行" : row.endAnchorText}</td>}
+                        {options.detailMode === "full" && <td>{row.lengthMode === "zoned" ? "按分区实际端" : row.extraModeText}</td>}
+                        <td>{row.lengthMode === "zoned" ? <><strong>多长度</strong><small>加权平均 {row.singleLengthM.toFixed(3)} m</small><small>总长 {row.totalLengthM.toFixed(3)} m</small></> : <>{row.singleLengthM.toFixed(3)} m{options.detailMode === "full" && <small>总长 {row.totalLengthM.toFixed(3)} m</small>}</>}</td>
+                        {options.detailMode === "compact" && <td>{row.totalLengthM.toFixed(3)} m</td>}
+                        <td>{row.weightKg.toFixed(2)} kg</td>
+                      </tr>
+                    );
+                    if (row.lengthMode !== "zoned") return [parentRow];
+                    return [
+                      parentRow,
+                      ...row.variantRows.map((variant) => (
+                        <tr
+                          key={variant.variantId}
+                          data-result-id={row.resultId}
+                          data-variant-id={variant.variantId}
+                          className={styles.variantRow}
+                        >
+                          <td>{variant.figureNumber}</td>
+                          <td>分区 {variant.rangeText}</td>
+                          <td>分区长度</td>
+                          <td>同父项</td>
+                          <td>{variant.count} 根{options.detailMode === "full" && <small>图示 {variant.representativeCount} 条</small>}</td>
+                          {options.detailMode === "full" && <td>{row.netRunSpanMm.toFixed(0)} mm</td>}
+                          {options.detailMode === "full" && <td>{variant.startAnchorText}</td>}
+                          {options.detailMode === "full" && <td>{variant.endAnchorText}</td>}
+                          {options.detailMode === "full" && <td>{variant.extraModeText}</td>}
+                          <td>{variant.singleLengthM.toFixed(3)} m{options.detailMode === "full" && <small>总长 {variant.totalLengthM.toFixed(3)} m</small>}</td>
+                          {options.detailMode === "compact" && <td>{variant.totalLengthM.toFixed(3)} m</td>}
+                          <td>{variant.weightKg.toFixed(2)} kg</td>
+                        </tr>
+                      )),
+                    ];
+                  })}
+                  <tr className={styles.subtotalRow}>
+                    <td colSpan={options.detailMode === "full" ? 10 : 7}>本组重量小计（仅父级正式结果汇总）</td>
+                    <td>{group.subtotalWeightKg.toFixed(2)} kg</td>
+                  </tr>
+                </tbody>
+              ))}
+          </table>
         </section>
       )}
 
@@ -266,11 +371,7 @@ export function SlabPrintReport({
         </section>
       )}
 
-      <footer className={styles.footer}>
-        <p>本报表由 RebarViz 自动生成。</p>
-        <p>计算结果仅供钢筋工程量估算、下料复核和学习参考，不替代设计图纸、现行规范及工程师审核。当前结果未计施工损耗。</p>
-        <p>打印时间：{formatDateTime(printedAt)}　算法版本：{record.algorithmVersion}　<span className={styles.pageNumber} /></p>
-      </footer>
     </article>
+    </>
   );
 }
