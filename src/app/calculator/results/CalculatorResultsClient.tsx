@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { useRouter } from "next/navigation";
 import {
@@ -11,31 +11,49 @@ import {
   Printer,
 } from "lucide-react";
 import { SlabPrintReport } from "@/components/calculator/SlabPrintReport";
+import { SlabPrintDialog } from "@/components/calculator/SlabPrintDialog";
 import { SlabResultsDiagram } from "@/components/calculator/SlabDiagrams";
 import { countModeLabel, type BarResult, type CountMode } from "@/lib/slab-calculator";
 import {
   formatAnchorLabel,
   formatCountFormula,
   formatExtraModeLabel,
+  buildSlabPrintReport,
+  canPrintSlabReport,
+  filteredPrintResultIds,
   isPrintableCalculationRecord,
 } from "@/lib/slab-calculator-report";
 import {
   DEFAULT_RESULT_UI_STATE,
+  DEFAULT_SLAB_PRINT_OPTIONS,
   RESULT_KEY,
+  RESULT_PRINT_SETTINGS_KEY,
   RESULT_UI_KEY,
   RETURN_TO_INPUT_KEY,
+  createDefaultSlabPrintOptions,
   createResultGroups,
   filterResultGroups,
   paginateResultGroups,
   parseCalculationRecord,
+  parseResultPrintSettings,
   parseResultUiState,
+  serializeResultPrintSettings,
   type ResultGroup,
   type ResultUiState,
+  type SlabPrintOptions,
   type StoredCalculationRecord,
 } from "@/lib/slab-calculator-storage";
 
 const fieldClass =
   "min-h-11 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
+
+function copyPrintOptions(options: SlabPrintOptions): SlabPrintOptions {
+  return {
+    ...options,
+    selectedResultIds: [...options.selectedResultIds],
+    sections: { ...options.sections },
+  };
+}
 
 function ResultFormula({
   result,
@@ -107,6 +125,14 @@ export function CalculatorResultsClient() {
   const [ui, setUi] = useState<ResultUiState>(DEFAULT_RESULT_UI_STATE);
   const [loading, setLoading] = useState(true);
   const [printedAt, setPrintedAt] = useState(() => new Date().toISOString());
+  const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [draftPrintOptions, setDraftPrintOptions] = useState<SlabPrintOptions>(
+    () => copyPrintOptions(DEFAULT_SLAB_PRINT_OPTIONS),
+  );
+  const [activePrintOptions, setActivePrintOptions] = useState<SlabPrintOptions>(
+    () => copyPrintOptions(DEFAULT_SLAB_PRINT_OPTIONS),
+  );
+  const printButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -117,8 +143,14 @@ export function CalculatorResultsClient() {
         return;
       }
       sessionStorage.setItem(RETURN_TO_INPUT_KEY, "1");
+      const preferences = parseResultPrintSettings(
+        localStorage.getItem(RESULT_PRINT_SETTINGS_KEY),
+      );
+      const printOptions = createDefaultSlabPrintOptions(restored, preferences);
       setRecord(restored);
       setUi(parseResultUiState(localStorage.getItem(RESULT_UI_KEY)));
+      setDraftPrintOptions(copyPrintOptions(printOptions));
+      setActivePrintOptions(copyPrintOptions(printOptions));
       setLoading(false);
     }, 0);
     return () => window.clearTimeout(timer);
@@ -136,6 +168,10 @@ export function CalculatorResultsClient() {
   const pagination = useMemo(
     () => paginateResultGroups(filteredGroups, ui.page, ui.pageSize),
     [filteredGroups, ui.page, ui.pageSize],
+  );
+  const currentFilteredResultIds = useMemo(
+    () => (record ? filteredPrintResultIds(record, ui.filters) : []),
+    [record, ui.filters],
   );
 
   if (loading || !record) {
@@ -172,9 +208,28 @@ export function CalculatorResultsClient() {
     router.push("/calculator");
   };
 
-  const printAllResults = () => {
+  const openPrintSettings = () => {
     if (!printable) return;
-    flushSync(() => setPrintedAt(new Date().toISOString()));
+    const preferences = parseResultPrintSettings(
+      localStorage.getItem(RESULT_PRINT_SETTINGS_KEY),
+    );
+    setDraftPrintOptions(createDefaultSlabPrintOptions(record, preferences));
+    setPrintDialogOpen(true);
+  };
+
+  const printSelectedResults = () => {
+    if (!printable) return;
+    const model = buildSlabPrintReport(record, draftPrintOptions);
+    if (!canPrintSlabReport(model, draftPrintOptions)) return;
+    localStorage.setItem(
+      RESULT_PRINT_SETTINGS_KEY,
+      serializeResultPrintSettings(draftPrintOptions),
+    );
+    flushSync(() => {
+      setActivePrintOptions(copyPrintOptions(draftPrintOptions));
+      setPrintedAt(new Date().toISOString());
+      setPrintDialogOpen(false);
+    });
     window.print();
   };
 
@@ -192,15 +247,15 @@ export function CalculatorResultsClient() {
             <div className="max-w-md space-y-2">
               <div className="flex flex-wrap justify-end gap-2">
                 {printable && (
-                  <button type="button" onClick={printAllResults} className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-blue-500 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-400">
-                    <Printer size={17} />打印全部结果
+                  <button ref={printButtonRef} type="button" onClick={openPrintSettings} className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-blue-500 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-400">
+                    <Printer size={17} />打印设置
                   </button>
                 )}
                 <button type="button" onClick={returnToInput} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-white/20 bg-white/10 px-4 py-2 text-sm font-medium hover:bg-white/20"><ArrowLeft size={16} />返回修改参数</button>
               </div>
               {printable && (
                 <p className="text-right text-xs leading-5 text-slate-300">
-                  打印将包含全部正式计算结果，不受当前筛选和分页影响。
+                  可打印全部结果、当前筛选或自定义钢筋项；当前筛选打印不受分页影响。
                 </p>
               )}
             </div>
@@ -260,8 +315,27 @@ export function CalculatorResultsClient() {
           <label className="flex items-center gap-2 text-sm text-slate-600">跳至<input aria-label="输入页码" type="number" min={1} max={pagination.pageCount} value={pagination.page} onChange={(event) => setUi((current) => ({ ...current, page: Number(event.target.value) || 1 }))} className={`${fieldClass} w-20`} />页</label>
         </nav>
         </div>
+        {printable && (
+          <SlabPrintDialog
+            open={printDialogOpen}
+            record={record}
+            groups={allGroups}
+            currentFilteredResultIds={currentFilteredResultIds}
+            options={draftPrintOptions}
+            returnFocusRef={printButtonRef}
+            onChange={setDraftPrintOptions}
+            onCancel={() => setPrintDialogOpen(false)}
+            onPrint={printSelectedResults}
+          />
+        )}
       </main>
-      {printable && <SlabPrintReport record={record} printedAt={printedAt} />}
+      {printable && (
+        <SlabPrintReport
+          record={record}
+          printedAt={printedAt}
+          options={activePrintOptions}
+        />
+      )}
     </>
   );
 }

@@ -9,13 +9,18 @@ import {
 import {
   CALCULATOR_ALGORITHM_VERSION,
   CALCULATOR_SCHEMA_VERSION,
+  DEFAULT_SLAB_PRINT_SECTIONS,
+  RESULT_PRINT_SETTINGS_KEY,
   createCalculationRecord,
+  createDefaultSlabPrintOptions,
   createResultGroups,
   filterResultGroups,
   paginateResultGroups,
   parseCalculationRecord,
   parseDraftRecord,
+  parseResultPrintSettings,
   parseResultUiState,
+  serializeResultPrintSettings,
 } from "./slab-calculator-storage";
 
 function xRooms(through: boolean): SlabCalculatorState {
@@ -220,5 +225,81 @@ describe("本地状态解析", () => {
   it("损坏的结果UI状态回退默认分页", () => {
     expect(parseResultUiState("broken").pageSize).toBe(5);
     expect(parseResultUiState(JSON.stringify({ page: -3, pageSize: 99, filters: {} })).page).toBe(1);
+  });
+});
+
+describe("打印偏好存储", () => {
+  it("合法偏好可以恢复且持久化内容不包含结果ID或范围", () => {
+    const state = xRooms(false);
+    const record = createCalculationRecord(state, calculateSlabResults(state));
+    const options = createDefaultSlabPrintOptions(record);
+    options.rangeMode = "custom";
+    options.selectedResultIds = [record.calculation.results[0].id];
+    options.detailMode = "compact";
+    options.sections.diagram = false;
+
+    const raw = serializeResultPrintSettings(options);
+    const payload = JSON.parse(raw) as Record<string, unknown>;
+    const restored = parseResultPrintSettings(raw);
+
+    expect(restored.detailMode).toBe("compact");
+    expect(restored.sections.diagram).toBe(false);
+    expect(payload).not.toHaveProperty("selectedResultIds");
+    expect(payload).not.toHaveProperty("rangeMode");
+    expect(RESULT_PRINT_SETTINGS_KEY).toBe(
+      "rebarviz:slab-calculator:print-settings:v1",
+    );
+  });
+
+  it("损坏、版本不兼容或字段不完整的偏好恢复默认值", () => {
+    const expected = {
+      detailMode: "full",
+      sections: DEFAULT_SLAB_PRINT_SECTIONS,
+    };
+    expect(parseResultPrintSettings("broken")).toEqual(expected);
+    expect(parseResultPrintSettings(JSON.stringify({
+      schemaVersion: 2,
+      detailMode: "compact",
+      sections: DEFAULT_SLAB_PRINT_SECTIONS,
+    }))).toEqual(expected);
+    expect(parseResultPrintSettings(JSON.stringify({
+      schemaVersion: 1,
+      detailMode: "compact",
+      sections: { diagram: true },
+    }))).toEqual(expected);
+  });
+
+  it("每个新正式记录默认恢复全部范围并全选当前结果", () => {
+    const firstState = cloneDefaultSlabCalculatorState();
+    const firstRecord = createCalculationRecord(
+      firstState,
+      calculateSlabResults(firstState),
+    );
+    const first = createDefaultSlabPrintOptions(firstRecord, {
+      detailMode: "compact",
+      sections: { ...DEFAULT_SLAB_PRINT_SECTIONS, calculationNotes: false },
+    });
+
+    const secondState = xRooms(false);
+    const secondRecord = createCalculationRecord(
+      secondState,
+      calculateSlabResults(secondState),
+    );
+    const second = createDefaultSlabPrintOptions(secondRecord, {
+      detailMode: first.detailMode,
+      sections: first.sections,
+    });
+
+    expect(first.rangeMode).toBe("all");
+    expect(first.selectedResultIds).toEqual(
+      firstRecord.calculation.results.map((result) => result.id),
+    );
+    expect(second.rangeMode).toBe("all");
+    expect(second.selectedResultIds).toEqual(
+      secondRecord.calculation.results.map((result) => result.id),
+    );
+    expect(second.selectedResultIds).toHaveLength(8);
+    expect(second.detailMode).toBe("compact");
+    expect(second.sections.calculationNotes).toBe(false);
   });
 });

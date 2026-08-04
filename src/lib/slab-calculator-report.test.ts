@@ -9,16 +9,23 @@ import {
   type SlabCalculatorState,
 } from "./slab-calculator";
 import {
+  allPrintResultIds,
   buildSlabPrintReport,
+  canPrintSlabReport,
   countModeFormulaText,
+  filteredPrintResultIds,
   formatAnchorLabel,
   formatCountFormula,
   isPrintableCalculationRecord,
+  normalizePrintResultIds,
 } from "./slab-calculator-report";
 import {
+  DEFAULT_SLAB_PRINT_SECTIONS,
   createCalculationRecord,
+  createDefaultSlabPrintOptions,
   createResultGroups,
   paginateResultGroups,
+  type SlabPrintOptions,
 } from "./slab-calculator-storage";
 
 function twoXRooms(through: boolean): SlabCalculatorState {
@@ -56,7 +63,22 @@ function makeReport(state: SlabCalculatorState) {
     calculation,
     "2026-08-03T10:00:00.000Z",
   );
-  return { record, report: buildSlabPrintReport(record) };
+  const options = createDefaultSlabPrintOptions(record);
+  return { record, options, report: buildSlabPrintReport(record, options) };
+}
+
+function selectedOptions(
+  record: ReturnType<typeof createCalculationRecord>,
+  selectedResultIds: string[],
+  overrides: Partial<SlabPrintOptions> = {},
+): SlabPrintOptions {
+  const defaults = createDefaultSlabPrintOptions(record);
+  return {
+    ...defaults,
+    ...overrides,
+    selectedResultIds,
+    sections: { ...defaults.sections, ...overrides.sections },
+  };
 }
 
 describe("楼板计算打印模型", () => {
@@ -67,11 +89,13 @@ describe("楼板计算打印模型", () => {
     expect(
       report.rows.map((row) => `${row.layer}:${row.direction}`).sort(),
     ).toEqual(["bottom:x", "bottom:y", "top:x", "top:y"]);
-    expect(report.totalWeightKg).toBe(record.calculation.totalWeightKg);
-    expect(report.bottomWeightKg + report.topWeightKg).toBeCloseTo(
-      report.totalWeightKg,
+    expect(report.fullTotalWeightKg).toBe(record.calculation.totalWeightKg);
+    expect(report.selectedTotalWeightKg).toBe(record.calculation.totalWeightKg);
+    expect(report.selectedBottomWeightKg + report.selectedTopWeightKg).toBeCloseTo(
+      report.selectedTotalWeightKg,
       10,
     );
+    expect(report.isFullSelection).toBe(true);
   });
 
   it("普通多房间打印全部分组，不受当前页大小影响且同名房间按ID区分", () => {
@@ -117,7 +141,7 @@ describe("楼板计算打印模型", () => {
     ]);
     expect(
       report.specifications.reduce((sum, item) => sum + item.totalWeightKg, 0),
-    ).toBeCloseTo(report.totalWeightKg, 10);
+    ).toBeCloseTo(report.selectedTotalWeightKg, 10);
   });
 
   it("无效或无正重量记录不能生成可打印报表", () => {
@@ -133,9 +157,228 @@ describe("楼板计算打印模型", () => {
     };
 
     expect(isPrintableCalculationRecord(invalidRecord)).toBe(false);
-    expect(() => buildSlabPrintReport(invalidRecord)).toThrow(
+    expect(() => buildSlabPrintReport(invalidRecord, createDefaultSlabPrintOptions(record))).toThrow(
       "正式计算记录无效",
     );
+  });
+});
+
+describe("打印范围与局部汇总", () => {
+  it("全部选择包含所有正式结果并保持完整重量", () => {
+    const { record } = makeReport(twoXRooms(false));
+    const options = createDefaultSlabPrintOptions(record);
+    const report = buildSlabPrintReport(record, options);
+
+    expect(options.rangeMode).toBe("all");
+    expect(options.detailMode).toBe("full");
+    expect(options.sections).toEqual(DEFAULT_SLAB_PRINT_SECTIONS);
+    expect(report.rows.map((row) => row.resultId)).toHaveLength(
+      record.calculation.results.length,
+    );
+    expect(report.selectedTotalWeightKg).toBeCloseTo(
+      report.fullTotalWeightKg,
+      10,
+    );
+    expect(report.isFullSelection).toBe(true);
+  });
+
+  it("当前筛选使用全部筛选组，不受页码和每页组数影响", () => {
+    const { record } = makeReport(twoXRooms(false));
+    const allGroups = createResultGroups(record);
+    const firstPage = paginateResultGroups(allGroups, 1, 2);
+    const selectedIds = filteredPrintResultIds(record, {
+      layer: "all",
+      direction: "all",
+      through: "all",
+    });
+    const report = buildSlabPrintReport(
+      record,
+      selectedOptions(record, selectedIds, { rangeMode: "current-filters" }),
+    );
+
+    expect(firstPage.groups.flatMap((group) => group.results)).toHaveLength(4);
+    expect(report.rows).toHaveLength(8);
+
+    const topIds = filteredPrintResultIds(record, {
+      layer: "top",
+      direction: "all",
+      through: "all",
+    });
+    expect(
+      buildSlabPrintReport(record, selectedOptions(record, topIds)).rows.every(
+        (row) => row.layer === "top",
+      ),
+    ).toBe(true);
+
+    const xIds = filteredPrintResultIds(record, {
+      layer: "all",
+      direction: "x",
+      through: "all",
+    });
+    expect(
+      buildSlabPrintReport(record, selectedOptions(record, xIds)).rows.every(
+        (row) => row.direction === "x",
+      ),
+    ).toBe(true);
+  });
+
+  it("自定义可只选择一个房间、一个方向或单一层位", () => {
+    const { record } = makeReport(twoXRooms(false));
+    const roomAIds = record.calculation.results
+      .filter((result) => result.roomId === "room-a")
+      .map((result) => result.id);
+    const roomReport = buildSlabPrintReport(
+      record,
+      selectedOptions(record, roomAIds, { rangeMode: "custom" }),
+    );
+    expect(roomReport.rows).toHaveLength(4);
+    expect(roomReport.rows.every((row) => row.roomId === "room-a")).toBe(true);
+    expect(roomReport.groups.every((group) => group.roomId === "room-a")).toBe(true);
+
+    const bottomXIds = record.calculation.results
+      .filter((result) => result.layer === "bottom" && result.direction === "x")
+      .map((result) => result.id);
+    const bottomXReport = buildSlabPrintReport(
+      record,
+      selectedOptions(record, bottomXIds, { rangeMode: "custom" }),
+    );
+    expect(bottomXReport.rows.every((row) => row.layer === "bottom")).toBe(true);
+    expect(bottomXReport.rows.every((row) => row.direction === "x")).toBe(true);
+
+    const topIds = record.calculation.results
+      .filter((result) => result.layer === "top")
+      .map((result) => result.id);
+    expect(
+      buildSlabPrintReport(record, selectedOptions(record, topIds)).rows.every(
+        (row) => row.layer === "top",
+      ),
+    ).toBe(true);
+  });
+
+  it("空分组被删除，原分组顺序保持且同名房间仍按ID区分", () => {
+    const { record } = makeReport(twoXRooms(false));
+    const groups = createResultGroups(record);
+    const selectedIds = [
+      groups.at(-1)!.results[0].id,
+      groups[0].results[0].id,
+    ];
+    const report = buildSlabPrintReport(
+      record,
+      selectedOptions(record, selectedIds, { rangeMode: "custom" }),
+    );
+
+    expect(report.groups.map((group) => group.scopeId)).toEqual([
+      groups[0].scopeId,
+      groups.at(-1)!.scopeId,
+    ]);
+    expect(report.groups.map((group) => group.roomId)).toEqual([
+      "room-a",
+      "room-b",
+    ]);
+    expect(report.groups.every((group) => group.rows.length > 0)).toBe(true);
+  });
+
+  it("重复和不存在的ID被忽略且选择不会修改正式记录", () => {
+    const { record } = makeReport(twoXRooms(false));
+    const before = structuredClone(record);
+    const id = record.calculation.results[0].id;
+    const normalized = normalizePrintResultIds(record, [id, id, "missing"]);
+    const report = buildSlabPrintReport(
+      record,
+      selectedOptions(record, [id, id, "missing"], { rangeMode: "custom" }),
+    );
+
+    expect(normalized).toEqual([id]);
+    expect(report.rows).toHaveLength(1);
+    expect(record).toEqual(before);
+  });
+
+  it("通墙方向与组合区垂直钢筋可独立选择且地筋保持独立", () => {
+    const { record } = makeReport(twoXRooms(true));
+    const through = record.calculation.throughWall!;
+    const throughReport = buildSlabPrintReport(
+      record,
+      selectedOptions(record, [through.throughBar.id], { rangeMode: "custom" }),
+    );
+    expect(throughReport.groups).toHaveLength(1);
+    expect(throughReport.groups[0].scopeType).toBe("through");
+    expect(throughReport.rows[0].throughWall).toBe(true);
+
+    const perpendicularReport = buildSlabPrintReport(
+      record,
+      selectedOptions(record, [through.perpendicularBar.id], { rangeMode: "custom" }),
+    );
+    expect(perpendicularReport.rows).toHaveLength(1);
+    expect(perpendicularReport.rows[0].scopeType).toBe("through");
+    expect(perpendicularReport.rows[0].throughWall).toBe(false);
+
+    const roomBottomId = record.calculation.results.find(
+      (result) => result.roomId === "room-b" && result.layer === "bottom",
+    )!.id;
+    const roomBottomReport = buildSlabPrintReport(
+      record,
+      selectedOptions(record, [roomBottomId], { rangeMode: "custom" }),
+    );
+    expect(roomBottomReport.groups[0].roomId).toBe("room-b");
+    expect(roomBottomReport.rows[0].layer).toBe("bottom");
+    expect(roomBottomReport.rows.some((row) => row.layer === "top")).toBe(false);
+  });
+
+  it("局部重量、分组小计和规格汇总只统计所选结果", () => {
+    const { record } = makeReport(twoXRooms(false));
+    const selectedResults = record.calculation.results.filter(
+      (result) => result.direction === "x",
+    );
+    const report = buildSlabPrintReport(
+      record,
+      selectedOptions(
+        record,
+        selectedResults.map((result) => result.id),
+        { rangeMode: "custom" },
+      ),
+    );
+    const expectedWeight = selectedResults.reduce(
+      (sum, result) => sum + result.weightKg,
+      0,
+    );
+
+    expect(report.selectedTotalWeightKg).toBeCloseTo(expectedWeight, 10);
+    expect(report.selectedBottomWeightKg + report.selectedTopWeightKg).toBeCloseTo(
+      report.selectedTotalWeightKg,
+      10,
+    );
+    expect(
+      report.groups.reduce((sum, group) => sum + group.subtotalWeightKg, 0),
+    ).toBeCloseTo(expectedWeight, 10);
+    expect(
+      report.specifications.reduce((sum, item) => sum + item.totalWeightKg, 0),
+    ).toBeCloseTo(expectedWeight, 10);
+    expect(report.specifications.every((item) => item.direction === "x")).toBe(true);
+    expect(report.fullTotalWeightKg).toBe(record.calculation.totalWeightKg);
+    expect(report.isFullSelection).toBe(false);
+  });
+
+  it("空选择或未选择章节时不允许打印", () => {
+    const { record } = makeReport(cloneDefaultSlabCalculatorState());
+    const emptyOptions = selectedOptions(record, [], { rangeMode: "custom" });
+    const emptyReport = buildSlabPrintReport(record, emptyOptions);
+    expect(emptyReport.groups).toEqual([]);
+    expect(emptyReport.selectedTotalWeightKg).toBe(0);
+    expect(canPrintSlabReport(emptyReport, emptyOptions)).toBe(false);
+
+    const noSectionOptions = selectedOptions(record, allPrintResultIds(record), {
+      sections: {
+        weightSummary: false,
+        parameters: false,
+        roomDimensions: false,
+        diagram: false,
+        specificationSummary: false,
+        resultDetails: false,
+        calculationNotes: false,
+      },
+    });
+    const noSectionReport = buildSlabPrintReport(record, noSectionOptions);
+    expect(canPrintSlabReport(noSectionReport, noSectionOptions)).toBe(false);
   });
 });
 

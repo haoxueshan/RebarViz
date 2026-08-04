@@ -75,24 +75,37 @@ export function SlabLayoutDiagram({ state }: { state: SlabCalculatorState }) {
   );
 }
 
-function lineCounts(results: BarResult[], roomId: string, direction: "x" | "y") {
-  return (
-    results.find(
-      (result) =>
-        result.roomId === roomId &&
-        result.layer === "bottom" &&
-        result.direction === direction,
-    )?.count ?? 1
+function findRoomResult(
+  results: BarResult[],
+  roomId: string,
+  layer: "bottom" | "top",
+  direction: "x" | "y",
+): BarResult | undefined {
+  return results.find(
+    (result) =>
+      result.roomId === roomId &&
+      result.layer === layer &&
+      result.direction === direction,
   );
+}
+
+function visibleLineCount(
+  result: BarResult | undefined,
+  visibleResultIds: ReadonlySet<string> | undefined,
+): number {
+  if (visibleResultIds && (!result || !visibleResultIds.has(result.id))) return 0;
+  return Math.min(Math.max(result?.count ?? 1, 1), 4);
 }
 
 export function SlabResultsDiagram({
   state,
   calculation,
+  visibleResultIds,
   showNote = true,
 }: {
   state: SlabCalculatorState;
   calculation: SlabCalculation;
+  visibleResultIds?: ReadonlySet<string>;
   showNote?: boolean;
 }) {
   const layout = frame(state);
@@ -100,7 +113,11 @@ export function SlabResultsDiagram({
   const throughLines: ReactNode[] = [];
   const throughDirection = calculation.throughWall?.direction ?? null;
   const throughBar = calculation.throughWall?.throughBar;
-  const throughExtraLabel = throughBar
+  const perpendicularBar = calculation.throughWall?.perpendicularBar;
+  const throughBarVisible =
+    throughBar !== undefined &&
+    (!visibleResultIds || visibleResultIds.has(throughBar.id));
+  const throughExtraLabel = throughBar && throughBarVisible
     ? throughBar.topExtraMode === "both"
       ? "两端增加"
       : `${throughBar.throughWall ? "最" : ""}${
@@ -113,8 +130,14 @@ export function SlabResultsDiagram({
   layout.rooms.forEach((room, roomIndex) => {
     const x = layout.frameX + (layout.horizontal ? roomIndex * (layout.roomW + layout.gap) : 0);
     const y = layout.frameY + (layout.horizontal ? 0 : roomIndex * (layout.roomH + layout.gap));
-    const countX = Math.min(Math.max(lineCounts(calculation.results, room.id, "x"), 1), 4);
-    const countY = Math.min(Math.max(lineCounts(calculation.results, room.id, "y"), 1), 4);
+    const countX = visibleLineCount(
+      findRoomResult(calculation.results, room.id, "bottom", "x"),
+      visibleResultIds,
+    );
+    const countY = visibleLineCount(
+      findRoomResult(calculation.results, room.id, "bottom", "y"),
+      visibleResultIds,
+    );
     for (let line = 1; line <= countX; line += 1) {
       const lineY = y + (line * layout.roomH) / (countX + 1);
       normalLines.push(<line key={`bx-${room.id}-${line}`} x1={x + 8} y1={lineY} x2={x + layout.roomW - 8} y2={lineY} stroke="#2563eb" strokeWidth="2" />);
@@ -123,13 +146,26 @@ export function SlabResultsDiagram({
       const lineX = x + (line * layout.roomW) / (countY + 1);
       normalLines.push(<line key={`by-${room.id}-${line}`} x1={lineX} y1={y + 8} x2={lineX} y2={y + layout.roomH - 8} stroke="#059669" strokeWidth="2" />);
     }
-    if (throughDirection !== "x") {
+    const topXResult = throughDirection
+      ? throughDirection === "y" ? perpendicularBar : undefined
+      : findRoomResult(calculation.results, room.id, "top", "x");
+    const topYResult = throughDirection
+      ? throughDirection === "x" ? perpendicularBar : undefined
+      : findRoomResult(calculation.results, room.id, "top", "y");
+    const topXVisible =
+      throughDirection !== "x" &&
+      (!visibleResultIds || Boolean(topXResult && visibleResultIds.has(topXResult.id)));
+    const topYVisible =
+      throughDirection !== "y" &&
+      (!visibleResultIds || Boolean(topYResult && visibleResultIds.has(topYResult.id)));
+
+    if (topXVisible) {
       for (let line = 1; line <= 3; line += 1) {
         const lineY = y + (line * layout.roomH) / 4 + 4;
         normalLines.push(<line key={`tx-${room.id}-${line}`} x1={x + 8} y1={lineY} x2={x + layout.roomW - 8} y2={lineY} stroke="#2563eb" strokeWidth="2" strokeDasharray="7 5" />);
       }
     }
-    if (throughDirection !== "y") {
+    if (topYVisible) {
       for (let line = 1; line <= 3; line += 1) {
         const lineX = x + (line * layout.roomW) / 4 + 4;
         normalLines.push(<line key={`ty-${room.id}-${line}`} x1={lineX} y1={y + 8} x2={lineX} y2={y + layout.roomH - 8} stroke="#059669" strokeWidth="2" strokeDasharray="7 5" />);
@@ -137,13 +173,13 @@ export function SlabResultsDiagram({
     }
   });
 
-  if (throughDirection === "x") {
+  if (throughDirection === "x" && throughBarVisible) {
     for (let line = 1; line <= 4; line += 1) {
       const y = layout.frameY + (line * layout.frameH) / 5;
       throughLines.push(<line key={`through-x-${line}`} x1={layout.frameX + 5} y1={y} x2={layout.frameX + layout.frameW - 5} y2={y} stroke="#2563eb" strokeWidth="3" strokeDasharray="8 5" />);
     }
   }
-  if (throughDirection === "y") {
+  if (throughDirection === "y" && throughBarVisible) {
     for (let line = 1; line <= 4; line += 1) {
       const x = layout.frameX + (line * layout.frameW) / 5;
       throughLines.push(<line key={`through-y-${line}`} x1={x} y1={layout.frameY + 5} x2={x} y2={layout.frameY + layout.frameH - 5} stroke="#059669" strokeWidth="3" strokeDasharray="8 5" />);
@@ -159,6 +195,7 @@ export function SlabResultsDiagram({
         <text x="60" y="380" fontSize="12" fill="#2563eb">蓝色：X向</text>
         <text x="150" y="380" fontSize="12" fill="#059669">绿色：Y向</text>
         <text x="240" y="380" fontSize="12" fill="#475569">实线：地筋　虚线：面筋</text>
+        {visibleResultIds && <text x="60" y="400" fontSize="12" fill="#475569">仅显示本次所选钢筋</text>}
         {throughExtraLabel && <text x="640" y="400" textAnchor="end" fontSize="12" fill="#92400e">通墙面筋增加：{throughExtraLabel}</text>}
       </svg>
       {showNote && (

@@ -11,6 +11,8 @@ import {
 export const DRAFT_KEY = "rebarviz:slab-calculator:draft:v1";
 export const RESULT_KEY = "rebarviz:slab-calculator:result:v1";
 export const RESULT_UI_KEY = "rebarviz:slab-calculator:result-ui:v1";
+export const RESULT_PRINT_SETTINGS_KEY =
+  "rebarviz:slab-calculator:print-settings:v1";
 export const RETURN_TO_INPUT_KEY = "rebarviz:slab-calculator:return-to-input:v1";
 
 export const CALCULATOR_SCHEMA_VERSION = 1;
@@ -72,6 +74,32 @@ export type ResultGroup = {
   subtotalWeightKg: number;
 };
 
+export type SlabPrintRangeMode = "all" | "current-filters" | "custom";
+
+export type SlabPrintDetailMode = "full" | "compact";
+
+export type SlabPrintSections = {
+  weightSummary: boolean;
+  parameters: boolean;
+  roomDimensions: boolean;
+  diagram: boolean;
+  specificationSummary: boolean;
+  resultDetails: boolean;
+  calculationNotes: boolean;
+};
+
+export type SlabPrintOptions = {
+  rangeMode: SlabPrintRangeMode;
+  selectedResultIds: string[];
+  detailMode: SlabPrintDetailMode;
+  sections: SlabPrintSections;
+};
+
+export type SlabPrintPreferences = Pick<
+  SlabPrintOptions,
+  "detailMode" | "sections"
+>;
+
 export const DEFAULT_DRAFT_UI_STATE: CalculatorDraftUiState = {
   openSections: {
     base: true,
@@ -90,8 +118,89 @@ export const DEFAULT_RESULT_UI_STATE: ResultUiState = {
   selectedScopeId: "",
 };
 
+export const DEFAULT_SLAB_PRINT_SECTIONS: SlabPrintSections = {
+  weightSummary: true,
+  parameters: true,
+  roomDimensions: true,
+  diagram: true,
+  specificationSummary: true,
+  resultDetails: true,
+  calculationNotes: true,
+};
+
+export const DEFAULT_SLAB_PRINT_OPTIONS: SlabPrintOptions = {
+  rangeMode: "all",
+  selectedResultIds: [],
+  detailMode: "full",
+  sections: { ...DEFAULT_SLAB_PRINT_SECTIONS },
+};
+
+const RESULT_PRINT_SETTINGS_SCHEMA_VERSION = 1;
+
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function copyPrintSections(sections: SlabPrintSections): SlabPrintSections {
+  return { ...sections };
+}
+
+function defaultPrintPreferences(): SlabPrintPreferences {
+  return {
+    detailMode: DEFAULT_SLAB_PRINT_OPTIONS.detailMode,
+    sections: copyPrintSections(DEFAULT_SLAB_PRINT_SECTIONS),
+  };
+}
+
+function isPrintSections(value: unknown): value is SlabPrintSections {
+  if (!isObject(value)) return false;
+  return (Object.keys(DEFAULT_SLAB_PRINT_SECTIONS) as Array<keyof SlabPrintSections>)
+    .every((key) => typeof value[key] === "boolean");
+}
+
+export function createDefaultSlabPrintOptions(
+  record: StoredCalculationRecord,
+  preferences: SlabPrintPreferences = defaultPrintPreferences(),
+): SlabPrintOptions {
+  return {
+    rangeMode: "all",
+    selectedResultIds: record.calculation.results.map((result) => result.id),
+    detailMode: preferences.detailMode,
+    sections: copyPrintSections(preferences.sections),
+  };
+}
+
+export function parseResultPrintSettings(
+  raw: string | null,
+): SlabPrintPreferences {
+  if (!raw) return defaultPrintPreferences();
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (
+      !isObject(value) ||
+      value.schemaVersion !== RESULT_PRINT_SETTINGS_SCHEMA_VERSION ||
+      (value.detailMode !== "full" && value.detailMode !== "compact") ||
+      !isPrintSections(value.sections)
+    ) {
+      return defaultPrintPreferences();
+    }
+    return {
+      detailMode: value.detailMode,
+      sections: copyPrintSections(value.sections),
+    };
+  } catch {
+    return defaultPrintPreferences();
+  }
+}
+
+export function serializeResultPrintSettings(
+  options: SlabPrintOptions,
+): string {
+  return JSON.stringify({
+    schemaVersion: RESULT_PRINT_SETTINGS_SCHEMA_VERSION,
+    detailMode: options.detailMode,
+    sections: copyPrintSections(options.sections),
+  });
 }
 
 export function createCalculationRecord(

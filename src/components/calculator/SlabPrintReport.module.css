@@ -72,7 +72,7 @@
 
   .reportMeta {
     display: grid;
-    min-width: 82mm;
+    min-width: 138mm;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 3mm;
     margin: 0;
@@ -118,6 +118,17 @@
   .summaryCard strong {
     font-size: 14pt;
     white-space: nowrap;
+  }
+
+  .selectionSummary {
+    grid-column: 1 / -1;
+    margin: 0;
+    padding: 1.5mm 2mm;
+    border: 0.75pt solid #777;
+    background: #fff;
+    font-size: 7.5pt;
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
 
   .section {
@@ -243,14 +254,23 @@
     text-align: right;
   }
 
-  .colSequence { width: 4%; }
-  .colScope { width: 11%; }
-  .colType { width: 13%; }
-  .colSpec { width: 8%; }
-  .colCount { width: 6%; }
-  .colLength { width: 8%; }
-  .colAnchor { width: 16%; }
-  .colWeight { width: 10%; }
+  .fullDetailTable .colSequence { width: 4%; }
+  .fullDetailTable .colScope { width: 10%; }
+  .fullDetailTable .colType { width: 11%; }
+  .fullDetailTable .colSpec { width: 7%; }
+  .fullDetailTable .colCount { width: 5%; }
+  .fullDetailTable .colLength { width: 7%; }
+  .fullDetailTable .colAnchor { width: 15%; }
+  .fullDetailTable .colExtra { width: 9%; }
+  .fullDetailTable .colWeight { width: 10%; }
+
+  .compactDetailTable .colSequence { width: 5%; }
+  .compactDetailTable .colScope { width: 18%; }
+  .compactDetailTable .colType { width: 17%; }
+  .compactDetailTable .colSpec { width: 11%; }
+  .compactDetailTable .colCount { width: 8%; }
+  .compactDetailTable .colLength { width: 13%; }
+  .compactDetailTable .colWeight { width: 15%; }
 
   .notes {
     break-inside: avoid;

@@ -7,6 +7,11 @@ import {
 } from "./slab-calculator";
 import {
   createResultGroups,
+  filterResultGroups,
+  type ResultFilters,
+  type SlabPrintOptions,
+  type SlabPrintRangeMode,
+  type SlabPrintSections,
   type StoredCalculationRecord,
 } from "./slab-calculator-storage";
 
@@ -56,9 +61,13 @@ export type SlabPrintReportModel = {
   groups: SlabPrintGroup[];
   rows: SlabPrintRow[];
   specifications: SlabSpecificationSummary[];
-  totalWeightKg: number;
-  bottomWeightKg: number;
-  topWeightKg: number;
+  fullRowCount: number;
+  selectedRowCount: number;
+  isFullSelection: boolean;
+  fullTotalWeightKg: number;
+  selectedTotalWeightKg: number;
+  selectedBottomWeightKg: number;
+  selectedTopWeightKg: number;
 };
 
 function anchorSourceLabel(result: BarResult, endpoint: "start" | "end") {
@@ -142,16 +151,81 @@ export function isPrintableCalculationRecord(
   );
 }
 
+export function allPrintResultIds(
+  record: StoredCalculationRecord,
+): string[] {
+  return record.calculation.results.map((result) => result.id);
+}
+
+export function filteredPrintResultIds(
+  record: StoredCalculationRecord,
+  filters: ResultFilters,
+): string[] {
+  return filterResultGroups(createResultGroups(record), filters).flatMap(
+    (group) => group.results.map((result) => result.id),
+  );
+}
+
+export function normalizePrintResultIds(
+  record: StoredCalculationRecord,
+  selectedResultIds: readonly string[],
+): string[] {
+  const requestedIds = new Set(selectedResultIds);
+  return record.calculation.results
+    .filter((result) => requestedIds.has(result.id))
+    .map((result) => result.id);
+}
+
+export function hasSelectedPrintSection(
+  sections: SlabPrintSections,
+): boolean {
+  return Object.values(sections).some(Boolean);
+}
+
+export function printRangeLabel(rangeMode: SlabPrintRangeMode): string {
+  if (rangeMode === "current-filters") return "结果页当前筛选";
+  if (rangeMode === "custom") return "自定义选择";
+  return "全部正式结果";
+}
+
+export function canPrintSlabReport(
+  model: SlabPrintReportModel,
+  options: SlabPrintOptions,
+): boolean {
+  return model.selectedRowCount > 0 && hasSelectedPrintSection(options.sections);
+}
+
 export function buildSlabPrintReport(
   record: StoredCalculationRecord,
+  options: SlabPrintOptions,
 ): SlabPrintReportModel {
-  const totalWeightKg = record.calculation.totalWeightKg;
-  if (!isPrintableCalculationRecord(record) || totalWeightKg === null) {
+  const fullTotalWeightKg = record.calculation.totalWeightKg;
+  if (!isPrintableCalculationRecord(record) || fullTotalWeightKg === null) {
     throw new Error("正式计算记录无效，无法生成打印报表");
   }
 
+  const validResultIds = new Set(
+    record.calculation.results.map((result) => result.id),
+  );
+  const selectedIds = new Set(
+    options.selectedResultIds.filter((id) => validResultIds.has(id)),
+  );
+  const selectedGroups = createResultGroups(record)
+    .map((group) => {
+      const results = group.results.filter((result) => selectedIds.has(result.id));
+      return {
+        ...group,
+        results,
+        subtotalWeightKg: results.reduce(
+          (sum, result) => sum + result.weightKg,
+          0,
+        ),
+      };
+    })
+    .filter((group) => group.results.length > 0);
+
   let sequence = 0;
-  const groups = createResultGroups(record).map((group): SlabPrintGroup => ({
+  const groups = selectedGroups.map((group): SlabPrintGroup => ({
     scopeId: group.scopeId,
     scopeName: group.title,
     scopeType: group.scopeType,
@@ -210,19 +284,30 @@ export function buildSlabPrintReport(
       a.diameter - b.diameter ||
       a.spacing - b.spacing,
   );
-  const bottomWeightKg = record.calculation.results
-    .filter((result) => result.layer === "bottom")
+  const selectedBottomWeightKg = rows
+    .filter((row) => row.layer === "bottom")
+    .reduce((sum, row) => sum + row.weightKg, 0);
+  const selectedTopWeightKg = rows
+    .filter((row) => row.layer === "top")
+    .reduce((sum, row) => sum + row.weightKg, 0);
+  const selectedTotalWeightKg = rows
     .reduce((sum, result) => sum + result.weightKg, 0);
-  const topWeightKg = record.calculation.results
-    .filter((result) => result.layer === "top")
-    .reduce((sum, result) => sum + result.weightKg, 0);
+  const fullRowCount = record.calculation.results.length;
+  const selectedRowCount = rows.length;
+  const isFullSelection =
+    selectedIds.size === validResultIds.size &&
+    [...validResultIds].every((id) => selectedIds.has(id));
 
   return {
     groups,
     rows,
     specifications,
-    totalWeightKg,
-    bottomWeightKg,
-    topWeightKg,
+    fullRowCount,
+    selectedRowCount,
+    isFullSelection,
+    fullTotalWeightKg,
+    selectedTotalWeightKg,
+    selectedBottomWeightKg,
+    selectedTopWeightKg,
   };
 }
