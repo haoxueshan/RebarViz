@@ -665,7 +665,7 @@ export function CalculatorClient() {
         >
           <div className="grid gap-6 xl:grid-cols-[minmax(0,1.55fr)_minmax(340px,0.85fr)] xl:items-start">
             <div className="space-y-4">
-              <CollapsibleSection number={1} title="楼板基础参数" description="房间尺寸、墙厚、保护层和增加值的唯一数据源。" open={ui.openSections.base} onToggle={(open) => toggleSection("base", open)}>
+              <CollapsibleSection number={1} title="楼板基础参数" description="房间尺寸、墙厚和面筋锚固增加值的唯一数据源。" open={ui.openSections.base} onToggle={(open) => toggleSection("base", open)}>
                 <div className="grid gap-2 sm:grid-cols-3">
                   {arrangementOptions.map((option) => (
                     <button key={option.value} type="button" onClick={() => setArrangement(option.value)} className={`min-h-11 rounded-lg border px-4 py-2 text-sm font-medium ${state.slab.arrangement === option.value ? "border-blue-600 bg-blue-600 text-white" : "border-slate-300 bg-white text-slate-700"}`}>{option.label}</button>
@@ -688,12 +688,11 @@ export function CalculatorClient() {
                     return { ...current, slab: { ...current.slab, rooms: synchronizeRoomAnchors([...current.slab.rooms, room], current.slab.arrangement) } };
                   })} className="mt-3 inline-flex min-h-11 items-center gap-2 rounded-lg border border-dashed border-blue-300 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-700"><Plus size={16} />添加房间</button>
                 )}
-                <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                   <NumberField label="内墙厚度" value={state.slab.innerWallThickness} onChange={(innerWallThickness) => updateBusinessState((current) => ({ ...current, slab: { ...current.slab, innerWallThickness } }))} />
                   <NumberField label="外墙厚度" value={state.slab.outerWallThickness} onChange={(outerWallThickness) => updateBusinessState((current) => ({ ...current, slab: { ...current.slab, outerWallThickness } }))} />
-                  <NumberField label="保护层" value={state.slab.cover} onChange={(cover) => updateBusinessState((current) => ({ ...current, slab: { ...current.slab, cover } }))} />
                   <NumberField label="面筋锚固增加值" value={state.slab.topAnchorExtra} onChange={(topAnchorExtra) => updateBusinessState((current) => ({ ...current, slab: { ...current.slab, topAnchorExtra } }))} />
-                  <label><span className={labelClass}>根数算法</span><select className={fieldClass} value={state.slab.countMode} onChange={(event) => updateBusinessState((current) => ({ ...current, slab: { ...current.slab, countMode: event.target.value as CountMode } }))}><option value="project">项目算法</option><option value="cover">保护层算法</option><option value="round">四舍五入算法</option><option value="floor">向下取整算法</option></select></label>
+                  <label><span className={labelClass}>根数算法</span><select className={fieldClass} value={state.slab.countMode} onChange={(event) => updateBusinessState((current) => ({ ...current, slab: { ...current.slab, countMode: event.target.value as CountMode } }))}><option value="project">项目算法</option><option value="round">四舍五入算法</option><option value="floor">向下取整算法</option></select></label>
                 </div>
                 <p className="mt-3 text-xs text-slate-500">中间墙共 {Math.max(state.slab.rooms.length - 1, 0)} 道，由房间拓扑自动确定；普通多房间允许尺寸不同，只有通墙时才校验垂直尺寸一致。</p>
               </CollapsibleSection>

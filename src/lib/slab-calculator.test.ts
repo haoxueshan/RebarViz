@@ -70,20 +70,19 @@ function yThroughState(): SlabCalculatorState {
 
 describe("根数算法", () => {
   it("四舍五入算法按比例取整且至少返回1根", () => {
-    expect(countBars(3350, 200, 15, "round")).toBe(17);
-    expect(countBars(3300, 200, 15, "round")).toBe(17);
-    expect(countBars(100, 200, 15, "round")).toBe(1);
+    expect(countBars(3350, 200, "round")).toBe(17);
+    expect(countBars(3300, 200, "round")).toBe(17);
+    expect(countBars(100, 200, "round")).toBe(1);
   });
 
   it("向下取整算法按比例取整且至少返回1根", () => {
-    expect(countBars(3350, 200, 15, "floor")).toBe(16);
-    expect(countBars(3300, 200, 15, "floor")).toBe(16);
-    expect(countBars(100, 200, 15, "floor")).toBe(1);
+    expect(countBars(3350, 200, "floor")).toBe(16);
+    expect(countBars(3300, 200, "floor")).toBe(16);
+    expect(countBars(100, 200, "floor")).toBe(1);
   });
 
-  it("项目算法和保护层算法保持原公式", () => {
-    expect(countBars(3350, 200, 15, "project")).toBe(17);
-    expect(countBars(3350, 200, 15, "cover")).toBe(18);
+  it("项目算法保持向上取整公式", () => {
+    expect(countBars(3350, 200, "project")).toBe(17);
   });
 
   it("普通房间使用所选算法并据此重新计算重量", () => {
@@ -284,17 +283,6 @@ describe("面筋通墙回归", () => {
     expect(topResults).toHaveLength(2);
     expect(topResults.filter((result) => result.throughWall)).toHaveLength(1);
     expect(topResults.some((result) => result.id.startsWith("room-") && result.direction === "x")).toBe(false);
-  });
-
-  it("保护层算法只在组合区最外侧扣减两次", () => {
-    const state = xThroughState();
-    state.slab.countMode = "cover";
-    const through = calculateSlabResults(state).throughWall;
-    expect(through?.throughBar.count).toBe(19);
-    expect(through?.perpendicularBar.count).toBe(40);
-    expect(through?.perpendicularBar.count).toBe(
-      countBars(4200 + 3600, 200, 15, "cover"),
-    );
   });
 
   it("排列方向或垂直尺寸校验失败时取消通墙结果", () => {
@@ -682,17 +670,6 @@ describe("严格校验和结果关联", () => {
     expect(calculation.totalWeightKg).toBeNull();
   });
 
-  it("保护层占满计算宽度时结果无效", () => {
-    const state = cloneDefaultSlabCalculatorState();
-    state.slab.countMode = "cover";
-    state.slab.cover = 1800;
-    const calculation = calculateSlabResults(state);
-    expect(calculation.isValid).toBe(false);
-    expect(calculation.errors.some((error) => error.includes("必须大于两倍保护层"))).toBe(true);
-    expect(calculation.results).toEqual([]);
-    expect(calculation.totalWeightKg).toBeNull();
-  });
-
   it("手动锚固为0时不生成工程结果", () => {
     const state = cloneDefaultSlabCalculatorState();
     state.slab.rooms[0].anchors.bottom.x.start = anchor("manual", 0);
@@ -753,7 +730,6 @@ describe("无效输入安全性", () => {
       [3600, 3600],
     ]);
     state.slab.innerWallThickness = -240;
-    state.slab.cover = Number.POSITIVE_INFINITY;
     state.bottom.x.diameter = 0;
     state.top.y.spacing = 0;
     state.slab.rooms[0].anchors.top.x.start = anchor("manual", -1);

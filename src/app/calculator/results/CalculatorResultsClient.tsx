@@ -40,11 +40,9 @@ const fieldClass =
 function ResultFormula({
   result,
   countMode,
-  cover,
 }: {
   result: BarResult;
   countMode: CountMode;
-  cover: number;
 }) {
   const lengthParts = [
     result.netRunSpanMm,
@@ -56,7 +54,7 @@ function ResultFormula({
     <div className="space-y-1 text-xs leading-5 text-slate-600">
       <p>单根长度：{lengthParts.join(" + ")} = {(result.singleLengthM * 1000).toFixed(0)}mm</p>
       <p>
-        根数：{formatCountFormula(result.calculationWidthMm, result.spacing, cover, countMode)} = {result.count}根
+        根数：{formatCountFormula(result.calculationWidthMm, result.spacing, countMode)} = {result.count}根
       </p>
       <p>面筋增加作用端：{formatExtraModeLabel(result)}</p>
       <p>总长度：{result.count} × {result.singleLengthM.toFixed(3)} = {result.totalLengthM.toFixed(3)}m</p>
@@ -69,11 +67,9 @@ function ResultFormula({
 function ResultGroupCard({
   group,
   countMode,
-  cover,
 }: {
   group: ResultGroup;
   countMode: CountMode;
-  cover: number;
 }) {
   return (
     <section id={`scope-${group.scopeId}`} className="scroll-mt-20 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -96,7 +92,7 @@ function ResultGroupCard({
               <div><p className="text-xs text-slate-500">重量</p><p className="text-lg font-bold text-slate-900">{result.weightKg.toFixed(2)}kg</p></div>
               <div><p className="text-xs text-slate-500">起点锚固</p><p className="font-medium">{formatAnchorLabel(result, "start")}</p></div>
               <div><p className="text-xs text-slate-500">终点锚固</p><p className="font-medium">{formatAnchorLabel(result, "end")}</p></div>
-              <div className="sm:col-span-2"><ResultFormula result={result} countMode={countMode} cover={cover} /></div>
+              <div className="sm:col-span-2"><ResultFormula result={result} countMode={countMode} /></div>
             </div>
           </article>
         ))}
@@ -223,7 +219,7 @@ export function CalculatorResultsClient() {
             <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
               <div><dt className="text-slate-500">排列/房间数</dt><dd className="font-semibold">{record.inputSnapshot.slab.arrangement.toUpperCase()} · {record.inputSnapshot.slab.rooms.length}间</dd></div>
               <div><dt className="text-slate-500">内墙/外墙</dt><dd className="font-semibold">{record.inputSnapshot.slab.innerWallThickness} / {record.inputSnapshot.slab.outerWallThickness}mm</dd></div>
-              <div><dt className="text-slate-500">保护层/根数算法</dt><dd className="font-semibold">{record.inputSnapshot.slab.cover}mm · {countModeLabel(record.inputSnapshot.slab.countMode)}</dd></div>
+              <div><dt className="text-slate-500">根数算法</dt><dd className="font-semibold">{countModeLabel(record.inputSnapshot.slab.countMode)}</dd></div>
               <div><dt className="text-slate-500">面筋锚固增加</dt><dd className="font-semibold">{record.inputSnapshot.slab.topAnchorExtra}mm</dd></div>
             </dl>
             <div className="mt-4 space-y-2">
@@ -233,8 +229,8 @@ export function CalculatorResultsClient() {
               <div className="mt-4 space-y-1 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
                 <p>通墙摘要：{calculation.throughWall.direction.toUpperCase()}向 · 净尺寸{calculation.throughWall.netSpanTotal}mm · 中间墙{calculation.throughWall.intermediateWallTotal}mm</p>
                 <p>单根长度：{calculation.throughWall.netSpanTotal} + {calculation.throughWall.intermediateWallTotal} + {calculation.throughWall.throughBar.startAnchor} + {calculation.throughWall.throughBar.endAnchor} = {(calculation.throughWall.throughBar.singleLengthM * 1000).toFixed(0)}mm</p>
-                <p>通墙方向根数：{formatCountFormula(calculation.throughWall.throughBar.calculationWidthMm, calculation.throughWall.throughBar.spacing, record.inputSnapshot.slab.cover, record.inputSnapshot.slab.countMode)} = {calculation.throughWall.throughBar.count}根</p>
-                <p>垂直方向根数：{formatCountFormula(calculation.throughWall.perpendicularBar.calculationWidthMm, calculation.throughWall.perpendicularBar.spacing, record.inputSnapshot.slab.cover, record.inputSnapshot.slab.countMode)} = {calculation.throughWall.perpendicularBar.count}根（不计中间墙）</p>
+                <p>通墙方向根数：{formatCountFormula(calculation.throughWall.throughBar.calculationWidthMm, calculation.throughWall.throughBar.spacing, record.inputSnapshot.slab.countMode)} = {calculation.throughWall.throughBar.count}根</p>
+                <p>垂直方向根数：{formatCountFormula(calculation.throughWall.perpendicularBar.calculationWidthMm, calculation.throughWall.perpendicularBar.spacing, record.inputSnapshot.slab.countMode)} = {calculation.throughWall.perpendicularBar.count}根（不计中间墙）</p>
               </div>
             )}
           </section>
@@ -252,7 +248,7 @@ export function CalculatorResultsClient() {
         </section>
 
         <div className="mt-4 space-y-4">
-          {pagination.groups.length > 0 ? pagination.groups.map((group) => <ResultGroupCard key={group.scopeId} group={group} countMode={record.inputSnapshot.slab.countMode} cover={record.inputSnapshot.slab.cover} />) : <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">当前筛选没有结果；全部重量仍为 {total.toFixed(2)}kg。</div>}
+          {pagination.groups.length > 0 ? pagination.groups.map((group) => <ResultGroupCard key={group.scopeId} group={group} countMode={record.inputSnapshot.slab.countMode} />) : <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">当前筛选没有结果；全部重量仍为 {total.toFixed(2)}kg。</div>}
         </div>
 
         <nav className="mt-5 flex flex-wrap items-center justify-center gap-2" aria-label="结果分页">

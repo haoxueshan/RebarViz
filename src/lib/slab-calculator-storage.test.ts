@@ -55,8 +55,13 @@ describe("正式计算记录", () => {
 
     const wrongSchema = { ...record, schemaVersion: CALCULATOR_SCHEMA_VERSION + 1 };
     const wrongAlgorithm = { ...record, algorithmVersion: `${CALCULATOR_ALGORITHM_VERSION}-old` };
+    const legacyCoverAlgorithm = {
+      ...record,
+      algorithmVersion: "slab-calculator-2026-08-v1",
+    };
     expect(parseCalculationRecord(JSON.stringify(wrongSchema))).toBeNull();
     expect(parseCalculationRecord(JSON.stringify(wrongAlgorithm))).toBeNull();
+    expect(parseCalculationRecord(JSON.stringify(legacyCoverAlgorithm))).toBeNull();
     expect(parseCalculationRecord("not-json")).toBeNull();
   });
 
@@ -152,6 +157,49 @@ describe("结果分组、筛选和分页", () => {
 });
 
 describe("本地状态解析", () => {
+  it("旧保护层草稿迁移为项目算法并移除保护层字段", () => {
+    const state = xRooms(false);
+    state.slab.rooms[0].anchors.top.x.start = {
+      source: "manual",
+      manualValue: 550,
+      origin: "user",
+    };
+    const legacyState = {
+      ...state,
+      slab: {
+        ...state.slab,
+        cover: 15,
+        countMode: "cover",
+      },
+    };
+    const draft = parseDraftRecord(JSON.stringify({
+      schemaVersion: CALCULATOR_SCHEMA_VERSION,
+      savedAt: "2026-08-03T00:00:00.000Z",
+      state: legacyState,
+      ui: {
+        openSections: { base: false, bottom: true, top: false, through: true },
+        bottomDirection: "y",
+        topDirection: "x",
+      },
+    }));
+
+    expect(draft?.state.slab.countMode).toBe("project");
+    expect(draft?.state.slab).not.toHaveProperty("cover");
+    expect(draft?.state.slab.rooms.map((room) => room.id)).toEqual([
+      "room-a",
+      "room-b",
+    ]);
+    expect(draft?.state.slab.rooms[0].anchors.top.x.start).toEqual({
+      source: "manual",
+      manualValue: 550,
+      origin: "user",
+    });
+    expect(draft?.state.bottom).toEqual(state.bottom);
+    expect(draft?.state.top).toEqual(state.top);
+    expect(draft?.ui.openSections.base).toBe(false);
+    expect(draft?.ui.bottomDirection).toBe("y");
+  });
+
   it("草稿恢复输入和折叠状态，但不会产生正式记录", () => {
     const state = cloneDefaultSlabCalculatorState();
     const raw = JSON.stringify({

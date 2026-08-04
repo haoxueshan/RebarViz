@@ -71,7 +71,6 @@ export function SlabPrintReport({ record, printedAt }: SlabPrintReportProps) {
           <div><dt>房间数量</dt><dd>{slab.rooms.length} 间</dd></div>
           <div><dt>内墙厚度</dt><dd>{slab.innerWallThickness} mm</dd></div>
           <div><dt>外墙厚度</dt><dd>{slab.outerWallThickness} mm</dd></div>
-          <div><dt>保护层厚度</dt><dd>{slab.cover} mm</dd></div>
           <div><dt>面筋锚固增加值</dt><dd>{slab.topAnchorExtra} mm</dd></div>
           <div><dt>根数算法</dt><dd>{countModeLabel(slab.countMode)}</dd></div>
           <div><dt>面筋通墙</dt><dd>{throughWall ? `启用（${throughWall.direction.toUpperCase()}向）` : "未启用"}</dd></div>

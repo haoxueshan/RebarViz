@@ -14,7 +14,7 @@ export const RESULT_UI_KEY = "rebarviz:slab-calculator:result-ui:v1";
 export const RETURN_TO_INPUT_KEY = "rebarviz:slab-calculator:return-to-input:v1";
 
 export const CALCULATOR_SCHEMA_VERSION = 1;
-export const CALCULATOR_ALGORITHM_VERSION = "slab-calculator-2026-08-v1";
+export const CALCULATOR_ALGORITHM_VERSION = "slab-calculator-2026-08-v2";
 
 export type CalculationStatus =
   | "idle"
@@ -99,11 +99,12 @@ export function createCalculationRecord(
   calculation: SlabCalculation,
   calculatedAt = new Date().toISOString(),
 ): StoredCalculationRecord {
+  const normalizedInputSnapshot = normalizeSlabCalculatorState(inputSnapshot);
   return {
     schemaVersion: CALCULATOR_SCHEMA_VERSION,
     algorithmVersion: CALCULATOR_ALGORITHM_VERSION,
     calculatedAt,
-    inputSnapshot: structuredClone(inputSnapshot),
+    inputSnapshot: structuredClone(normalizedInputSnapshot),
     calculation: structuredClone(calculation),
   };
 }
@@ -156,7 +157,10 @@ export function parseCalculationRecord(
     ) {
       return null;
     }
-    const recalculated = calculateSlabResults(record.inputSnapshot);
+    const normalizedInputSnapshot = normalizeSlabCalculatorState(
+      record.inputSnapshot,
+    );
+    const recalculated = calculateSlabResults(normalizedInputSnapshot);
     if (
       !recalculated.isValid ||
       recalculated.totalWeightKg === null ||
@@ -165,7 +169,7 @@ export function parseCalculationRecord(
     ) {
       return null;
     }
-    return record;
+    return { ...record, inputSnapshot: normalizedInputSnapshot };
   } catch {
     return null;
   }

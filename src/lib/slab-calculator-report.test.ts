@@ -153,12 +153,6 @@ describe("打印报表根数算法", () => {
       formula: "ceil(计算宽度 / 间距)",
     },
     {
-      mode: "cover",
-      label: "保护层算法",
-      expectedCount: 18,
-      formula: "ceil((计算宽度 - 2 × 保护层) / 间距) + 1",
-    },
-    {
       mode: "round",
       label: "四舍五入算法",
       expectedCount: 17,
@@ -210,17 +204,14 @@ describe("打印报表根数算法", () => {
     });
   });
 
-  it("数值根数公式包含正式结果采用的四种表达式", () => {
-    expect(formatCountFormula(3350, 200, 15, "project")).toBe(
+  it("数值根数公式包含正式结果采用的三种表达式", () => {
+    expect(formatCountFormula(3350, 200, "project")).toBe(
       "ceil(3350 / 200)",
     );
-    expect(formatCountFormula(3350, 200, 15, "cover")).toBe(
-      "ceil((3350 - 2 × 15) / 200) + 1",
-    );
-    expect(formatCountFormula(3350, 200, 15, "round")).toBe(
+    expect(formatCountFormula(3350, 200, "round")).toBe(
       "max(1, round(3350 / 200))",
     );
-    expect(formatCountFormula(3350, 200, 15, "floor")).toBe(
+    expect(formatCountFormula(3350, 200, "floor")).toBe(
       "max(1, floor(3350 / 200))",
     );
   });

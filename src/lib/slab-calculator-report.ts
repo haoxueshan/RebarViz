@@ -94,12 +94,8 @@ export function formatExtraModeLabel(result: BarResult): string {
 export function formatCountFormula(
   calculationWidth: number,
   spacing: number,
-  cover: number,
   countMode: CountMode,
 ): string {
-  if (countMode === "cover") {
-    return `ceil((${calculationWidth} - 2 × ${cover}) / ${spacing}) + 1`;
-  }
   if (countMode === "round") {
     return `max(1, round(${calculationWidth} / ${spacing}))`;
   }
@@ -110,9 +106,6 @@ export function formatCountFormula(
 }
 
 export function countModeFormulaText(countMode: CountMode): string {
-  if (countMode === "cover") {
-    return "ceil((计算宽度 - 2 × 保护层) / 间距) + 1";
-  }
   if (countMode === "round") {
     return "max(1, round(计算宽度 / 间距))";
   }

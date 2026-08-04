@@ -1,4 +1,4 @@
-export type CountMode = "project" | "cover" | "round" | "floor";
+export type CountMode = "project" | "round" | "floor";
 export type RoomArrangement = "single" | "x" | "y";
 export type AnchorSource = "inner-wall" | "outer-wall" | "manual";
 export type AnchorOrigin = "auto" | "user";
@@ -41,7 +41,6 @@ export type SlabBaseState = {
   rooms: SlabRoom[];
   innerWallThickness: number;
   outerWallThickness: number;
-  cover: number;
   countMode: CountMode;
   topAnchorExtra: number;
 };
@@ -283,7 +282,6 @@ export const DEFAULT_SLAB_CALCULATOR_STATE: SlabCalculatorState = {
     rooms: [defaultRoom],
     innerWallThickness: 240,
     outerWallThickness: 370,
-    cover: 15,
     countMode: "project",
     topAnchorExtra: 250,
   },
@@ -312,13 +310,22 @@ export function normalizeSlabCalculatorState(
   state: SlabCalculatorState,
 ): SlabCalculatorState {
   const arrangement = state.slab.arrangement;
+  const rawCountMode = state.slab.countMode as string;
+  const countMode = (rawCountMode === "cover" ? "project" : rawCountMode) as CountMode;
   const rooms = synchronizeRoomAnchors(
     state.slab.rooms.map((room) => ({ ...room })),
     arrangement,
   );
   return {
     ...state,
-    slab: { ...state.slab, rooms },
+    slab: {
+      arrangement,
+      rooms,
+      innerWallThickness: state.slab.innerWallThickness,
+      outerWallThickness: state.slab.outerWallThickness,
+      countMode,
+      topAnchorExtra: state.slab.topAnchorExtra,
+    },
     bottom: {
       x: { ...state.bottom.x },
       y: { ...state.bottom.y },
@@ -376,7 +383,6 @@ export function shouldApplyTopExtra(
 export function countBars(
   perpendicularSpan: number,
   spacing: number,
-  cover: number,
   mode: CountMode,
 ): number {
   if (
@@ -386,13 +392,6 @@ export function countBars(
     spacing <= 0
   ) {
     return 0;
-  }
-  if (mode === "cover") {
-    const effectiveWidth = Math.max(
-      perpendicularSpan - 2 * (Number.isFinite(cover) ? Math.max(cover, 0) : 0),
-      0,
-    );
-    return Math.ceil(effectiveWidth / spacing) + 1;
   }
   if (mode === "round") {
     return Math.max(1, Math.round(perpendicularSpan / spacing));
@@ -406,7 +405,6 @@ export function countBars(
 export function countModeLabel(mode: CountMode): string {
   const labels: Record<CountMode, string> = {
     project: "项目算法",
-    cover: "保护层算法",
     round: "四舍五入算法",
     floor: "向下取整算法",
   };
@@ -463,7 +461,6 @@ function createBarResult(input: CreateBarInput): BarResult {
   const count = countBars(
     input.perpendicularSpan,
     input.settings.spacing,
-    input.slab.cover,
     input.slab.countMode,
   );
   const intermediateWallMm = input.intermediateWallMm ?? 0;
@@ -674,7 +671,7 @@ export function validateSlabCalculator(input: SlabCalculatorState): string[] {
   if (!(["single", "x", "y"] as string[]).includes(slab.arrangement)) {
     errors.push("房间排列方向无效");
   }
-  if (!(["project", "cover", "round", "floor"] as string[]).includes(slab.countMode)) {
+  if (!(["project", "round", "floor"] as string[]).includes(slab.countMode)) {
     errors.push("根数算法无效");
   }
   if (slab.rooms.length === 0) errors.push("至少需要一个房间");
@@ -698,7 +695,6 @@ export function validateSlabCalculator(input: SlabCalculatorState): string[] {
   });
   validatePositive(slab.innerWallThickness, "内墙厚度", errors);
   validatePositive(slab.outerWallThickness, "外墙厚度", errors);
-  validateNonNegative(slab.cover, "保护层", errors);
   validateNonNegative(slab.topAnchorExtra, "面筋锚固增加值", errors);
 
   (["bottom", "top"] as const).forEach((layer) => {
@@ -736,18 +732,6 @@ export function validateSlabCalculator(input: SlabCalculatorState): string[] {
   if (slab.arrangement === "single" && slab.rooms.length !== 1) {
     errors.push("单房间模式只能保留一个房间");
   }
-  if (slab.countMode === "cover" && Number.isFinite(slab.cover) && slab.cover >= 0) {
-    slab.rooms.forEach((room, index) => {
-      const name = room.name.trim() || `房间${index + 1}`;
-      if (Number.isFinite(room.spanX) && room.spanX > 0 && room.spanX <= 2 * slab.cover) {
-        errors.push(`${name}东西向计算宽度必须大于两倍保护层`);
-      }
-      if (Number.isFinite(room.spanY) && room.spanY > 0 && room.spanY <= 2 * slab.cover) {
-        errors.push(`${name}南北向计算宽度必须大于两倍保护层`);
-      }
-    });
-  }
-
   if (state.through.enabled) {
     if (state.through.direction === "none") {
       errors.push("启用通墙后必须选择X向或Y向");
