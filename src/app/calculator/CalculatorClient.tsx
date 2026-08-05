@@ -53,16 +53,15 @@ import {
   buildRoomBoundaryZones,
   type AutomaticWallSource,
 } from "@/lib/slab-room-topology";
+import {
+  displayNumberDraft,
+  numberValueToDraft,
+  parseNumberDraft,
+} from "@/lib/number-field-draft";
 
 const fieldClass =
   "min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-500";
 const labelClass = "mb-1 block text-xs font-medium text-slate-600";
-
-function toNumber(value: string): number {
-  if (value.trim() === "") return 0;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : Number.NaN;
-}
 
 function sourceLabel(source: AnchorSource): string {
   if (source === "inner-wall") return "内墙";
@@ -87,6 +86,9 @@ function NumberField({
   suffix?: string;
   step?: number;
 }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const displayedValue = displayNumberDraft(draft, value);
+
   return (
     <label>
       <span className={labelClass}>{label}</span>
@@ -94,8 +96,20 @@ function NumberField({
         <input
           type="number"
           step={step}
-          value={Number.isFinite(value) ? value : ""}
-          onChange={(event) => onChange(toNumber(event.target.value))}
+          value={displayedValue}
+          onFocus={(event) => {
+            setDraft(numberValueToDraft(value));
+            event.currentTarget.select();
+          }}
+          onChange={(event) => {
+            const nextDraft = event.target.value;
+            setDraft(nextDraft);
+            const parsed = parseNumberDraft(nextDraft);
+            if (parsed !== null) onChange(parsed);
+          }}
+          onBlur={() => {
+            setDraft(null);
+          }}
           className={`${fieldClass} pr-12`}
         />
         <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-slate-400">
