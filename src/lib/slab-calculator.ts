@@ -389,12 +389,11 @@ export function resolveTopAnchor(
   slab: SlabBaseState,
   applyExtra = true,
 ): number {
-  const extra = applyExtra ? slab.topAnchorExtra : 0;
   if (rule.source === "inner-wall") {
-    return slab.innerWallThickness + extra;
+    return slab.innerWallThickness + (applyExtra ? slab.topAnchorExtra : 0);
   }
   if (rule.source === "outer-wall") {
-    return slab.outerWallThickness + extra;
+    return slab.outerWallThickness;
   }
   return rule.manualValue;
 }
@@ -435,6 +434,10 @@ export function countModeLabel(mode: CountMode): string {
     floor: "向下取整算法",
   };
   return labels[mode];
+}
+
+export function directionLabel(direction: BarDirection): string {
+  return direction === "x" ? "东西向" : "南北向";
 }
 
 export function theoreticalUnitWeight(diameter: number): number {
@@ -540,11 +543,11 @@ function createBarResult(input: CreateBarInput): BarResult {
     const startExtraApplied =
       input.layer === "top" &&
       startExtraSelected &&
-      startAnchorSource !== "manual";
+      startAnchorSource === "inner-wall";
     const endExtraApplied =
       input.layer === "top" &&
       endExtraSelected &&
-      endAnchorSource !== "manual";
+      endAnchorSource === "inner-wall";
     const startAnchor =
       input.layer === "bottom"
         ? resolveBottomAnchor(zone.anchorRules.start, input.slab)
@@ -852,7 +855,7 @@ export function validateSlabCalculator(input: SlabCalculatorState): string[] {
   });
   validatePositive(slab.innerWallThickness, "内墙厚度", errors);
   validatePositive(slab.outerWallThickness, "外墙厚度", errors);
-  validateNonNegative(slab.topAnchorExtra, "面筋锚固增加值", errors);
+  validateNonNegative(slab.topAnchorExtra, "内墙面筋锚固增加值", errors);
 
   (["bottom", "top"] as const).forEach((layer) => {
     (["x", "y"] as const).forEach((direction) => {

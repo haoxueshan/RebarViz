@@ -8,7 +8,7 @@ import {
   type SlabDiagramScene,
   type SlabDiagramSegment,
 } from "@/lib/slab-diagram";
-import type { AnchorSource, SlabCalculation, SlabCalculatorState } from "@/lib/slab-calculator";
+import { directionLabel, type AnchorSource, type SlabCalculation, type SlabCalculatorState } from "@/lib/slab-calculator";
 
 function segmentStroke(group: SlabDiagramBarGroup): string {
   return group.direction === "x" ? "#1d4ed8" : "#047857";
@@ -201,7 +201,7 @@ function DirectionAxes({ scene }: { scene: SlabDiagramScene }) {
       <line x1={xAxis.start.x} y1={xAxis.start.y} x2={xAxis.end.x} y2={xAxis.end.y} stroke="#334155" strokeWidth="1.6" />
       <polygon points={`${xAxis.end.x},${xAxis.end.y} ${xAxis.end.x - 10},${xAxis.end.y - 5} ${xAxis.end.x - 10},${xAxis.end.y + 5}`} fill="#334155" />
       <text x={xAxis.start.x} y={xAxis.start.y + 19} textAnchor="start" fontSize="12" fill="#334155">西</text>
-      <text x={xAxis.end.x} y={xAxis.end.y + 19} textAnchor="end" fontSize="12" fill="#334155">东　X轴（西→东）</text>
+      <text x={xAxis.end.x} y={xAxis.end.y + 19} textAnchor="end" fontSize="12" fill="#334155">东　东西向（西→东）</text>
       <line x1={yAxis.start.x} y1={yAxis.start.y} x2={yAxis.end.x} y2={yAxis.end.y} stroke="#334155" strokeWidth="1.6" />
       <polygon points={`${yAxis.end.x},${yAxis.end.y} ${yAxis.end.x - 5},${yAxis.end.y + 10} ${yAxis.end.x + 5},${yAxis.end.y + 10}`} fill="#334155" />
       <text x={yAxis.start.x - 8} y={yAxis.start.y} textAnchor="end" fontSize="12" fill="#334155">南</text>
@@ -214,7 +214,7 @@ function DirectionAxes({ scene }: { scene: SlabDiagramScene }) {
         fill="#334155"
         transform={`rotate(-90 ${yAxis.start.x - 27} ${(yAxis.start.y + yAxis.end.y) / 2})`}
       >
-        Y轴（南→北）
+        南北向（南→北）
       </text>
     </g>
   );
@@ -262,8 +262,8 @@ function KeyLine({ className, label }: { className: string; label: string }) {
 export function SlabDiagramKey() {
   return (
     <div data-testid="slab-diagram-key" className="grid gap-x-5 gap-y-1 border-t border-slate-200 px-3 py-2 text-xs text-slate-700 sm:grid-cols-2 lg:grid-cols-4">
-      <KeyLine className="border-t-2 border-blue-700" label="X向（西→东）" />
-      <KeyLine className="border-t-2 border-emerald-700" label="Y向（南→北）" />
+      <KeyLine className="border-t-2 border-blue-700" label={`${directionLabel("x")}（西→东）`} />
+      <KeyLine className="border-t-2 border-emerald-700" label={`${directionLabel("y")}（南→北）`} />
       <KeyLine className="border-t-2 border-slate-700" label="实线：地筋" />
       <KeyLine className="border-t-2 border-dashed border-slate-700" label="虚线：面筋" />
       <KeyLine className="border-t-[3px] border-slate-900" label="加粗：通墙筋" />
@@ -296,7 +296,7 @@ export function SlabDiagramResultLegend({ scene }: { scene: SlabDiagramScene }) 
             <p>运行：{group.runLabel}</p>
             <p>单根长度：{group.singleLengthLabel}</p>
             <p className="sm:col-span-2">锚固：{group.anchorLabel}</p>
-            <p>面筋增加：{group.extraLabel}</p>
+            <p>内墙面筋增加：{group.extraLabel}</p>
             <p>总长度/重量：{group.totalLengthM.toFixed(3)}m / {group.weightKg.toFixed(2)}kg</p>
           </div>
           {group.lengthMode === "zoned" && (

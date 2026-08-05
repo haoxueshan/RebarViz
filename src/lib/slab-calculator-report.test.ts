@@ -10,10 +10,13 @@ import {
 } from "./slab-calculator";
 import {
   allPrintResultIds,
+  arrangementLabel,
+  barTypeDirectionLabel,
   buildSlabPrintReport,
   canPrintSlabReport,
   countModeFormulaText,
   createResultFigureNumberMap,
+  directionLabel,
   filteredPrintResultIds,
   formatAnchorLabel,
   formatCountFormula,
@@ -94,6 +97,36 @@ function selectedOptions(
 }
 
 describe("楼板计算打印模型", () => {
+  it("统一将打印方向显示为东西向和南北向", () => {
+    expect(directionLabel("x")).toBe("东西向");
+    expect(directionLabel("y")).toBe("南北向");
+    expect(arrangementLabel("x")).toBe("沿东西向（西→东）排列");
+    expect(arrangementLabel("y")).toBe("沿南北向（南→北）排列");
+
+    const { report } = makeReport(cloneDefaultSlabCalculatorState());
+    expect(new Set(report.rows.map((row) => row.typeDirectionText))).toEqual(
+      new Set(["东西向地筋", "南北向地筋", "东西向面筋", "南北向面筋"]),
+    );
+
+    const throughBar = makeReport(twoXRooms(true)).record.calculation
+      .throughWall!.throughBar;
+    expect(barTypeDirectionLabel(throughBar)).toBe("东西向通墙筋");
+    expect(barTypeDirectionLabel({ ...throughBar, direction: "y" })).toBe(
+      "南北向通墙筋",
+    );
+
+    const reportText = [
+      arrangementLabel("x"),
+      arrangementLabel("y"),
+      ...report.rows.map((row) => row.typeDirectionText),
+      ...report.specifications.map((item) => directionLabel(item.direction)),
+      barTypeDirectionLabel(throughBar),
+    ].join(" ");
+    expect(reportText).toContain("东西向");
+    expect(reportText).toContain("南北向");
+    expect(reportText).not.toMatch(/X向|Y向|X方向|Y方向/);
+  });
+
   it("单房间打印四条正式结果且总重量与正式记录一致", () => {
     const { record, report } = makeReport(cloneDefaultSlabCalculatorState());
 
@@ -584,9 +617,11 @@ describe("打印锚固文字", () => {
     ).record.calculation.results.find(
       (result) => result.layer === "top" && result.direction === "x",
     )!;
-    expect(defaultTopX.startExtraApplied).toBe(true);
-    expect(defaultTopX.endExtraApplied).toBe(true);
-    expect(formatExtraModeLabel(defaultTopX)).toBe("两端实际增加");
+    expect(defaultTopX.startExtraApplied).toBe(false);
+    expect(defaultTopX.endExtraApplied).toBe(false);
+    expect(formatAnchorLabel(defaultTopX, "start")).toBe("外墙370mm（未增加）");
+    expect(formatAnchorLabel(defaultTopX, "end")).toBe("外墙370mm（未增加）");
+    expect(formatExtraModeLabel(defaultTopX)).toBe("未实际增加");
 
     const multi = makeReport(twoXRooms(false)).record.calculation.results;
     const bottomX = multi.find(
@@ -605,7 +640,7 @@ describe("打印锚固文字", () => {
         result.direction === "x",
     );
     expect(formatAnchorLabel(multiTopX!, "start")).toBe(
-      "外墙620mm（已增加250mm）",
+      "外墙370mm（未增加）",
     );
     expect(formatAnchorLabel(multiTopX!, "end")).toBe(
       "内墙490mm（已增加250mm）",
@@ -634,9 +669,11 @@ describe("打印锚固文字", () => {
     );
     expect(formatAnchorLabel(topXBoth!, "start")).toBe("手动550mm（最终值）");
     expect(formatAnchorLabel(topXBoth!, "end")).toBe(
-      "外墙620mm（已增加250mm）",
+      "外墙370mm（未增加）",
     );
-    expect(formatExtraModeLabel(topXBoth!)).toBe("东端实际增加");
+    expect(formatExtraModeLabel(topXBoth!)).toBe(
+      "手动锚固为最终值，未叠加增加值",
+    );
 
     state.slab.rooms[0].anchors.top.x.end = {
       source: "manual",
@@ -650,6 +687,22 @@ describe("打印锚固文字", () => {
     expect(bothManual.endExtraApplied).toBe(false);
     expect(formatExtraModeLabel(bothManual)).toBe(
       "手动锚固为最终值，未叠加增加值",
+    );
+
+    const innerNotSelectedState = cloneDefaultSlabCalculatorState();
+    innerNotSelectedState.top.x.extraMode = "end";
+    innerNotSelectedState.slab.rooms[0].anchors.top.x.start = {
+      source: "inner-wall",
+      manualValue: 0,
+      origin: "user",
+    };
+    const innerNotSelected = makeReport(
+      innerNotSelectedState,
+    ).record.calculation.results.find(
+      (result) => result.layer === "top" && result.direction === "x",
+    )!;
+    expect(formatAnchorLabel(innerNotSelected, "start")).toBe(
+      "内墙240mm（未增加）",
     );
   });
 });

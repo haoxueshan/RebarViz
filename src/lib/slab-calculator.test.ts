@@ -166,9 +166,10 @@ describe("锚固解析", () => {
     expect(resolveTopAnchor(anchor("inner-wall"), slab)).toBe(490);
   });
 
-  it("面筋外墙锚固等于外墙厚度加增加值", () => {
+  it("面筋外墙锚固始终等于外墙厚度", () => {
     const slab = cloneDefaultSlabCalculatorState().slab;
-    expect(resolveTopAnchor(anchor("outer-wall"), slab)).toBe(620);
+    expect(resolveTopAnchor(anchor("outer-wall"), slab)).toBe(370);
+    expect(resolveTopAnchor(anchor("outer-wall"), slab, false)).toBe(370);
   });
 
   it("面筋手动锚固不增加250mm", () => {
@@ -176,11 +177,12 @@ describe("锚固解析", () => {
     expect(resolveTopAnchor(anchor("manual", 550), slab)).toBe(550);
   });
 
-  it("增加值只影响墙体模式面筋", () => {
+  it("增加值只影响启用增加的内墙面筋", () => {
     const slab = cloneDefaultSlabCalculatorState().slab;
     slab.topAnchorExtra = 300;
     expect(resolveTopAnchor(anchor("inner-wall"), slab)).toBe(540);
-    expect(resolveTopAnchor(anchor("outer-wall"), slab)).toBe(670);
+    expect(resolveTopAnchor(anchor("inner-wall"), slab, false)).toBe(240);
+    expect(resolveTopAnchor(anchor("outer-wall"), slab)).toBe(370);
     expect(resolveTopAnchor(anchor("manual", 550), slab)).toBe(550);
   });
 
@@ -220,13 +222,13 @@ describe("房间级端部规则", () => {
       (result) => result.layer === "top" && result.direction === "x",
     );
     expect(topX.map((result) => [result.startAnchor, result.endAnchor])).toEqual([
-      [620, 490],
+      [370, 490],
       [490, 490],
-      [490, 620],
+      [490, 370],
     ]);
-    expect(topX.map((result) => result.singleLengthM)).toEqual([5.31, 4.58, 4.11]);
-    expect(topX.reduce((sum, result) => sum + result.totalLengthM, 0)).toBeCloseTo(252, 6);
-    expect(topX.reduce((sum, result) => sum + result.weightKg, 0)).toBeCloseTo(155.37, 2);
+    expect(topX.map((result) => Number(result.singleLengthM.toFixed(2)))).toEqual([5.06, 4.58, 3.86]);
+    expect(topX.reduce((sum, result) => sum + result.totalLengthM, 0)).toBeCloseTo(243, 6);
+    expect(topX.reduce((sum, result) => sum + result.weightKg, 0)).toBeCloseTo(149.82, 2);
   });
 
   it("三个Y向房间生成对称端点且不会共享可变对象", () => {
@@ -268,13 +270,13 @@ describe("面筋通墙回归", () => {
     expect(calculation.errors).toEqual([]);
     expect(calculation.throughWall?.intermediateWallTotal).toBe(240);
     expect(calculation.throughWall?.throughBar.count).toBe(18);
-    expect(calculation.throughWall?.throughBar.singleLengthM).toBeCloseTo(9.28, 6);
-    expect(calculation.throughWall?.throughBar.totalLengthM).toBeCloseTo(167.04, 6);
-    expect(calculation.throughWall?.throughBar.weightKg).toBeCloseTo(102.99, 2);
+    expect(calculation.throughWall?.throughBar.singleLengthM).toBeCloseTo(8.78, 6);
+    expect(calculation.throughWall?.throughBar.totalLengthM).toBeCloseTo(158.04, 6);
+    expect(calculation.throughWall?.throughBar.weightKg).toBeCloseTo(97.44, 2);
     expect(calculation.throughWall?.perpendicularBar.count).toBe(39);
-    expect(calculation.throughWall?.perpendicularBar.singleLengthM).toBeCloseTo(4.84, 6);
-    expect(calculation.throughWall?.perpendicularBar.totalLengthM).toBeCloseTo(188.76, 6);
-    expect(calculation.throughWall?.perpendicularBar.weightKg).toBeCloseTo(116.38, 2);
+    expect(calculation.throughWall?.perpendicularBar.singleLengthM).toBeCloseTo(4.34, 6);
+    expect(calculation.throughWall?.perpendicularBar.totalLengthM).toBeCloseTo(169.26, 6);
+    expect(calculation.throughWall?.perpendicularBar.weightKg).toBeCloseTo(104.36, 2);
     expect(calculation.throughWall?.perpendicularBar.count).not.toBe(41);
   });
 
@@ -336,102 +338,151 @@ describe("面筋增加值作用端", () => {
     expect(shouldApplyTopExtra("both", "end")).toBe(true);
   });
 
-  it("普通X向面筋只在西端增加", () => {
+  it("普通X向面筋只在被选中的西端内墙增加", () => {
     const state = cloneDefaultSlabCalculatorState();
     state.top.x.extraMode = "start";
+    state.slab.rooms[0].anchors.top.x.start = anchor("inner-wall");
     const result = calculateSlabResults(state).results.find(
       (bar) => bar.layer === "top" && bar.direction === "x",
     );
-    expect(result?.startAnchor).toBe(620);
+    expect(result?.startAnchor).toBe(490);
     expect(result?.endAnchor).toBe(370);
-    expect(result?.singleLengthM).toBeCloseTo(5.19, 6);
+    expect(result?.singleLengthM).toBeCloseTo(5.06, 6);
     expect(result?.startExtraApplied).toBe(true);
     expect(result?.endExtraApplied).toBe(false);
   });
 
-  it("普通X向面筋只在东端增加", () => {
+  it("普通X向面筋只在被选中的东端内墙增加", () => {
     const state = cloneDefaultSlabCalculatorState();
     state.top.x.extraMode = "end";
+    state.slab.rooms[0].anchors.top.x.end = anchor("inner-wall");
     const result = calculateSlabResults(state).results.find(
       (bar) => bar.layer === "top" && bar.direction === "x",
     );
     expect(result?.startAnchor).toBe(370);
-    expect(result?.endAnchor).toBe(620);
-    expect(result?.singleLengthM).toBeCloseTo(5.19, 6);
+    expect(result?.endAnchor).toBe(490);
+    expect(result?.singleLengthM).toBeCloseTo(5.06, 6);
+    expect(result?.startExtraApplied).toBe(false);
+    expect(result?.endExtraApplied).toBe(true);
   });
 
-  it("普通X向面筋在两端增加", () => {
+  it("内墙端未被增加位置选中时只采用内墙厚度", () => {
+    const state = cloneDefaultSlabCalculatorState();
+    state.top.x.extraMode = "end";
+    state.slab.rooms[0].anchors.top.x.start = anchor("inner-wall");
+    const result = calculateSlabResults(state).results.find(
+      (bar) => bar.layer === "top" && bar.direction === "x",
+    );
+    expect(result?.startAnchor).toBe(240);
+    expect(result?.startExtraApplied).toBe(false);
+    expect(result?.endAnchor).toBe(370);
+    expect(result?.endExtraApplied).toBe(false);
+  });
+
+  it("普通X向面筋两端均为内墙时在两端增加", () => {
     const state = cloneDefaultSlabCalculatorState();
     state.top.x.extraMode = "both";
+    state.slab.rooms[0].anchors.top.x.start = anchor("inner-wall");
+    state.slab.rooms[0].anchors.top.x.end = anchor("inner-wall");
     const result = calculateSlabResults(state).results.find(
       (bar) => bar.layer === "top" && bar.direction === "x",
     );
-    expect(result?.startAnchor).toBe(620);
-    expect(result?.endAnchor).toBe(620);
-    expect(result?.singleLengthM).toBeCloseTo(5.44, 6);
+    expect(result?.startAnchor).toBe(490);
+    expect(result?.endAnchor).toBe(490);
+    expect(result?.singleLengthM).toBeCloseTo(5.18, 6);
+    expect(result?.startExtraApplied).toBe(true);
+    expect(result?.endExtraApplied).toBe(true);
   });
 
-  it("普通Y向面筋只在南端增加", () => {
+  it("普通Y向面筋只在被选中的南端内墙增加", () => {
     const state = cloneDefaultSlabCalculatorState();
     state.top.y.extraMode = "start";
+    state.slab.rooms[0].anchors.top.y.start = anchor("inner-wall");
     const result = calculateSlabResults(state).results.find(
       (bar) => bar.layer === "top" && bar.direction === "y",
     );
-    expect(result?.startAnchor).toBe(620);
+    expect(result?.startAnchor).toBe(490);
     expect(result?.endAnchor).toBe(370);
-    expect(result?.singleLengthM).toBeCloseTo(4.59, 6);
+    expect(result?.singleLengthM).toBeCloseTo(4.46, 6);
+    expect(result?.startExtraApplied).toBe(true);
+    expect(result?.endExtraApplied).toBe(false);
   });
 
-  it("普通Y向面筋只在北端增加", () => {
+  it("普通Y向面筋只在被选中的北端内墙增加", () => {
     const state = cloneDefaultSlabCalculatorState();
     state.top.y.extraMode = "end";
+    state.slab.rooms[0].anchors.top.y.end = anchor("inner-wall");
     const result = calculateSlabResults(state).results.find(
       (bar) => bar.layer === "top" && bar.direction === "y",
     );
     expect(result?.startAnchor).toBe(370);
-    expect(result?.endAnchor).toBe(620);
-    expect(result?.singleLengthM).toBeCloseTo(4.59, 6);
+    expect(result?.endAnchor).toBe(490);
+    expect(result?.singleLengthM).toBeCloseTo(4.46, 6);
+    expect(result?.startExtraApplied).toBe(false);
+    expect(result?.endExtraApplied).toBe(true);
   });
 
-  it("X向通墙只在最西端增加", () => {
+  it("X向通墙只在被选中的最西端内墙增加", () => {
     const state = xThroughState();
     state.through.extraMode = "start";
+    state.through.startAnchor = anchor("inner-wall");
     const result = calculateSlabResults(state).throughWall?.throughBar;
-    expect(result?.startAnchor).toBe(620);
+    expect(result?.startAnchor).toBe(490);
     expect(result?.endAnchor).toBe(370);
-    expect(result?.singleLengthM).toBeCloseTo(9.03, 6);
-    expect(result?.totalLengthM).toBeCloseTo(162.54, 6);
-    expect(result?.weightKg).toBeCloseTo(100.21, 2);
+    expect(result?.singleLengthM).toBeCloseTo(8.9, 6);
+    expect(result?.totalLengthM).toBeCloseTo(160.2, 6);
+    expect(result?.startExtraApplied).toBe(true);
+    expect(result?.endExtraApplied).toBe(false);
   });
 
-  it("X向通墙只在最东端增加", () => {
+  it("X向通墙只在被选中的最东端内墙增加", () => {
     const state = xThroughState();
     state.through.extraMode = "end";
+    state.through.endAnchor = anchor("inner-wall");
     const result = calculateSlabResults(state).throughWall?.throughBar;
     expect(result?.startAnchor).toBe(370);
-    expect(result?.endAnchor).toBe(620);
-    expect(result?.singleLengthM).toBeCloseTo(9.03, 6);
+    expect(result?.endAnchor).toBe(490);
+    expect(result?.singleLengthM).toBeCloseTo(8.9, 6);
+    expect(result?.startExtraApplied).toBe(false);
+    expect(result?.endExtraApplied).toBe(true);
   });
 
-  it("X向通墙在两端增加", () => {
+  it("X向通墙两端均为内墙时在两端增加", () => {
     const state = xThroughState();
     state.through.extraMode = "both";
+    state.through.startAnchor = anchor("inner-wall");
+    state.through.endAnchor = anchor("inner-wall");
     const result = calculateSlabResults(state).throughWall?.throughBar;
-    expect(result?.startAnchor).toBe(620);
-    expect(result?.endAnchor).toBe(620);
-    expect(result?.singleLengthM).toBeCloseTo(9.28, 6);
+    expect(result?.startAnchor).toBe(490);
+    expect(result?.endAnchor).toBe(490);
+    expect(result?.singleLengthM).toBeCloseTo(9.02, 6);
     expect(result?.count).toBe(18);
+  });
+
+  it("默认单房间和通墙最外侧为外墙时即使选择两端也不增加", () => {
+    const single = calculateSlabResults(cloneDefaultSlabCalculatorState()).results.find(
+      (bar) => bar.layer === "top" && bar.direction === "x",
+    )!;
+    expect([single.startAnchor, single.endAnchor]).toEqual([370, 370]);
+    expect([single.startExtraApplied, single.endExtraApplied]).toEqual([false, false]);
+
+    const through = calculateSlabResults(xThroughState()).throughWall?.throughBar;
+    expect([through?.startAnchor, through?.endAnchor]).toEqual([370, 370]);
+    expect([through?.startExtraApplied, through?.endExtraApplied]).toEqual([false, false]);
   });
 
   it("通墙组合区垂直面筋使用普通方向自己的extraMode", () => {
     const state = xThroughState();
     state.through.extraMode = "start";
     state.top.y.extraMode = "end";
+    state.slab.rooms.forEach((room) => {
+      room.anchors.top.y.end = anchor("inner-wall");
+    });
     const perpendicular = calculateSlabResults(state).throughWall?.perpendicularBar;
     expect(perpendicular?.topExtraMode).toBe("end");
     expect(perpendicular?.startAnchor).toBe(370);
-    expect(perpendicular?.endAnchor).toBe(620);
-    expect(perpendicular?.singleLengthM).toBeCloseTo(4.59, 6);
+    expect(perpendicular?.endAnchor).toBe(490);
+    expect(perpendicular?.singleLengthM).toBeCloseTo(4.46, 6);
     expect(perpendicular?.count).toBe(39);
   });
 
@@ -443,19 +494,20 @@ describe("面筋增加值作用端", () => {
       (bar) => bar.layer === "top" && bar.direction === "x",
     );
     expect(result?.startAnchor).toBe(550);
-    expect(result?.endAnchor).toBe(620);
+    expect(result?.endAnchor).toBe(370);
     expect(result?.startExtraApplied).toBe(false);
-    expect(result?.endExtraApplied).toBe(true);
+    expect(result?.endExtraApplied).toBe(false);
   });
 
-  it("修改增加值后只有启用增加的墙体端变化", () => {
+  it("修改增加值后只有启用增加的内墙端变化", () => {
     const state = cloneDefaultSlabCalculatorState();
     state.top.x.extraMode = "start";
+    state.slab.rooms[0].anchors.top.x.start = anchor("inner-wall");
     state.slab.topAnchorExtra = 300;
     const result = calculateSlabResults(state).results.find(
       (bar) => bar.layer === "top" && bar.direction === "x",
     );
-    expect(result?.startAnchor).toBe(670);
+    expect(result?.startAnchor).toBe(540);
     expect(result?.endAnchor).toBe(370);
   });
 
@@ -482,13 +534,13 @@ describe("面筋增加值作用端", () => {
       (bar) => bar.layer === "top" && bar.direction === "x",
     );
     expect(result?.topExtraMode).toBe("both");
-    expect(result?.singleLengthM).toBeCloseTo(5.44, 6);
+    expect(result?.singleLengthM).toBeCloseTo(4.94, 6);
 
     const legacyThrough = xThroughState();
     delete (legacyThrough.through as { extraMode?: TopExtraMode }).extraMode;
     const throughResult = calculateSlabResults(legacyThrough).throughWall?.throughBar;
     expect(throughResult?.topExtraMode).toBe("both");
-    expect(throughResult?.singleLengthM).toBeCloseTo(9.28, 6);
+    expect(throughResult?.singleLengthM).toBeCloseTo(8.78, 6);
   });
 });
 
@@ -701,15 +753,15 @@ describe("严格校验和结果关联", () => {
     const through = calculation.throughWall;
     expect(through?.netSpanTotal).toBe(7800);
     expect(through?.intermediateWallTotal).toBe(240);
-    expect(through?.throughBar.singleLengthM).toBeCloseTo(9.28, 6);
+    expect(through?.throughBar.singleLengthM).toBeCloseTo(8.78, 6);
     expect(through?.throughBar.count).toBe(18);
-    expect(through?.throughBar.totalLengthM).toBeCloseTo(167.04, 6);
-    expect(through?.throughBar.weightKg).toBeCloseTo(102.99, 2);
+    expect(through?.throughBar.totalLengthM).toBeCloseTo(158.04, 6);
+    expect(through?.throughBar.weightKg).toBeCloseTo(97.44, 2);
     expect(through?.perpendicularBar.count).toBe(39);
     expect(through?.perpendicularBar.count).not.toBe(41);
-    expect(through?.perpendicularBar.singleLengthM).toBeCloseTo(4.84, 6);
-    expect(through?.perpendicularBar.totalLengthM).toBeCloseTo(188.76, 6);
-    expect(through?.perpendicularBar.weightKg).toBeCloseTo(116.38, 2);
+    expect(through?.perpendicularBar.singleLengthM).toBeCloseTo(4.34, 6);
+    expect(through?.perpendicularBar.totalLengthM).toBeCloseTo(169.26, 6);
+    expect(through?.perpendicularBar.weightKg).toBeCloseTo(104.36, 2);
   });
 
   it("Y向通墙按对称规则使用净尺寸计算垂直筋根数", () => {
@@ -717,10 +769,10 @@ describe("严格校验和结果关联", () => {
     expect(through?.direction).toBe("y");
     expect(through?.netSpanTotal).toBe(6600);
     expect(through?.intermediateWallTotal).toBe(240);
-    expect(through?.throughBar.singleLengthM).toBeCloseTo(8.08, 6);
+    expect(through?.throughBar.singleLengthM).toBeCloseTo(7.58, 6);
     expect(through?.throughBar.count).toBe(21);
     expect(through?.perpendicularBar.count).toBe(33);
-    expect(through?.perpendicularBar.singleLengthM).toBeCloseTo(5.44, 6);
+    expect(through?.perpendicularBar.singleLengthM).toBeCloseTo(4.94, 6);
   });
 });
 
@@ -780,6 +832,38 @@ describe("不等尺寸普通多房间分区", () => {
     ]);
     expect(result.totalLengthM).toBeCloseTo(147, 10);
     expect(result.singleLengthM).toBeCloseTo(147 / 40, 10);
+  });
+
+  it("不等尺寸面筋分区只给实际内墙区段叠加增加值", () => {
+    const state = stateWithRooms("x", [
+      [3000, 3000],
+      [3000, 6000],
+    ]);
+    state.top.x.extraMode = "both";
+    const result = calculateSlabResults(state).results.find(
+      (item) => item.roomId === "room-1" && item.layer === "top" && item.direction === "x",
+    )!;
+
+    expect(result.lengthMode).toBe("zoned");
+    expect(result.lengthVariants.map((variant) => ({
+      range: [variant.perpendicularStartMm, variant.perpendicularEndMm],
+      anchors: [variant.startAnchor, variant.endAnchor],
+      extraApplied: [variant.startExtraApplied, variant.endExtraApplied],
+      singleLengthM: variant.singleLengthM,
+    }))).toEqual([
+      {
+        range: [0, 3000],
+        anchors: [490, 370],
+        extraApplied: [true, false],
+        singleLengthM: 3.86,
+      },
+      {
+        range: [3000, 6000],
+        anchors: [370, 370],
+        extraApplied: [false, false],
+        singleLengthM: 3.74,
+      },
+    ]);
   });
 
   it("Y向排列按镜像规则为较宽房间生成分区", () => {
@@ -892,8 +976,8 @@ describe("不等尺寸普通多房间分区", () => {
     expect(result.lengthVariants[0].startAnchorSource).toBe("manual");
     expect(result.lengthVariants[0].startAnchor).toBe(550);
     expect(result.lengthVariants[0].startExtraApplied).toBe(false);
-    expect(result.lengthVariants[0].endAnchor).toBe(620);
-    expect(result.lengthVariants[0].endExtraApplied).toBe(true);
+    expect(result.lengthVariants[0].endAnchor).toBe(370);
+    expect(result.lengthVariants[0].endExtraApplied).toBe(false);
   });
 
   it("相同尺寸多房间保持原统一锚固和长度结果", () => {

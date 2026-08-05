@@ -1,11 +1,12 @@
-import type {
-  AnchorSource,
-  BarDirection,
-  BarLayer,
-  BarLengthVariant,
-  BarResult,
-  SlabCalculation,
-  SlabCalculatorState,
+import {
+  directionLabel,
+  type AnchorSource,
+  type BarDirection,
+  type BarLayer,
+  type BarLengthVariant,
+  type BarResult,
+  type SlabCalculation,
+  type SlabCalculatorState,
 } from "./slab-calculator";
 import { allocateLargestRemainder } from "./slab-room-topology";
 
@@ -605,7 +606,14 @@ function endpointLabel(result: BarResult, endpoint: "start" | "end"): string {
 
 function actualExtraApplied(result: BarResult, endpoint: "start" | "end"): boolean {
   const selected = endpoint === "start" ? result.startExtraApplied : result.endExtraApplied;
-  return result.layer === "top" && selected && Number.isFinite(result.topExtraValue) && result.topExtraValue > 0;
+  const source = endpoint === "start"
+    ? result.startAnchorSource
+    : result.endAnchorSource;
+  return result.layer === "top"
+    && source === "inner-wall"
+    && selected
+    && Number.isFinite(result.topExtraValue)
+    && result.topExtraValue > 0;
 }
 
 export function formatDiagramExtraLabel(result: BarResult): string {
@@ -629,7 +637,10 @@ function formatVariantAnchor(
 ): string {
   const source = endpoint === "start" ? variant.startAnchorSource : variant.endAnchorSource;
   const value = endpoint === "start" ? variant.startAnchor : variant.endAnchor;
-  const applied = endpoint === "start" ? variant.startExtraApplied : variant.endExtraApplied;
+  const applied = source === "inner-wall"
+    && (endpoint === "start"
+      ? variant.startExtraApplied
+      : variant.endExtraApplied);
   const suffix = source === "manual"
     ? "（最终值）"
     : result.layer === "top"
@@ -816,13 +827,21 @@ function buildWorldBarGroup(
       endAnchorSegments.push({ id: `${result.id}-anchor-end-${suffix}`, kind: "anchor-end", start: line.end, end: endOuter, compressed: endVisual.compressed });
     }
     const extra = safeNonNegative(result.topExtraValue);
-    if (line.variant.startExtraApplied && startVisual.length > 0) {
+    if (
+      line.variant.startAnchorSource === "inner-wall"
+      && line.variant.startExtraApplied
+      && startVisual.length > 0
+    ) {
       const visibleExtra = line.variant.startAnchor > 0
         ? startVisual.length * Math.min(extra / line.variant.startAnchor, 1)
         : 0;
       extraSegments.push({ id: `${result.id}-extra-start-${suffix}`, kind: "extra-start", start: startOuter, end: moveAlong(startOuter, result.direction, visibleExtra) });
     }
-    if (line.variant.endExtraApplied && endVisual.length > 0) {
+    if (
+      line.variant.endAnchorSource === "inner-wall"
+      && line.variant.endExtraApplied
+      && endVisual.length > 0
+    ) {
       const visibleExtra = line.variant.endAnchor > 0
         ? endVisual.length * Math.min(extra / line.variant.endAnchor, 1)
         : 0;
@@ -830,7 +849,12 @@ function buildWorldBarGroup(
     }
   });
 
-  const typeLabel = `${result.layer === "bottom" ? "地筋" : "面筋"}·${result.direction.toUpperCase()}向${result.throughWall ? "通墙" : result.scopeType === "through" ? "组合区" : ""}`;
+  const layerLabel = result.layer === "bottom" ? "地筋" : "面筋";
+  const typeLabel = result.throughWall
+    ? `${directionLabel(result.direction)}通墙筋`
+    : result.scopeType === "through"
+      ? `${directionLabel(result.direction)}${layerLabel}·组合区`
+      : `${directionLabel(result.direction)}${layerLabel}`;
   const variants = result.lengthVariants.map<SlabDiagramVariantLegend>((variant, index) => ({
     id: variant.id,
     label: result.lengthMode === "zoned" ? `${number}-${String.fromCharCode(65 + index)}` : number,

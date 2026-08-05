@@ -13,8 +13,10 @@ import {
 import { SlabPrintReport } from "@/components/calculator/SlabPrintReport";
 import { SlabPrintDialog } from "@/components/calculator/SlabPrintDialog";
 import { SlabResultsDiagram } from "@/components/calculator/SlabDiagrams";
-import { countModeLabel, type BarResult, type CountMode } from "@/lib/slab-calculator";
+import { countModeLabel, directionLabel, type BarResult, type CountMode } from "@/lib/slab-calculator";
 import {
+  arrangementLabel,
+  barTypeDirectionLabel,
   formatAnchorLabel,
   formatCountFormula,
   formatExtraModeLabel,
@@ -75,7 +77,7 @@ function ResultFormula({
         <p>
           根数：{formatCountFormula(result.calculationWidthMm, result.spacing, countMode)} = {result.count}根
         </p>
-        <p>面筋增加作用端：按各分区实际锚固端确定</p>
+        <p>面筋增加作用端：按各分区实际内墙锚固端确定</p>
         <p>总长度：Σ（分区根数 × 分区单根长度）= {result.totalLengthM.toFixed(3)}m</p>
         <p>单位重量：π × {result.diameter}² × 7850 ÷ 4 ÷ 1,000,000 = {result.unitWeightKgM.toFixed(4)}kg/m</p>
         <p>重量：{result.totalLengthM.toFixed(3)} × {result.unitWeightKgM.toFixed(4)} = {result.weightKg.toFixed(2)}kg</p>
@@ -94,7 +96,7 @@ function ResultFormula({
       <p>
         根数：{formatCountFormula(result.calculationWidthMm, result.spacing, countMode)} = {result.count}根
       </p>
-      <p>面筋增加作用端：{formatExtraModeLabel(result)}</p>
+      <p>面筋增加作用端（仅内墙端）：{formatExtraModeLabel(result)}</p>
       <p>总长度：{result.count} × {result.singleLengthM.toFixed(3)} = {result.totalLengthM.toFixed(3)}m</p>
       <p>单位重量：π × {result.diameter}² × 7850 ÷ 4 ÷ 1,000,000 = {result.unitWeightKgM.toFixed(4)}kg/m</p>
       <p>重量：{result.totalLengthM.toFixed(3)} × {result.unitWeightKgM.toFixed(4)} = {result.weightKg.toFixed(2)}kg</p>
@@ -110,7 +112,7 @@ function ResultVariantDetails({
   figureNumber: string;
 }) {
   if (result.lengthMode !== "zoned") return null;
-  const rangeAxis = result.direction === "x" ? "Y" : "X";
+  const rangeAxis = directionLabel(result.direction === "x" ? "y" : "x");
   return (
     <div className="mt-3 overflow-hidden rounded-lg border border-amber-200 bg-white">
       <div className="bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-950">
@@ -165,7 +167,7 @@ function ResultGroupCard({
           return (
           <article key={result.id} data-result-id={result.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <div><p className="text-xs text-slate-500">编号/类型/方向</p><p className="font-semibold">{figureNumber} · {result.layer === "bottom" ? "地筋" : "面筋"} · {result.direction.toUpperCase()}向{result.throughWall ? "通墙" : result.scopeType === "through" ? "组合区" : ""}</p></div>
+              <div><p className="text-xs text-slate-500">编号/类型/方向</p><p className="font-semibold">{figureNumber} · {barTypeDirectionLabel(result)}</p></div>
               <div><p className="text-xs text-slate-500">规格/根数</p><p className="font-semibold">Φ{result.diameter} · {result.count}根</p></div>
               <div><p className="text-xs text-slate-500">单根/总长度</p><p className="font-semibold">{result.lengthMode === "zoned" ? `多长度（${result.lengthVariants.length}区）` : `${result.singleLengthM.toFixed(3)}m`} / {result.totalLengthM.toFixed(3)}m</p></div>
               <div><p className="text-xs text-slate-500">重量</p><p className="text-lg font-bold text-slate-900">{result.weightKg.toFixed(2)}kg</p></div>
@@ -349,17 +351,17 @@ export function CalculatorResultsClient() {
         <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <h2 className="font-bold text-slate-900">计算参数快照</h2>
             <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
-              <div><dt className="text-slate-500">排列/房间数</dt><dd className="font-semibold">{record.inputSnapshot.slab.arrangement.toUpperCase()} · {record.inputSnapshot.slab.rooms.length}间</dd></div>
+              <div><dt className="text-slate-500">排列/房间数</dt><dd className="font-semibold">{arrangementLabel(record.inputSnapshot.slab.arrangement)} · {record.inputSnapshot.slab.rooms.length}间</dd></div>
               <div><dt className="text-slate-500">内墙/外墙</dt><dd className="font-semibold">{record.inputSnapshot.slab.innerWallThickness} / {record.inputSnapshot.slab.outerWallThickness}mm</dd></div>
               <div><dt className="text-slate-500">根数算法</dt><dd className="font-semibold">{countModeLabel(record.inputSnapshot.slab.countMode)}</dd></div>
-              <div><dt className="text-slate-500">面筋锚固增加</dt><dd className="font-semibold">{record.inputSnapshot.slab.topAnchorExtra}mm</dd></div>
+              <div><dt className="text-slate-500">内墙面筋锚固增加</dt><dd className="font-semibold">{record.inputSnapshot.slab.topAnchorExtra}mm</dd></div>
             </dl>
             <div className="mt-4 space-y-2">
               {record.inputSnapshot.slab.rooms.map((room) => <p key={room.id} className="rounded-lg bg-slate-50 px-3 py-2 text-sm">{room.name}：{room.spanX}×{room.spanY}mm <span className="text-xs text-slate-400">({room.id})</span></p>)}
             </div>
             {calculation.throughWall && (
               <div className="mt-4 space-y-1 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
-                <p>通墙摘要：{calculation.throughWall.direction.toUpperCase()}向 · 净尺寸{calculation.throughWall.netSpanTotal}mm · 中间墙{calculation.throughWall.intermediateWallTotal}mm</p>
+                <p>通墙摘要：{directionLabel(calculation.throughWall.direction)} · 净尺寸{calculation.throughWall.netSpanTotal}mm · 中间墙{calculation.throughWall.intermediateWallTotal}mm</p>
                 <p>单根长度：{calculation.throughWall.netSpanTotal} + {calculation.throughWall.intermediateWallTotal} + {calculation.throughWall.throughBar.startAnchor} + {calculation.throughWall.throughBar.endAnchor} = {(calculation.throughWall.throughBar.singleLengthM * 1000).toFixed(0)}mm</p>
                 <p>通墙方向根数：{formatCountFormula(calculation.throughWall.throughBar.calculationWidthMm, calculation.throughWall.throughBar.spacing, record.inputSnapshot.slab.countMode)} = {calculation.throughWall.throughBar.count}根</p>
                 <p>垂直方向根数：{formatCountFormula(calculation.throughWall.perpendicularBar.calculationWidthMm, calculation.throughWall.perpendicularBar.spacing, record.inputSnapshot.slab.countMode)} = {calculation.throughWall.perpendicularBar.count}根（不计中间墙）</p>
@@ -406,7 +408,7 @@ export function CalculatorResultsClient() {
         <section className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4 shadow-sm sm:p-5">
           <div className="grid gap-3 md:grid-cols-5">
             <select aria-label="类型筛选" className={fieldClass} value={ui.filters.layer} onChange={(event) => updateFilters({ layer: event.target.value as ResultUiState["filters"]["layer"] })}><option value="all">全部类型</option><option value="bottom">地筋</option><option value="top">面筋</option></select>
-            <select aria-label="方向筛选" className={fieldClass} value={ui.filters.direction} onChange={(event) => updateFilters({ direction: event.target.value as ResultUiState["filters"]["direction"] })}><option value="all">全部方向</option><option value="x">X向</option><option value="y">Y向</option></select>
+            <select aria-label="方向筛选" className={fieldClass} value={ui.filters.direction} onChange={(event) => updateFilters({ direction: event.target.value as ResultUiState["filters"]["direction"] })}><option value="all">全部方向</option><option value="x">东西向</option><option value="y">南北向</option></select>
             <select aria-label="通墙筛选" className={fieldClass} value={ui.filters.through} onChange={(event) => updateFilters({ through: event.target.value as ResultUiState["filters"]["through"] })}><option value="all">全部状态</option><option value="normal">普通</option><option value="through">通墙</option></select>
             <select aria-label="每页组数" className={fieldClass} value={ui.pageSize} onChange={(event) => setUi((current) => ({ ...current, page: 1, pageSize: Number(event.target.value) as 2 | 5 | 10 }))}><option value="2">每页2组</option><option value="5">每页5组</option><option value="10">每页10组</option></select>
             <select aria-label="快速跳转" className={fieldClass} value={ui.selectedScopeId} onChange={(event) => jumpToScope(event.target.value)}><option value="">快速跳转</option>{filteredGroups.map((group) => <option key={group.scopeId} value={group.scopeId}>{group.title}</option>)}</select>

@@ -406,6 +406,20 @@ describe("diagram geometry audit regressions", () => {
 });
 
 describe("正式结果代表线", () => {
+  it("正式二维图例使用东西向和南北向且不显示X/Y方向旧称", () => {
+    const state = cloneDefaultSlabCalculatorState();
+    const scene = buildSlabDiagramScene(state, calculateSlabResults(state));
+    const labels = scene.barGroups
+      .map((group) => group.specificationLabel)
+      .join(" ");
+
+    expect(labels).toContain("东西向地筋");
+    expect(labels).toContain("南北向地筋");
+    expect(labels).toContain("东西向面筋");
+    expect(labels).toContain("南北向面筋");
+    expect(labels).not.toMatch(/X向|Y向|X方向|Y方向/);
+  });
+
   it("找不到正式结果时代表线数量为0", () => {
     expect(getRepresentativeCount(undefined)).toBe(0);
     expect(getRepresentativeCount(null)).toBe(0);
@@ -544,10 +558,15 @@ describe("锚固、增加段与通墙选择", () => {
     expect(group.extraLabel).not.toContain("两端实际增加");
   });
 
-  it("一端手动一端自动时只显示自动端的实际增加", () => {
+  it("一端手动一端内墙时只显示内墙端的实际增加", () => {
     const state = cloneDefaultSlabCalculatorState();
     state.top.x.extraMode = "both";
     state.slab.rooms[0].anchors.top.x.start = manualAnchor(550);
+    state.slab.rooms[0].anchors.top.x.end = {
+      source: "inner-wall",
+      manualValue: 0,
+      origin: "user",
+    };
     const calculation = calculateSlabResults(state);
     const result = calculation.results.find(
       (item) => item.layer === "top" && item.direction === "x",
@@ -562,6 +581,22 @@ describe("锚固、增加段与通墙选择", () => {
     expect(group.extraSegments).toHaveLength(group.representativeCount);
     expect(group.extraSegments.every((segment) => segment.kind === "extra-end")).toBe(true);
     expect(group.extraLabel).toBe("东端实际增加250mm");
+  });
+
+  it("两端外墙即使选择两端增加也不绘制橙色增加段", () => {
+    const state = cloneDefaultSlabCalculatorState();
+    state.top.x.extraMode = "both";
+    const calculation = calculateSlabResults(state);
+    const result = calculation.results.find(
+      (item) => item.layer === "top" && item.direction === "x",
+    )!;
+    const group = buildSlabDiagramScene(state, calculation, {
+      visibleResultIds: new Set([result.id]),
+    }).barGroups[0];
+
+    expect([group.startExtraApplied, group.endExtraApplied]).toEqual([false, false]);
+    expect(group.extraSegments).toHaveLength(0);
+    expect(group.extraLabel).toBe("未实际叠加面筋增加值");
   });
 
   it("修改起点锚固后几何端点和真实标注同步变化", () => {

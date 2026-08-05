@@ -68,14 +68,19 @@ describe("正式计算记录", () => {
       ...record,
       algorithmVersion: "slab-calculator-2026-08-v2",
     };
+    const legacyOuterWallExtraAlgorithm = {
+      ...record,
+      algorithmVersion: "slab-calculator-2026-08-v3",
+    };
     expect(parseCalculationRecord(JSON.stringify(wrongSchema))).toBeNull();
     expect(parseCalculationRecord(JSON.stringify(wrongAlgorithm))).toBeNull();
     expect(parseCalculationRecord(JSON.stringify(legacyCoverAlgorithm))).toBeNull();
     expect(parseCalculationRecord(JSON.stringify(legacyUniformAnchorAlgorithm))).toBeNull();
+    expect(parseCalculationRecord(JSON.stringify(legacyOuterWallExtraAlgorithm))).toBeNull();
     expect(parseCalculationRecord("not-json")).toBeNull();
   });
 
-  it("v3分区结果可恢复，缺失或篡改分区的正式记录被拒绝", () => {
+  it("v4分区结果可恢复，缺失或篡改分区的正式记录被拒绝", () => {
     const state = xRooms(false);
     state.slab.rooms[0].spanY = 3000;
     state.slab.rooms[1].spanY = 6000;

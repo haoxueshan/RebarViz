@@ -5,6 +5,7 @@ import {
   type BarResult,
   type CountMode,
   type RoomArrangement,
+  directionLabel,
 } from "./slab-calculator";
 import {
   createResultGroups,
@@ -19,6 +20,8 @@ import {
   allocateVariantRepresentativeCounts,
   getRepresentativeCount,
 } from "./slab-diagram";
+
+export { directionLabel };
 
 export type SlabPrintVariantRow = {
   figureNumber: string;
@@ -113,7 +116,8 @@ function anchorText(
   if (layer === "bottom" || source === "manual") {
     return `${label}${value.toFixed(0)}mm${source === "manual" ? "（最终值）" : ""}`;
   }
-  return `${label}${value.toFixed(0)}mm（${extraApplied ? `已增加${topExtraValue.toFixed(0)}mm` : "未增加"}）`;
+  const actualExtraApplied = source === "inner-wall" && extraApplied;
+  return `${label}${value.toFixed(0)}mm（${actualExtraApplied ? `已增加${topExtraValue.toFixed(0)}mm` : "未增加"}）`;
 }
 
 export function formatAnchorLabel(
@@ -131,9 +135,13 @@ export function formatExtraModeLabel(result: BarResult): string {
   const start = result.direction === "x" ? "西端" : "南端";
   const end = result.direction === "x" ? "东端" : "北端";
   const prefix = result.throughWall ? "最" : "";
-  if (result.startExtraApplied && result.endExtraApplied) return "两端实际增加";
-  if (result.startExtraApplied) return `${prefix}${start}实际增加`;
-  if (result.endExtraApplied) return `${prefix}${end}实际增加`;
+  const startExtraApplied =
+    result.startAnchorSource === "inner-wall" && result.startExtraApplied;
+  const endExtraApplied =
+    result.endAnchorSource === "inner-wall" && result.endExtraApplied;
+  if (startExtraApplied && endExtraApplied) return "两端实际增加";
+  if (startExtraApplied) return `${prefix}${start}实际增加`;
+  if (endExtraApplied) return `${prefix}${end}实际增加`;
   if (
     result.startAnchorSource === "manual" ||
     result.endAnchorSource === "manual"
@@ -211,17 +219,17 @@ export function countModeFormulaText(countMode: CountMode): string {
 }
 
 export function arrangementLabel(arrangement: RoomArrangement): string {
-  if (arrangement === "x") return "沿X向（西→东）排列";
-  if (arrangement === "y") return "沿Y向（南→北）排列";
+  if (arrangement === "x") return "沿东西向（西→东）排列";
+  if (arrangement === "y") return "沿南北向（南→北）排列";
   return "单房间";
 }
 
 export function barTypeDirectionLabel(result: BarResult): string {
   const layer = result.layer === "bottom" ? "地筋" : "面筋";
-  const direction = `${result.direction.toUpperCase()}向`;
-  if (result.throughWall) return `${layer}·${direction}通墙`;
-  if (result.scopeType === "through") return `${layer}·${direction}组合区`;
-  return `${layer}·${direction}`;
+  const direction = directionLabel(result.direction);
+  if (result.throughWall) return `${direction}通墙筋`;
+  if (result.scopeType === "through") return `${direction}${layer}·组合区`;
+  return `${direction}${layer}`;
 }
 
 export function isPrintableCalculationRecord(

@@ -16,7 +16,7 @@ export const RESULT_PRINT_SETTINGS_KEY =
 export const RETURN_TO_INPUT_KEY = "rebarviz:slab-calculator:return-to-input:v1";
 
 export const CALCULATOR_SCHEMA_VERSION = 1;
-export const CALCULATOR_ALGORITHM_VERSION = "slab-calculator-2026-08-v3";
+export const CALCULATOR_ALGORITHM_VERSION = "slab-calculator-2026-08-v4";
 
 export type CalculationStatus =
   | "idle"

@@ -271,8 +271,8 @@ export function SlabPrintDialog({
                   <button type="button" onClick={() => replaceSelection([])} className="min-h-11 rounded-lg border border-slate-300 px-3 text-sm font-medium hover:bg-slate-50">清空</button>
                   <button type="button" onClick={() => replaceSelection(allResults.filter((result) => result.layer === "bottom"))} className="min-h-11 rounded-lg border border-slate-300 px-3 text-sm font-medium hover:bg-slate-50">仅地筋</button>
                   <button type="button" onClick={() => replaceSelection(allResults.filter((result) => result.layer === "top"))} className="min-h-11 rounded-lg border border-slate-300 px-3 text-sm font-medium hover:bg-slate-50">仅面筋</button>
-                  <button type="button" onClick={() => replaceSelection(allResults.filter((result) => result.direction === "x"))} className="min-h-11 rounded-lg border border-slate-300 px-3 text-sm font-medium hover:bg-slate-50">仅X向</button>
-                  <button type="button" onClick={() => replaceSelection(allResults.filter((result) => result.direction === "y"))} className="min-h-11 rounded-lg border border-slate-300 px-3 text-sm font-medium hover:bg-slate-50">仅Y向</button>
+                  <button type="button" onClick={() => replaceSelection(allResults.filter((result) => result.direction === "x"))} className="min-h-11 rounded-lg border border-slate-300 px-3 text-sm font-medium hover:bg-slate-50">仅东西向</button>
+                  <button type="button" onClick={() => replaceSelection(allResults.filter((result) => result.direction === "y"))} className="min-h-11 rounded-lg border border-slate-300 px-3 text-sm font-medium hover:bg-slate-50">仅南北向</button>
                   <button type="button" onClick={() => replaceSelection(allResults.filter((result) => result.scopeType === "through"))} className="min-h-11 rounded-lg border border-slate-300 px-3 text-sm font-medium hover:bg-slate-50">仅通墙组合区</button>
                 </div>
               </div>
@@ -337,7 +337,7 @@ export function SlabPrintDialog({
               <div className="mt-3 space-y-2">
                 <label className="flex min-h-14 cursor-pointer items-start gap-3 rounded-lg border border-slate-200 p-3">
                   <input type="radio" name="slab-print-detail" checked={options.detailMode === "full"} onChange={() => onChange({ ...options, detailMode: "full" })} className="mt-0.5 h-5 w-5 accent-blue-600" />
-                  <span><span className="block text-sm font-semibold">完整明细</span><span className="mt-1 block text-xs text-slate-500">包含锚固来源、最终锚固和面筋增加位置</span></span>
+                  <span><span className="block text-sm font-semibold">完整明细</span><span className="mt-1 block text-xs text-slate-500">包含锚固来源、最终锚固和内墙面筋增加位置</span></span>
                 </label>
                 <label className="flex min-h-14 cursor-pointer items-start gap-3 rounded-lg border border-slate-200 p-3">
                   <input type="radio" name="slab-print-detail" checked={options.detailMode === "compact"} onChange={() => onChange({ ...options, detailMode: "compact" })} className="mt-0.5 h-5 w-5 accent-blue-600" />

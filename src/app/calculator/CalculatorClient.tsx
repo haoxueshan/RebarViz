@@ -125,7 +125,7 @@ function TopExtraModeSelector({
   ];
   return (
     <fieldset>
-      <legend className={labelClass}>面筋增加位置</legend>
+      <legend className={labelClass}>面筋增加位置（仅内墙端）</legend>
       <div className="grid grid-cols-3 gap-2">
         {options.map((option) => (
           <button
@@ -210,7 +210,9 @@ function AnchorRuleField({
       </select>
       {hasMixedAutomaticBoundary ? (
         <p className="mt-2 rounded-md bg-blue-50 px-2 py-1.5 text-xs leading-5 text-blue-800">
-          自动分区：此端边界同时包含内墙和外墙，正式计算会按实际区段分别解析锚固。
+          {layer === "top"
+            ? "自动分区：此端同时包含内墙和外墙；启用增加时仅内墙区段增加，外墙区段不增加。"
+            : "自动分区：此端边界同时包含内墙和外墙，正式计算会按实际区段分别解析锚固。"}
         </p>
       ) : rule.source === "manual" ? (
         <div className="mt-2">
@@ -223,9 +225,11 @@ function AnchorRuleField({
         </div>
       ) : (
         <p className="mt-2 text-xs leading-5 text-slate-600">
-          {layer === "top" && applyTopExtra
-            ? `${sourceLabel(rule.source)}${wall} + 增加${state.slab.topAnchorExtra} = ${resolved}mm`
-            : `${sourceLabel(rule.source)}${wall}mm${layer === "top" ? "（此端不增加）" : ""}`}
+          {layer === "top" && rule.source === "outer-wall"
+            ? `外墙${wall}mm（外墙默认不增加）`
+            : layer === "top" && applyTopExtra
+              ? `内墙${wall} + 增加${state.slab.topAnchorExtra} = ${resolved}mm`
+              : `${sourceLabel(rule.source)}${wall}mm${layer === "top" ? "（此端未启用增加）" : ""}`}
         </p>
       )}
     </div>
@@ -701,7 +705,7 @@ export function CalculatorClient() {
         >
           <div className="grid gap-6 xl:grid-cols-[minmax(0,1.55fr)_minmax(340px,0.85fr)] xl:items-start">
             <div className="space-y-4">
-              <CollapsibleSection number={1} title="楼板基础参数" description="房间尺寸、墙厚和面筋锚固增加值的唯一数据源。" open={ui.openSections.base} onToggle={(open) => toggleSection("base", open)}>
+              <CollapsibleSection number={1} title="楼板基础参数" description="房间尺寸、墙厚和内墙面筋锚固增加值的唯一数据源。" open={ui.openSections.base} onToggle={(open) => toggleSection("base", open)}>
                 <div className="grid gap-2 sm:grid-cols-3">
                   {arrangementOptions.map((option) => (
                     <button key={option.value} type="button" onClick={() => setArrangement(option.value)} className={`min-h-11 rounded-lg border px-4 py-2 text-sm font-medium ${state.slab.arrangement === option.value ? "border-blue-600 bg-blue-600 text-white" : "border-slate-300 bg-white text-slate-700"}`}>{option.label}</button>
@@ -727,7 +731,7 @@ export function CalculatorClient() {
                 <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                   <NumberField label="内墙厚度" value={state.slab.innerWallThickness} onChange={(innerWallThickness) => updateBusinessState((current) => ({ ...current, slab: { ...current.slab, innerWallThickness } }))} />
                   <NumberField label="外墙厚度" value={state.slab.outerWallThickness} onChange={(outerWallThickness) => updateBusinessState((current) => ({ ...current, slab: { ...current.slab, outerWallThickness } }))} />
-                  <NumberField label="面筋锚固增加值" value={state.slab.topAnchorExtra} onChange={(topAnchorExtra) => updateBusinessState((current) => ({ ...current, slab: { ...current.slab, topAnchorExtra } }))} />
+                  <NumberField label="内墙面筋锚固增加值" value={state.slab.topAnchorExtra} onChange={(topAnchorExtra) => updateBusinessState((current) => ({ ...current, slab: { ...current.slab, topAnchorExtra } }))} />
                   <label><span className={labelClass}>根数算法</span><select className={fieldClass} value={state.slab.countMode} onChange={(event) => updateBusinessState((current) => ({ ...current, slab: { ...current.slab, countMode: event.target.value as CountMode } }))}><option value="project">项目算法</option><option value="round">四舍五入算法</option><option value="floor">向下取整算法</option></select></label>
                 </div>
                 <p className="mt-3 text-xs text-slate-500">中间墙共 {Math.max(state.slab.rooms.length - 1, 0)} 道，由房间拓扑自动确定；普通多房间允许尺寸不同，只有通墙时才校验垂直尺寸一致。</p>
@@ -754,6 +758,7 @@ export function CalculatorClient() {
                       <AnchorRuleField label={state.through.direction === "x" ? "最西端" : "最南端"} rule={state.through.startAnchor} layer="top" state={state} applyTopExtra={shouldApplyTopExtra(state.through.extraMode, "start")} onChange={(startAnchor) => updateBusinessState((current) => ({ ...current, through: { ...current.through, startAnchor: { ...startAnchor, origin: "user" } } }))} onRestoreAuto={() => updateBusinessState((current) => ({ ...current, through: { ...current.through, startAnchor: { source: "outer-wall", manualValue: 0, origin: "auto" } } }))} />
                       <AnchorRuleField label={state.through.direction === "x" ? "最东端" : "最北端"} rule={state.through.endAnchor} layer="top" state={state} applyTopExtra={shouldApplyTopExtra(state.through.extraMode, "end")} onChange={(endAnchor) => updateBusinessState((current) => ({ ...current, through: { ...current.through, endAnchor: { ...endAnchor, origin: "user" } } }))} onRestoreAuto={() => updateBusinessState((current) => ({ ...current, through: { ...current.through, endAnchor: { source: "outer-wall", manualValue: 0, origin: "auto" } } }))} />
                     </div>
+                    <p className="text-xs leading-5 text-amber-900">面筋增加值仅作用于选中位置的内墙锚固；外墙锚固和手动锚固均不增加。</p>
                     <p className="text-xs leading-5 text-amber-900">通墙校验会检查垂直净尺寸及各房间垂直面筋锚固一致性；失败时不回退生成普通面筋正式结果。</p>
                   </div>
                 )}

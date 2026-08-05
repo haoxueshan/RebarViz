@@ -4,6 +4,7 @@ import {
   arrangementLabel,
   buildSlabPrintReport,
   countModeFormulaText,
+  directionLabel,
   printSelectionSummary,
 } from "@/lib/slab-calculator-report";
 import type {
@@ -142,10 +143,10 @@ export function SlabPrintReport({
             <div><dt>房间数量</dt><dd>{slab.rooms.length} 间</dd></div>
             <div><dt>内墙厚度</dt><dd>{slab.innerWallThickness} mm</dd></div>
             <div><dt>外墙厚度</dt><dd>{slab.outerWallThickness} mm</dd></div>
-            <div><dt>面筋锚固增加值</dt><dd>{slab.topAnchorExtra} mm</dd></div>
+            <div><dt>内墙面筋锚固增加值</dt><dd>{slab.topAnchorExtra} mm</dd></div>
             <div><dt>根数算法</dt><dd>{countModeLabel(slab.countMode)}</dd></div>
-            <div><dt>面筋通墙</dt><dd>{throughWall ? `启用（${throughWall.direction.toUpperCase()}向）` : "未启用"}</dd></div>
-            <div><dt>通墙方向</dt><dd>{throughWall ? `${throughWall.direction.toUpperCase()}向` : "不适用"}</dd></div>
+            <div><dt>面筋通墙</dt><dd>{throughWall ? `启用（${directionLabel(throughWall.direction)}）` : "未启用"}</dd></div>
+            <div><dt>通墙方向</dt><dd>{throughWall ? directionLabel(throughWall.direction) : "不适用"}</dd></div>
             <div><dt>通墙净尺寸合计</dt><dd>{throughWall ? `${throughWall.netSpanTotal} mm` : "不适用"}</dd></div>
             <div><dt>中间墙厚度合计</dt><dd>{throughWall ? `${throughWall.intermediateWallTotal} mm` : "不适用"}</dd></div>
           </dl>
@@ -160,8 +161,8 @@ export function SlabPrintReport({
               <tr>
                 <th>房间名称</th>
                 <th>房间 ID</th>
-                <th>X向净尺寸</th>
-                <th>Y向净尺寸</th>
+                <th>东西向净尺寸</th>
+                <th>南北向净尺寸</th>
               </tr>
             </thead>
             <tbody>
@@ -236,7 +237,7 @@ export function SlabPrintReport({
               {model.specifications.map((item) => (
                 <tr key={item.key}>
                   <td>{layerLabel(item.layer)}</td>
-                  <td>{item.direction.toUpperCase()}向</td>
+                  <td>{directionLabel(item.direction)}</td>
                   <td>Φ{item.diameter}@{item.spacing}</td>
                   <td>{item.totalCount} 根</td>
                   <td>{item.totalLengthM.toFixed(3)} m</td>
@@ -291,7 +292,7 @@ export function SlabPrintReport({
                   {options.detailMode === "full" && <th>净跨</th>}
                   {options.detailMode === "full" && <th>起点锚固</th>}
                   {options.detailMode === "full" && <th>终点锚固</th>}
-                  {options.detailMode === "full" && <th>面筋增加位置</th>}
+                  {options.detailMode === "full" && <th>面筋增加位置（仅内墙端）</th>}
                   <th>{options.detailMode === "full" ? "单根/总长度" : "单根长度"}</th>
                   {options.detailMode === "compact" && <th>总长度</th>}
                   <th>重量</th>
@@ -363,9 +364,9 @@ export function SlabPrintReport({
           <h2>计算说明</h2>
           <ul>
             <li>当前根数算法：{countModeLabel(slab.countMode)}；公式：{countModeFormulaText(slab.countMode)}。</li>
-            <li>X向单根长度由X向净尺寸与西、东两端锚固组成；Y向由Y向净尺寸与南、北两端锚固组成。</li>
+            <li>东西向单根长度由东西向净尺寸与西、东两端锚固组成；南北向由南北向净尺寸与南、北两端锚固组成。</li>
             <li>中间墙厚度只计入通墙方向钢筋的单根长度，不计入任何钢筋根数。</li>
-            <li>手动锚固值为最终值；面筋增加值只作用于启用增加的自动内墙或外墙锚固端。</li>
+            <li>面筋增加值只作用于启用增加的内墙锚固端；外墙锚固端不增加，手动锚固值直接作为最终值。</li>
             <li>理论单位重量公式：π × 直径² × 7850 ÷ 4 ÷ 1,000,000（kg/m）。</li>
           </ul>
         </section>
