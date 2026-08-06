@@ -156,18 +156,17 @@ describe("楼板计算打印模型", () => {
     );
   });
 
-  it("通墙组合区最先打印，通墙与垂直面筋各一次且不重复普通面筋", () => {
+  it("通墙组合区最先打印且垂直普通面筋按房间保留", () => {
     const { report } = makeReport(twoXRooms(true));
     const topRows = report.rows.filter((row) => row.layer === "top");
 
     expect(report.groups[0].scopeType).toBe("through");
-    expect(report.groups[0].rows).toHaveLength(2);
+    expect(report.groups[0].rows).toHaveLength(1);
     expect(topRows.filter((row) => row.throughWall)).toHaveLength(1);
-    expect(
-      topRows.filter((row) => row.scopeType === "through" && !row.throughWall),
-    ).toHaveLength(1);
+    expect(topRows.filter((row) => row.scopeType === "room")).toHaveLength(2);
+    expect(topRows.filter((row) => row.direction === "y")).toHaveLength(2);
     expect(report.rows.filter((row) => row.layer === "bottom")).toHaveLength(4);
-    expect(topRows.some((row) => row.scopeType === "room")).toBe(false);
+    expect(report.rows).toHaveLength(7);
   });
 
   it("规格汇总按层位、方向、直径和间距分别归组", () => {
@@ -374,7 +373,7 @@ describe("打印范围与局部汇总", () => {
     expect(record).toEqual(before);
   });
 
-  it("通墙方向与组合区垂直钢筋可独立选择且地筋保持独立", () => {
+  it("通墙方向与房间垂直普通面筋可独立选择且地筋保持独立", () => {
     const { record } = makeReport(twoXRooms(true));
     const through = record.calculation.throughWall!;
     const throughReport = buildSlabPrintReport(
@@ -385,12 +384,19 @@ describe("打印范围与局部汇总", () => {
     expect(throughReport.groups[0].scopeType).toBe("through");
     expect(throughReport.rows[0].throughWall).toBe(true);
 
+    const roomTopY = record.calculation.results.find(
+      (result) =>
+        result.roomId === "room-b" &&
+        result.layer === "top" &&
+        result.direction === "y",
+    )!;
     const perpendicularReport = buildSlabPrintReport(
       record,
-      selectedOptions(record, [through.perpendicularBar.id], { rangeMode: "custom" }),
+      selectedOptions(record, [roomTopY.id], { rangeMode: "custom" }),
     );
     expect(perpendicularReport.rows).toHaveLength(1);
-    expect(perpendicularReport.rows[0].scopeType).toBe("through");
+    expect(perpendicularReport.rows[0].scopeType).toBe("room");
+    expect(perpendicularReport.rows[0].roomId).toBe("room-b");
     expect(perpendicularReport.rows[0].throughWall).toBe(false);
 
     const roomBottomId = record.calculation.results.find(
@@ -590,10 +596,18 @@ describe("打印报表根数算法", () => {
         (row) => row.scopeType === "through",
       );
 
-      expect(throughTopRows).toHaveLength(2);
+      expect(throughTopRows).toHaveLength(1);
       expect(throughTopRows.every((row) => row.count === expectedCount)).toBe(
         true,
       );
+      const roomTopYRows = throughReport.rows.filter(
+        (row) => row.scopeType === "room" && row.layer === "top" && row.direction === "y",
+      );
+      expect(roomTopYRows).toHaveLength(2);
+      expect(roomTopYRows.map((row) => row.count)).toEqual([
+        mode === "project" ? 9 : 8,
+        mode === "project" ? 9 : 8,
+      ]);
     });
   });
 

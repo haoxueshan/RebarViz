@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   calculateSlabResults,
+  allocateBarCountsByPosition,
   cloneDefaultSlabCalculatorState,
   countBars,
   createDefaultRoomAnchorRules,
   resolveBottomAnchor,
   resolveTopAnchor,
+  sameAnchorRule,
   restoreRoomAnchorToAuto,
   shouldApplyTopExtra,
   synchronizeRoomAnchors,
@@ -113,7 +115,7 @@ describe("根数算法", () => {
     expect(roundResult!.weightKg).toBeGreaterThan(floorResult!.weightKg);
   });
 
-  it("通墙方向和垂直组合筋统一使用四舍五入或向下取整算法", () => {
+  it("通墙方向和各房间垂直普通筋分别使用所选根数算法", () => {
     const roundState = stateWithRooms("x", [
       [4200, 3350],
       [3500, 3350],
@@ -121,16 +123,24 @@ describe("根数算法", () => {
     roundState.through.enabled = true;
     roundState.through.direction = "x";
     roundState.slab.countMode = "round";
-    const roundThrough = calculateSlabResults(roundState).throughWall;
+    const roundCalculation = calculateSlabResults(roundState);
 
     const floorState = structuredClone(roundState);
     floorState.slab.countMode = "floor";
-    const floorThrough = calculateSlabResults(floorState).throughWall;
+    const floorCalculation = calculateSlabResults(floorState);
 
-    expect(roundThrough?.throughBar.count).toBe(17);
-    expect(roundThrough?.perpendicularBar.count).toBe(39);
-    expect(floorThrough?.throughBar.count).toBe(16);
-    expect(floorThrough?.perpendicularBar.count).toBe(38);
+    expect(roundCalculation.throughWall?.throughBar.count).toBe(17);
+    expect(
+      roundCalculation.results
+        .filter((result) => result.layer === "top" && result.direction === "y")
+        .map((result) => result.count),
+    ).toEqual([21, 18]);
+    expect(floorCalculation.throughWall?.throughBar.count).toBe(16);
+    expect(
+      floorCalculation.results
+        .filter((result) => result.layer === "top" && result.direction === "y")
+        .map((result) => result.count),
+    ).toEqual([21, 17]);
   });
 
   it("非法根数算法继续使正式结果无效", () => {
@@ -265,7 +275,7 @@ describe("房间级端部规则", () => {
 });
 
 describe("面筋通墙回归", () => {
-  it("中间墙只进入X向单根长度，Y向根数为39", () => {
+  it("中间墙只进入X向通墙长度，Y向面筋按房间分别计算", () => {
     const calculation = calculateSlabResults(xThroughState());
     expect(calculation.errors).toEqual([]);
     expect(calculation.throughWall?.intermediateWallTotal).toBe(240);
@@ -273,20 +283,58 @@ describe("面筋通墙回归", () => {
     expect(calculation.throughWall?.throughBar.singleLengthM).toBeCloseTo(8.78, 6);
     expect(calculation.throughWall?.throughBar.totalLengthM).toBeCloseTo(158.04, 6);
     expect(calculation.throughWall?.throughBar.weightKg).toBeCloseTo(97.44, 2);
-    expect(calculation.throughWall?.perpendicularBar.count).toBe(39);
-    expect(calculation.throughWall?.perpendicularBar.singleLengthM).toBeCloseTo(4.34, 6);
-    expect(calculation.throughWall?.perpendicularBar.totalLengthM).toBeCloseTo(169.26, 6);
-    expect(calculation.throughWall?.perpendicularBar.weightKg).toBeCloseTo(104.36, 2);
-    expect(calculation.throughWall?.perpendicularBar.count).not.toBe(41);
+    const roomTopY = calculation.results.filter(
+      (result) => result.layer === "top" && result.direction === "y",
+    );
+    expect(roomTopY.map((result) => result.count)).toEqual([21, 18]);
+    expect(roomTopY.every((result) => result.scopeType === "room")).toBe(true);
+    expect(roomTopY.every((result) => result.intermediateWallMm === 0)).toBe(true);
   });
 
   it("通墙面筋替换普通面筋而不重复累计", () => {
     const calculation = calculateSlabResults(xThroughState());
     const topResults = calculation.results.filter((result) => result.layer === "top");
-    expect(topResults).toHaveLength(2);
+    expect(topResults).toHaveLength(3);
     expect(topResults.filter((result) => result.throughWall)).toHaveLength(1);
     expect(topResults.some((result) => result.id.startsWith("room-") && result.direction === "x")).toBe(false);
+    expect(topResults.filter((result) => result.direction === "y")).toHaveLength(2);
+    expect(calculation.results).toHaveLength(7);
+    expect(
+      calculation.results.every(
+        (result) =>
+          (result.scopeType === "through" && result.throughWall) ||
+          (result.scopeType === "room" && !result.throughWall),
+      ),
+    ).toBe(true);
   });
+
+  it.each([
+    ["project", 21, 18],
+    ["round", 21, 18],
+    ["floor", 20, 17],
+  ] as const)(
+    "%s算法对4100与3500宽度分别取整，不合并计算垂直普通筋",
+    (countMode, firstCount, secondCount) => {
+      const state = stateWithRooms("x", [
+        [4100, 3600],
+        [3500, 3600],
+      ]);
+      state.slab.countMode = countMode;
+      state.through.enabled = true;
+      state.through.direction = "x";
+
+      const roomTopY = calculateSlabResults(state).results.filter(
+        (result) => result.layer === "top" && result.direction === "y",
+      );
+      expect(roomTopY.map((result) => result.count)).toEqual([
+        firstCount,
+        secondCount,
+      ]);
+      expect(roomTopY.reduce((sum, result) => sum + result.count, 0)).toBe(
+        firstCount + secondCount,
+      );
+    },
+  );
 
   it("排列方向或垂直尺寸校验失败时取消通墙结果", () => {
     const wrongDirection = xThroughState();
@@ -298,7 +346,7 @@ describe("面筋通墙回归", () => {
     const calculation = calculateSlabResults(inconsistent);
     expect(calculation.throughWall).toBeNull();
     expect(calculation.errors).toContain(
-      "通墙组合区垂直方向尺寸或锚固不一致，请统一设置或拆分连续区。",
+      "通墙组合区垂直净尺寸不一致，当前整体通墙模式不可形成。",
     );
   });
 
@@ -471,19 +519,20 @@ describe("面筋增加值作用端", () => {
     expect([through?.startExtraApplied, through?.endExtraApplied]).toEqual([false, false]);
   });
 
-  it("通墙组合区垂直面筋使用普通方向自己的extraMode", () => {
+  it("通墙模式下垂直普通面筋各自使用普通方向extraMode", () => {
     const state = xThroughState();
     state.through.extraMode = "start";
     state.top.y.extraMode = "end";
     state.slab.rooms.forEach((room) => {
       room.anchors.top.y.end = anchor("inner-wall");
     });
-    const perpendicular = calculateSlabResults(state).throughWall?.perpendicularBar;
-    expect(perpendicular?.topExtraMode).toBe("end");
-    expect(perpendicular?.startAnchor).toBe(370);
-    expect(perpendicular?.endAnchor).toBe(490);
-    expect(perpendicular?.singleLengthM).toBeCloseTo(4.46, 6);
-    expect(perpendicular?.count).toBe(39);
+    const perpendicular = calculateSlabResults(state).results.filter(
+      (result) => result.layer === "top" && result.direction === "y",
+    );
+    expect(perpendicular).toHaveLength(2);
+    expect(perpendicular.every((result) => result.topExtraMode === "end")).toBe(true);
+    expect(perpendicular.every((result) => result.startAnchor === 370)).toBe(true);
+    expect(perpendicular.every((result) => result.endAnchor === 490)).toBe(true);
   });
 
   it("手动端无论模式如何都不增加topAnchorExtra", () => {
@@ -659,32 +708,33 @@ describe("锚固来源状态与拓扑同步", () => {
 });
 
 describe("严格校验和结果关联", () => {
-  it("通墙垂直方向锚固不一致时不读取第一间房代替", () => {
+  it("通墙垂直方向锚固不一致时仍按各房间独立计算", () => {
     const state = xThroughState();
     state.slab.rooms[1].anchors.top.y.start = anchor("inner-wall");
     const calculation = calculateSlabResults(state);
-    expect(calculation.isValid).toBe(false);
-    expect(calculation.errors).toContain(
-      "通墙组合区垂直方向尺寸或锚固不一致，请统一设置或拆分连续区。",
+    expect(calculation.isValid).toBe(true);
+    expect(calculation.throughWall).not.toBeNull();
+    const roomTopY = calculation.results.filter(
+      (result) => result.layer === "top" && result.direction === "y",
     );
-    expect(calculation.throughWall).toBeNull();
-    expect(calculation.results).toEqual([]);
-    expect(calculation.totalWeightKg).toBeNull();
+    expect(roomTopY).toHaveLength(2);
+    expect(roomTopY[0].startAnchor).toBe(370);
+    expect(roomTopY[1].startAnchor).toBe(490);
   });
 
-  it("通墙垂直锚固签名比较墙体端保留的手动值", () => {
-    const state = xThroughState();
-    state.slab.rooms[1].anchors.top.y.start = {
-      source: "outer-wall",
-      manualValue: 550,
-      origin: "user",
-    };
-
-    const calculation = calculateSlabResults(state);
-
-    expect(calculation.isValid).toBe(false);
-    expect(calculation.results).toEqual([]);
-    expect(calculation.totalWeightKg).toBeNull();
+  it("墙体锚固隐藏manualValue不参与业务比较", () => {
+    expect(
+      sameAnchorRule(
+        { source: "outer-wall", manualValue: 0, origin: "auto" },
+        { source: "outer-wall", manualValue: 550, origin: "user" },
+      ),
+    ).toBe(true);
+    expect(
+      sameAnchorRule(
+        { source: "manual", manualValue: 0, origin: "user" },
+        { source: "manual", manualValue: 550, origin: "user" },
+      ),
+    ).toBe(false);
   });
 
   it("通墙方向错误时不退回普通面筋结果", () => {
@@ -748,7 +798,7 @@ describe("严格校验和结果关联", () => {
     expect(calculation.totalWeightKg).toBeNull();
   });
 
-  it("固定X向通墙样例保留39根且墙厚不进入根数", () => {
+  it("固定X向通墙样例保留各房间Y向根数且墙厚不进入根数", () => {
     const calculation = calculateSlabResults(xThroughState());
     const through = calculation.throughWall;
     expect(through?.netSpanTotal).toBe(7800);
@@ -757,22 +807,27 @@ describe("严格校验和结果关联", () => {
     expect(through?.throughBar.count).toBe(18);
     expect(through?.throughBar.totalLengthM).toBeCloseTo(158.04, 6);
     expect(through?.throughBar.weightKg).toBeCloseTo(97.44, 2);
-    expect(through?.perpendicularBar.count).toBe(39);
-    expect(through?.perpendicularBar.count).not.toBe(41);
-    expect(through?.perpendicularBar.singleLengthM).toBeCloseTo(4.34, 6);
-    expect(through?.perpendicularBar.totalLengthM).toBeCloseTo(169.26, 6);
-    expect(through?.perpendicularBar.weightKg).toBeCloseTo(104.36, 2);
+    const roomTopY = calculation.results.filter(
+      (result) => result.layer === "top" && result.direction === "y",
+    );
+    expect(roomTopY.map((result) => result.count)).toEqual([21, 18]);
+    expect(roomTopY.reduce((sum, result) => sum + result.count, 0)).toBe(39);
+    expect(roomTopY.every((result) => result.intermediateWallMm === 0)).toBe(true);
   });
 
-  it("Y向通墙按对称规则使用净尺寸计算垂直筋根数", () => {
-    const through = calculateSlabResults(yThroughState()).throughWall;
+  it("Y向通墙按对称规则保留各房间X向普通面筋", () => {
+    const calculation = calculateSlabResults(yThroughState());
+    const through = calculation.throughWall;
     expect(through?.direction).toBe("y");
     expect(through?.netSpanTotal).toBe(6600);
     expect(through?.intermediateWallTotal).toBe(240);
     expect(through?.throughBar.singleLengthM).toBeCloseTo(7.58, 6);
     expect(through?.throughBar.count).toBe(21);
-    expect(through?.perpendicularBar.count).toBe(33);
-    expect(through?.perpendicularBar.singleLengthM).toBeCloseTo(4.94, 6);
+    const roomTopX = calculation.results.filter(
+      (result) => result.layer === "top" && result.direction === "x",
+    );
+    expect(roomTopX.map((result) => result.count)).toEqual([18, 15]);
+    expect(roomTopX.every((result) => result.singleLengthM === 4.94)).toBe(true);
   });
 });
 
@@ -917,7 +972,7 @@ describe("不等尺寸普通多房间分区", () => {
     expect(new Set(result.lengthVariants.map((variant) => variant.id)).size).toBe(3);
   });
 
-  it("分区最大余数分配严格保持父级根数、长度和重量不变量", () => {
+  it("分区排筋位置分配严格保持父级根数、长度和重量不变量", () => {
     const state = stateWithRooms("x", [
       [3100, 3350],
       [4200, 6100],
@@ -936,7 +991,18 @@ describe("不等尺寸普通多房间分区", () => {
     expect(calculation.results.reduce((sum, result) => sum + result.weightKg, 0)).toBe(calculation.totalWeightKg);
   });
 
-  it("最大余数法按净跨度分配代表配额且总数精确不变", () => {
+  it("确定性排筋位置按区段统计且总数精确不变", () => {
+    const positioned = allocateBarCountsByPosition(
+      5,
+      [
+        { perpendicularStartMm: 0, perpendicularEndMm: 3000 },
+        { perpendicularStartMm: 3000, perpendicularEndMm: 9000 },
+      ],
+      9000,
+    );
+    expect(positioned).toEqual([2, 3]);
+    expect(positioned.reduce((sum, count) => sum + count, 0)).toBe(5);
+
     const allocated = allocateLargestRemainder(5, [3000, 6000]);
     expect(allocated).toEqual([2, 3]);
     expect(allocated.reduce((sum, count) => sum + count, 0)).toBe(5);

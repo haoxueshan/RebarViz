@@ -228,7 +228,6 @@ export function barTypeDirectionLabel(result: BarResult): string {
   const layer = result.layer === "bottom" ? "地筋" : "面筋";
   const direction = directionLabel(result.direction);
   if (result.throughWall) return `${direction}通墙筋`;
-  if (result.scopeType === "through") return `${direction}${layer}·组合区`;
   return `${direction}${layer}`;
 }
 

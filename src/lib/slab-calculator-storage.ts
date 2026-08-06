@@ -16,7 +16,7 @@ export const RESULT_PRINT_SETTINGS_KEY =
 export const RETURN_TO_INPUT_KEY = "rebarviz:slab-calculator:return-to-input:v1";
 
 export const CALCULATOR_SCHEMA_VERSION = 1;
-export const CALCULATOR_ALGORITHM_VERSION = "slab-calculator-2026-08-v4";
+export const CALCULATOR_ALGORITHM_VERSION = "slab-calculator-2026-08-v5";
 
 export type CalculationStatus =
   | "idle"
@@ -342,10 +342,6 @@ function sameCalculation(
     sameBarResult(
       stored.throughWall.throughBar,
       recalculated.throughWall.throughBar,
-    ) &&
-    sameBarResult(
-      stored.throughWall.perpendicularBar,
-      recalculated.throughWall.perpendicularBar,
     )
   );
 }
@@ -437,14 +433,18 @@ export function createResultGroups(
   const groups: ResultGroup[] = [];
 
   if (calculation.throughWall) {
-    const results = calculation.results.filter((result) => result.layer === "top");
-    groups.push({
-      scopeId: `through:${calculation.throughWall.direction}`,
-      scopeType: "through",
-      title: `${calculation.throughWall.throughBar.scopeName}通墙组合区`,
-      results,
-      subtotalWeightKg: subtotal(results),
-    });
+    const results = calculation.results.filter(
+      (result) => result.scopeType === "through" && result.throughWall,
+    );
+    if (results.length > 0) {
+      groups.push({
+        scopeId: `through:${calculation.throughWall.direction}`,
+        scopeType: "through",
+        title: `${calculation.throughWall.throughBar.scopeName}通墙组合区`,
+        results,
+        subtotalWeightKg: subtotal(results),
+      });
+    }
   }
 
   inputSnapshot.slab.rooms.forEach((room) => {
@@ -463,23 +463,21 @@ export function createResultGroups(
     }
   });
 
-  if (!calculation.throughWall) {
-    inputSnapshot.slab.rooms.forEach((room) => {
-      const results = calculation.results.filter(
-        (result) => result.roomId === room.id && result.layer === "top",
-      );
-      if (results.length > 0) {
-        groups.push({
-          scopeId: `${room.id}:top`,
-          scopeType: "room",
-          roomId: room.id,
-          title: `${room.name} · 面筋`,
-          results,
-          subtotalWeightKg: subtotal(results),
-        });
-      }
-    });
-  }
+  inputSnapshot.slab.rooms.forEach((room) => {
+    const results = calculation.results.filter(
+      (result) => result.roomId === room.id && result.layer === "top",
+    );
+    if (results.length > 0) {
+      groups.push({
+        scopeId: `${room.id}:top`,
+        scopeType: "room",
+        roomId: room.id,
+        title: `${room.name} · 面筋`,
+        results,
+        subtotalWeightKg: subtotal(results),
+      });
+    }
+  });
 
   return groups;
 }
@@ -493,8 +491,8 @@ export function filterResultGroups(
       const results = group.results.filter((result) => {
         if (filters.layer !== "all" && result.layer !== filters.layer) return false;
         if (filters.direction !== "all" && result.direction !== filters.direction) return false;
-        if (filters.through === "through" && result.scopeType !== "through") return false;
-        if (filters.through === "normal" && result.scopeType === "through") return false;
+        if (filters.through === "through" && !result.throughWall) return false;
+        if (filters.through === "normal" && result.throughWall) return false;
         return true;
       });
       return { ...group, results, subtotalWeightKg: subtotal(results) };

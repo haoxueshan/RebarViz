@@ -1,5 +1,4 @@
 import {
-  allocateLargestRemainder,
   buildRoomBoundaryZones,
   type RoomBoundaryZone,
 } from "./slab-room-topology";
@@ -135,7 +134,6 @@ export type ThroughWallResult = {
   netSpanTotal: number;
   intermediateWallTotal: number;
   throughBar: BarResult;
-  perpendicularBar: BarResult;
 };
 
 export type SlabCalculation = {
@@ -474,11 +472,46 @@ function stableDimensionId(value: number): string {
   return Number(value.toFixed(6)).toString();
 }
 
-function sameAnchorRule(left: AnchorRule, right: AnchorRule): boolean {
-  return (
-    left.source === right.source &&
-    left.manualValue === right.manualValue
-  );
+export function sameAnchorRule(left: AnchorRule, right: AnchorRule): boolean {
+  if (left.source !== right.source) return false;
+  return left.source !== "manual" || left.manualValue === right.manualValue;
+}
+
+export function allocateBarCountsByPosition(
+  total: number,
+  zones: ReadonlyArray<
+    Pick<BarLengthZoneInput, "perpendicularStartMm" | "perpendicularEndMm">
+  >,
+  calculationWidthMm: number,
+): number[] {
+  const counts = zones.map(() => 0);
+  if (
+    !Number.isSafeInteger(total) ||
+    total <= 0 ||
+    !Number.isFinite(calculationWidthMm) ||
+    calculationWidthMm <= 0 ||
+    zones.length === 0
+  ) {
+    return counts;
+  }
+
+  const positionsBefore = (boundary: number): number => {
+    const ratio = boundary / calculationWidthMm;
+    if (!Number.isFinite(ratio)) return ratio > 0 ? total : 0;
+    return Math.min(
+      total,
+      Math.max(0, Math.ceil(total * ratio - 0.5)),
+    );
+  };
+  zones.forEach((zone, index) => {
+    const startCount = positionsBefore(zone.perpendicularStartMm);
+    const endCount =
+      index === zones.length - 1
+        ? total
+        : positionsBefore(zone.perpendicularEndMm);
+    counts[index] = Math.max(0, endCount - startCount);
+  });
+  return counts;
 }
 
 function mergeLengthZones(zones: BarLengthZoneInput[]): BarLengthZoneInput[] {
@@ -531,11 +564,10 @@ function createBarResult(input: CreateBarInput): BarResult {
           },
         ],
   );
-  const variantCounts = allocateLargestRemainder(
+  const variantCounts = allocateBarCountsByPosition(
     count,
-    lengthZones.map(
-      (zone) => zone.perpendicularEndMm - zone.perpendicularStartMm,
-    ),
+    lengthZones,
+    input.perpendicularSpan,
   );
   const lengthVariants = lengthZones.map<BarLengthVariant>((zone, index) => {
     const startAnchorSource = zone.anchorRules.start.source;
@@ -689,48 +721,6 @@ function allEqual(values: number[]): boolean {
   return values.length > 0 && values.every((value) => value === values[0]);
 }
 
-function anchorRulesEquivalent(a: AnchorRule, b: AnchorRule): boolean {
-  return a.source === b.source && a.manualValue === b.manualValue;
-}
-
-export function haveConsistentPerpendicularTopAnchors(
-  state: SlabCalculatorState,
-  throughDirection: Exclude<ThroughDirection, "none">,
-): boolean {
-  const perpendicularDirection: BarDirection =
-    throughDirection === "x" ? "y" : "x";
-  const mode = state.top[perpendicularDirection].extraMode ?? "both";
-  const first = state.slab.rooms[0]?.anchors.top[perpendicularDirection];
-  if (!first) return false;
-  const firstStart = resolveTopAnchor(
-    first.start,
-    state.slab,
-    shouldApplyTopExtra(mode, "start"),
-  );
-  const firstEnd = resolveTopAnchor(
-    first.end,
-    state.slab,
-    shouldApplyTopExtra(mode, "end"),
-  );
-  return state.slab.rooms.every((room) => {
-    const rules = room.anchors.top[perpendicularDirection];
-    return (
-      anchorRulesEquivalent(rules.start, first.start) &&
-      anchorRulesEquivalent(rules.end, first.end) &&
-      resolveTopAnchor(
-        rules.start,
-        state.slab,
-        shouldApplyTopExtra(mode, "start"),
-      ) === firstStart &&
-      resolveTopAnchor(
-        rules.end,
-        state.slab,
-        shouldApplyTopExtra(mode, "end"),
-      ) === firstEnd
-    );
-  });
-}
-
 export function calculateTopThroughWall(
   state: SlabCalculatorState,
 ): ThroughWallResult | null {
@@ -742,7 +732,6 @@ export function calculateTopThroughWall(
   const isX = direction === "x";
   const perpendicularSpans = slab.rooms.map((room) => (isX ? room.spanY : room.spanX));
   if (!allEqual(perpendicularSpans)) return null;
-  if (!haveConsistentPerpendicularTopAnchors(state, direction)) return null;
 
   const netSpanTotal = slab.rooms.reduce(
     (sum, room) => sum + (isX ? room.spanX : room.spanY),
@@ -752,9 +741,6 @@ export function calculateTopThroughWall(
     (slab.rooms.length - 1) * slab.innerWallThickness;
   const commonPerpendicularSpan = perpendicularSpans[0];
   const throughSettings = isX ? top.x : top.y;
-  const perpendicularDirection: BarDirection = isX ? "y" : "x";
-  const perpendicularSettings = top[perpendicularDirection];
-  const perpendicularAnchors = slab.rooms[0].anchors.top[perpendicularDirection];
   const scopeName = `${slab.rooms[0].name}—${slab.rooms.at(-1)?.name ?? "通墙路径"}`;
 
   const throughBar = createBarResult({
@@ -773,29 +759,12 @@ export function calculateTopThroughWall(
     anchorRules: { start: through.startAnchor, end: through.endAnchor },
     topExtraMode: through.extraMode ?? "both",
   });
-  const perpendicularBar = createBarResult({
-    id: `through-area-top-${perpendicularDirection}`,
-    scopeId: `through-area-${perpendicularDirection}`,
-    scopeType: "through",
-    scopeName: `${scopeName}组合区`,
-    layer: "top",
-    direction: perpendicularDirection,
-    throughWall: false,
-    settings: perpendicularSettings,
-    runSpan: commonPerpendicularSpan,
-    perpendicularSpan: netSpanTotal,
-    slab,
-    anchorRules: perpendicularAnchors,
-    topExtraMode: perpendicularSettings.extraMode ?? "both",
-  });
-
   return {
     direction,
     roomCount: slab.rooms.length,
     netSpanTotal,
     intermediateWallTotal,
     throughBar,
-    perpendicularBar,
   };
 }
 
@@ -907,18 +876,14 @@ export function validateSlabCalculator(input: SlabCalculatorState): string[] {
       if (
         slab.arrangement === state.through.direction &&
         slab.rooms.length >= 2 &&
-        (!allEqual(
+        !allEqual(
           slab.rooms.map((room) =>
             state.through.direction === "x" ? room.spanY : room.spanX,
           ),
-        ) ||
-          !haveConsistentPerpendicularTopAnchors(
-            state,
-            state.through.direction,
-          ))
+        )
       ) {
         errors.push(
-          "通墙组合区垂直方向尺寸或锚固不一致，请统一设置或拆分连续区。",
+          "通墙组合区垂直净尺寸不一致，当前整体通墙模式不可形成。",
         );
       }
     }
@@ -1050,6 +1015,24 @@ export function calculateSlabResults(input: SlabCalculatorState): SlabCalculatio
     calculateRoomBar(room, "bottom", "x", state.bottom.x, state.slab),
     calculateRoomBar(room, "bottom", "y", state.bottom.y, state.slab),
   ]);
+  const normalTopResults = state.slab.rooms.flatMap((room) => [
+    calculateRoomBar(
+      room,
+      "top",
+      "x",
+      state.top.x,
+      state.slab,
+      state.top.x.extraMode ?? "both",
+    ),
+    calculateRoomBar(
+      room,
+      "top",
+      "y",
+      state.top.y,
+      state.slab,
+      state.top.y.extraMode ?? "both",
+    ),
+  ]);
   const throughWall = calculateTopThroughWall(state);
   if (state.through.enabled && !throughWall) {
     return {
@@ -1061,25 +1044,13 @@ export function calculateSlabResults(input: SlabCalculatorState): SlabCalculatio
     };
   }
   const topResults = throughWall
-    ? [throughWall.throughBar, throughWall.perpendicularBar]
-    : state.slab.rooms.flatMap((room) => [
-        calculateRoomBar(
-          room,
-          "top",
-          "x",
-          state.top.x,
-          state.slab,
-          state.top.x.extraMode ?? "both",
+    ? [
+        throughWall.throughBar,
+        ...normalTopResults.filter(
+          (result) => result.direction !== throughWall.direction,
         ),
-        calculateRoomBar(
-          room,
-          "top",
-          "y",
-          state.top.y,
-          state.slab,
-          state.top.y.extraMode ?? "both",
-        ),
-      ]);
+      ]
+    : normalTopResults;
   const results = [...bottomResults, ...topResults];
   if (!hasSafeCalculatedResults(results)) {
     return {

@@ -55,6 +55,7 @@ import {
 } from "@/lib/slab-room-topology";
 import {
   displayNumberDraft,
+  hasInvalidNumberDrafts,
   numberValueToDraft,
   parseNumberDraft,
 } from "@/lib/number-field-draft";
@@ -94,6 +95,7 @@ function NumberField({
       <span className={labelClass}>{label}</span>
       <div className="relative">
         <input
+          data-calculator-number-input="true"
           type="number"
           step={step}
           value={displayedValue}
@@ -453,6 +455,7 @@ export function CalculatorClient() {
   const allowNavigationRef = useRef(false);
   const skipNextDraftSaveRef = useRef(false);
   const errorRef = useRef<HTMLDivElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -501,6 +504,15 @@ export function CalculatorClient() {
   useEffect(() => {
     if (status !== "invalid") return;
     const timer = window.setTimeout(() => {
+      const numberDrafts = formRef.current
+        ? Array.from(
+            formRef.current.querySelectorAll<HTMLInputElement>(
+              'input[data-calculator-number-input="true"]',
+            ),
+            (input) => input.value,
+          )
+        : [];
+      if (hasInvalidNumberDrafts(numberDrafts)) return;
       const nextErrors = validateSlabCalculator(state);
       setErrors(nextErrors);
       if (nextErrors.length === 0) setStatus("dirty");
@@ -559,6 +571,11 @@ export function CalculatorClient() {
     if (arrangement === state.slab.arrangement) return;
     if (arrangement === "single" && state.slab.rooms.length > 1 && !window.confirm("切换为单房间将移除其余房间，是否继续？")) return;
     updateBusinessState((current) => {
+      const throughDirectionChanged =
+        current.through.enabled &&
+        current.slab.arrangement !== "single" &&
+        arrangement !== "single" &&
+        current.slab.arrangement !== arrangement;
       let rooms = current.slab.rooms.length > 0 ? current.slab.rooms : [
         { id: "room-a", name: "房间A", spanX: 4200, spanY: 3600, anchors: createDefaultRoomAnchorRules(arrangement, 0, 1) },
       ];
@@ -581,6 +598,12 @@ export function CalculatorClient() {
           ...current.through,
           enabled: arrangement === "single" ? false : current.through.enabled,
           direction: arrangement === "single" ? "none" : current.through.enabled ? arrangement : "none",
+          startAnchor: throughDirectionChanged
+            ? { source: "outer-wall", manualValue: 0, origin: "auto" }
+            : current.through.startAnchor,
+          endAnchor: throughDirectionChanged
+            ? { source: "outer-wall", manualValue: 0, origin: "auto" }
+            : current.through.endAnchor,
         },
       };
     });
@@ -654,6 +677,26 @@ export function CalculatorClient() {
 
   const submitCalculation = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const numberDrafts = Array.from(
+      event.currentTarget.querySelectorAll<HTMLInputElement>(
+        'input[data-calculator-number-input="true"]',
+      ),
+      (input) => input.value,
+    );
+    if (hasInvalidNumberDrafts(numberDrafts)) {
+      localStorage.removeItem(RESULT_KEY);
+      setErrors(["存在空白或无效的数字输入，请完成当前输入后再计算。"]);
+      setUi((current) => ({
+        ...current,
+        openSections: { base: true, bottom: true, top: true, through: true },
+      }));
+      setStatus("invalid");
+      window.setTimeout(
+        () => errorRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }),
+        0,
+      );
+      return;
+    }
     setStatus("calculating");
     const normalized = normalizeSlabCalculatorState(state);
     const calculation = calculateSlabResults(normalized);
@@ -709,6 +752,7 @@ export function CalculatorClient() {
         </header>
 
         <form
+          ref={formRef}
           noValidate
           onSubmit={submitCalculation}
           onKeyDown={(event: KeyboardEvent<HTMLFormElement>) => {
@@ -773,7 +817,7 @@ export function CalculatorClient() {
                       <AnchorRuleField label={state.through.direction === "x" ? "最东端" : "最北端"} rule={state.through.endAnchor} layer="top" state={state} applyTopExtra={shouldApplyTopExtra(state.through.extraMode, "end")} onChange={(endAnchor) => updateBusinessState((current) => ({ ...current, through: { ...current.through, endAnchor: { ...endAnchor, origin: "user" } } }))} onRestoreAuto={() => updateBusinessState((current) => ({ ...current, through: { ...current.through, endAnchor: { source: "outer-wall", manualValue: 0, origin: "auto" } } }))} />
                     </div>
                     <p className="text-xs leading-5 text-amber-900">面筋增加值仅作用于选中位置的内墙锚固；外墙锚固和手动锚固均不增加。</p>
-                    <p className="text-xs leading-5 text-amber-900">通墙校验会检查垂直净尺寸及各房间垂直面筋锚固一致性；失败时不回退生成普通面筋正式结果。</p>
+                    <p className="text-xs leading-5 text-amber-900">通墙只替换当前方向的普通面筋；垂直方向面筋仍按各房间独立计算。通墙校验会检查垂直净尺寸一致性。</p>
                   </div>
                 )}
               </CollapsibleSection>

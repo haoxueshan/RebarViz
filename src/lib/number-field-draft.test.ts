@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   displayNumberDraft,
+  hasInvalidNumberDrafts,
   numberValueToDraft,
   parseNumberDraft,
 } from "./number-field-draft";
@@ -40,5 +41,11 @@ describe("计算器数字输入草稿", () => {
     expect(numberValueToDraft(4200)).toBe("4200");
     expect(numberValueToDraft(3600)).toBe("3600");
     expect(numberValueToDraft(Number.NaN)).toBe("");
+  });
+
+  it("空白或非法数字草稿会阻止正式提交，合法草稿允许提交", () => {
+    expect(hasInvalidNumberDrafts(["4200", "", "200"])).toBe(true);
+    expect(hasInvalidNumberDrafts(["4200", "not-a-number", "200"])).toBe(true);
+    expect(hasInvalidNumberDrafts(["4200", "3600", "200"])).toBe(false);
   });
 });

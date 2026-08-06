@@ -14,3 +14,7 @@ export function displayNumberDraft(
 ): string {
   return draft === null ? numberValueToDraft(value) : draft;
 }
+
+export function hasInvalidNumberDrafts(drafts: readonly string[]): boolean {
+  return drafts.some((draft) => parseNumberDraft(draft) === null);
+}

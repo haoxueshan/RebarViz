@@ -273,7 +273,7 @@ export function SlabPrintDialog({
                   <button type="button" onClick={() => replaceSelection(allResults.filter((result) => result.layer === "top"))} className="min-h-11 rounded-lg border border-slate-300 px-3 text-sm font-medium hover:bg-slate-50">仅面筋</button>
                   <button type="button" onClick={() => replaceSelection(allResults.filter((result) => result.direction === "x"))} className="min-h-11 rounded-lg border border-slate-300 px-3 text-sm font-medium hover:bg-slate-50">仅东西向</button>
                   <button type="button" onClick={() => replaceSelection(allResults.filter((result) => result.direction === "y"))} className="min-h-11 rounded-lg border border-slate-300 px-3 text-sm font-medium hover:bg-slate-50">仅南北向</button>
-                  <button type="button" onClick={() => replaceSelection(allResults.filter((result) => result.scopeType === "through"))} className="min-h-11 rounded-lg border border-slate-300 px-3 text-sm font-medium hover:bg-slate-50">仅通墙组合区</button>
+                  <button type="button" onClick={() => replaceSelection(allResults.filter((result) => result.throughWall))} className="min-h-11 rounded-lg border border-slate-300 px-3 text-sm font-medium hover:bg-slate-50">仅通墙组合区</button>
                 </div>
               </div>
 

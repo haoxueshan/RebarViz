@@ -10,7 +10,6 @@ import {
   type SlabRoom,
 } from "./slab-calculator";
 import {
-  allocateRoomRepresentativeCounts,
   allocateVariantRepresentativeCounts,
   buildWorldLayout,
   buildSlabDiagramScene,
@@ -627,51 +626,58 @@ describe("锚固、增加段与通墙选择", () => {
     expect(group200.anchorLabel).toContain("200mm");
   });
 
-  it("通墙方向筋和垂直组合筋可通过ID分别显示", () => {
+  it("通墙方向筋和房间垂直普通面筋可通过ID分别显示", () => {
     const state = xThroughState();
     const calculation = calculateSlabResults(state);
     const through = calculation.throughWall!;
     const throughOnly = buildSlabDiagramScene(state, calculation, {
       visibleResultIds: new Set([through.throughBar.id]),
     });
+    const roomTopY = calculation.results.find(
+      (result) =>
+        result.roomId === "room-1" &&
+        result.layer === "top" &&
+        result.direction === "y",
+    )!;
     const perpendicularOnly = buildSlabDiagramScene(state, calculation, {
-      visibleResultIds: new Set([through.perpendicularBar.id]),
+      visibleResultIds: new Set([roomTopY.id]),
     });
 
     expect(throughOnly.barGroups.map((group) => group.resultId)).toEqual([
       through.throughBar.id,
     ]);
     expect(perpendicularOnly.barGroups.map((group) => group.resultId)).toEqual([
-      through.perpendicularBar.id,
+      roomTopY.id,
     ]);
   });
 
-  it("组合区垂直筋按各房间净跨分布且避开中间墙", () => {
+  it("垂直普通面筋按房间独立绘制且不穿过中间墙", () => {
     const state = xThroughState([
       [3000, 3600],
       [6000, 3600],
     ]);
     const calculation = calculateSlabResults(state);
-    const perpendicular = calculation.throughWall!.perpendicularBar;
+    const perpendicular = calculation.results.filter(
+      (result) => result.layer === "top" && result.direction === "y",
+    );
     const scene = buildSlabDiagramScene(state, calculation, {
-      visibleResultIds: new Set([perpendicular.id]),
+      visibleResultIds: new Set(perpendicular.map((result) => result.id)),
       maxLinesPerResult: 5,
     });
     const innerWall = scene.walls.find((wall) => wall.kind === "inner")!;
-    const xCoordinates = scene.barGroups[0].netSegments.map(
-      (segment) => segment.start.x,
+    const xCoordinates = scene.barGroups.flatMap((group) =>
+      group.netSegments.map((segment) => segment.start.x),
     );
 
-    expect(xCoordinates).toHaveLength(5);
+    expect(scene.barGroups).toHaveLength(2);
+    expect(xCoordinates).toHaveLength(10);
     expect(
       xCoordinates.every(
         (x) => x < innerWall.rect.x || x > innerWall.rect.x + innerWall.rect.width,
       ),
     ).toBe(true);
-    expect(xCoordinates.filter((x) => x < innerWall.rect.x).length).toBe(2);
-    expect(xCoordinates.filter((x) => x > innerWall.rect.x + innerWall.rect.width).length).toBe(3);
-    const layout = buildWorldLayout(state);
-    expect(allocateRoomRepresentativeCounts(layout.rooms, "x", 5)).toEqual([2, 3]);
+    expect(xCoordinates.filter((x) => x < innerWall.rect.x).length).toBe(5);
+    expect(xCoordinates.filter((x) => x > innerWall.rect.x + innerWall.rect.width).length).toBe(5);
   });
 
   it("长手动锚固和增加段进入完整边界且投影后都留在画布内", () => {

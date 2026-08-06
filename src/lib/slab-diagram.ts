@@ -740,45 +740,6 @@ function throughWorldLines(
   );
 }
 
-export function allocateRoomRepresentativeCounts(
-  rooms: readonly WorldRoom[],
-  throughDirection: BarDirection,
-  total: number,
-): number[] {
-  return allocateLargestRemainder(
-    total,
-    rooms.map((room) => throughDirection === "x" ? room.rect.width : room.rect.height),
-  );
-}
-
-function perpendicularWorldLines(
-  result: BarResult,
-  throughDirection: BarDirection,
-  rooms: readonly WorldRoom[],
-  count: number,
-): WorldBarLine[] {
-  const variant = result.lengthVariants[0];
-  if (!variant) return [];
-  const roomCounts = allocateRoomRepresentativeCounts(rooms, throughDirection, count);
-  return rooms.flatMap((room, roomIndex) =>
-    representativeFractions(roomCounts[roomIndex] ?? 0, result.layer).map((fraction) =>
-      result.direction === "y"
-        ? {
-            start: { x: room.rect.x + room.rect.width * fraction, y: room.rect.y },
-            end: { x: room.rect.x + room.rect.width * fraction, y: room.rect.y + room.rect.height },
-            variant,
-            variantIndex: 0,
-          }
-        : {
-            start: { x: room.rect.x, y: room.rect.y + room.rect.height * fraction },
-            end: { x: room.rect.x + room.rect.width, y: room.rect.y + room.rect.height * fraction },
-            variant,
-            variantIndex: 0,
-          },
-    ),
-  );
-}
-
 function boundaryThickness(source: AnchorSource, layout: WorldLayout): number {
   return source === "inner-wall" ? layout.innerWall : layout.outerWall;
 }
@@ -852,9 +813,7 @@ function buildWorldBarGroup(
   const layerLabel = result.layer === "bottom" ? "地筋" : "面筋";
   const typeLabel = result.throughWall
     ? `${directionLabel(result.direction)}通墙筋`
-    : result.scopeType === "through"
-      ? `${directionLabel(result.direction)}${layerLabel}·组合区`
-      : `${directionLabel(result.direction)}${layerLabel}`;
+    : `${directionLabel(result.direction)}${layerLabel}`;
   const variants = result.lengthVariants.map<SlabDiagramVariantLegend>((variant, index) => ({
     id: variant.id,
     label: result.lengthMode === "zoned" ? `${number}-${String.fromCharCode(65 + index)}` : number,
@@ -930,8 +889,6 @@ export function buildWorldBarGroups(
       if (room) lines = normalWorldLines(result, room, variantAllocations);
     } else if (throughWall && result.id === throughWall.throughBar.id) {
       lines = throughWorldLines(result, layout.rooms, totalRepresentatives);
-    } else if (throughWall && result.id === throughWall.perpendicularBar.id) {
-      lines = perpendicularWorldLines(result, throughWall.direction, layout.rooms, totalRepresentatives);
     }
     return lines.length > 0
       ? [buildWorldBarGroup(

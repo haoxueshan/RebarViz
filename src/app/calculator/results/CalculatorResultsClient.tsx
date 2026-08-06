@@ -364,7 +364,7 @@ export function CalculatorResultsClient() {
                 <p>通墙摘要：{directionLabel(calculation.throughWall.direction)} · 净尺寸{calculation.throughWall.netSpanTotal}mm · 中间墙{calculation.throughWall.intermediateWallTotal}mm</p>
                 <p>单根长度：{calculation.throughWall.netSpanTotal} + {calculation.throughWall.intermediateWallTotal} + {calculation.throughWall.throughBar.startAnchor} + {calculation.throughWall.throughBar.endAnchor} = {(calculation.throughWall.throughBar.singleLengthM * 1000).toFixed(0)}mm</p>
                 <p>通墙方向根数：{formatCountFormula(calculation.throughWall.throughBar.calculationWidthMm, calculation.throughWall.throughBar.spacing, record.inputSnapshot.slab.countMode)} = {calculation.throughWall.throughBar.count}根</p>
-                <p>垂直方向根数：{formatCountFormula(calculation.throughWall.perpendicularBar.calculationWidthMm, calculation.throughWall.perpendicularBar.spacing, record.inputSnapshot.slab.countMode)} = {calculation.throughWall.perpendicularBar.count}根（不计中间墙）</p>
+                <p>垂直方向普通面筋仍按各房间独立计算，详见各房间面筋结果。</p>
               </div>
             )}
         </section>

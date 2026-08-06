@@ -72,15 +72,20 @@ describe("正式计算记录", () => {
       ...record,
       algorithmVersion: "slab-calculator-2026-08-v3",
     };
+    const legacyPerpendicularBarAlgorithm = {
+      ...record,
+      algorithmVersion: "slab-calculator-2026-08-v4",
+    };
     expect(parseCalculationRecord(JSON.stringify(wrongSchema))).toBeNull();
     expect(parseCalculationRecord(JSON.stringify(wrongAlgorithm))).toBeNull();
     expect(parseCalculationRecord(JSON.stringify(legacyCoverAlgorithm))).toBeNull();
     expect(parseCalculationRecord(JSON.stringify(legacyUniformAnchorAlgorithm))).toBeNull();
     expect(parseCalculationRecord(JSON.stringify(legacyOuterWallExtraAlgorithm))).toBeNull();
+    expect(parseCalculationRecord(JSON.stringify(legacyPerpendicularBarAlgorithm))).toBeNull();
     expect(parseCalculationRecord("not-json")).toBeNull();
   });
 
-  it("v4分区结果可恢复，缺失或篡改分区的正式记录被拒绝", () => {
+  it("v5分区结果可恢复，缺失或篡改分区的正式记录被拒绝", () => {
     const state = xRooms(false);
     state.slab.rooms[0].spanY = 3000;
     state.slab.rooms[1].spanY = 6000;
@@ -149,11 +154,19 @@ describe("结果分组、筛选和分页", () => {
     const record = createCalculationRecord(state, calculateSlabResults(state));
     const groups = createResultGroups(record);
 
-    expect(groups.map((group) => group.scopeType)).toEqual(["through", "room", "room"]);
-    expect(groups[0].results).toHaveLength(2);
+    expect(groups.map((group) => group.scopeType)).toEqual([
+      "through",
+      "room",
+      "room",
+      "room",
+      "room",
+    ]);
+    expect(groups[0].results).toHaveLength(1);
     expect(groups[1].roomId).toBe("room-a");
     expect(groups[2].roomId).toBe("room-b");
-    expect(new Set(groups.map((group) => group.scopeId)).size).toBe(3);
+    expect(groups[3].roomId).toBe("room-a");
+    expect(groups[4].roomId).toBe("room-b");
+    expect(new Set(groups.map((group) => group.scopeId)).size).toBe(5);
   });
 
   it("普通结果按房间和层分组，分页不会拆开钢筋行", () => {
@@ -175,11 +188,12 @@ describe("结果分组、筛选和分页", () => {
     const groups = createResultGroups(record);
     const topOnly = filterResultGroups(groups, { layer: "top", direction: "all", through: "all" });
 
-    expect(topOnly).toHaveLength(1);
+    expect(topOnly).toHaveLength(3);
+    expect(topOnly.flatMap((group) => group.results)).toHaveLength(3);
     expect(record.calculation.totalWeightKg).toBe(total);
   });
 
-  it("通墙筛选保留整条组合区，不拆掉垂直方向结果", () => {
+  it("通墙筛选只保留真正通墙筋，普通筛选保留房间钢筋", () => {
     const state = xRooms(true);
     const record = createCalculationRecord(state, calculateSlabResults(state));
     const throughOnly = filterResultGroups(createResultGroups(record), {
@@ -190,7 +204,19 @@ describe("结果分组、筛选和分页", () => {
 
     expect(throughOnly).toHaveLength(1);
     expect(throughOnly[0].scopeType).toBe("through");
-    expect(throughOnly[0].results).toHaveLength(2);
+    expect(throughOnly[0].results).toHaveLength(1);
+    expect(throughOnly[0].results[0].throughWall).toBe(true);
+
+    const normalOnly = filterResultGroups(createResultGroups(record), {
+      layer: "all",
+      direction: "all",
+      through: "normal",
+    });
+    expect(normalOnly).toHaveLength(4);
+    expect(normalOnly.flatMap((group) => group.results)).toHaveLength(6);
+    expect(
+      normalOnly.flatMap((group) => group.results).every((result) => !result.throughWall),
+    ).toBe(true);
   });
 });
 
