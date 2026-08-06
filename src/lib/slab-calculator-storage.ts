@@ -128,11 +128,21 @@ export const DEFAULT_SLAB_PRINT_SECTIONS: SlabPrintSections = {
   calculationNotes: true,
 };
 
+export const SITE_SLAB_PRINT_SECTIONS: SlabPrintSections = {
+  weightSummary: true,
+  parameters: false,
+  roomDimensions: false,
+  diagram: true,
+  specificationSummary: true,
+  resultDetails: true,
+  calculationNotes: false,
+};
+
 export const DEFAULT_SLAB_PRINT_OPTIONS: SlabPrintOptions = {
   rangeMode: "all",
   selectedResultIds: [],
-  detailMode: "full",
-  sections: { ...DEFAULT_SLAB_PRINT_SECTIONS },
+  detailMode: "compact",
+  sections: { ...SITE_SLAB_PRINT_SECTIONS },
 };
 
 const RESULT_PRINT_SETTINGS_SCHEMA_VERSION = 1;
@@ -148,7 +158,7 @@ function copyPrintSections(sections: SlabPrintSections): SlabPrintSections {
 function defaultPrintPreferences(): SlabPrintPreferences {
   return {
     detailMode: DEFAULT_SLAB_PRINT_OPTIONS.detailMode,
-    sections: copyPrintSections(DEFAULT_SLAB_PRINT_SECTIONS),
+    sections: copyPrintSections(SITE_SLAB_PRINT_SECTIONS),
   };
 }
 
@@ -448,33 +458,30 @@ export function createResultGroups(
   }
 
   inputSnapshot.slab.rooms.forEach((room) => {
-    const results = calculation.results.filter(
+    const bottomResults = calculation.results.filter(
       (result) => result.roomId === room.id && result.layer === "bottom",
     );
-    if (results.length > 0) {
+    if (bottomResults.length > 0) {
       groups.push({
         scopeId: `${room.id}:bottom`,
         scopeType: "room",
         roomId: room.id,
         title: `${room.name} · 地筋`,
-        results,
-        subtotalWeightKg: subtotal(results),
+        results: bottomResults,
+        subtotalWeightKg: subtotal(bottomResults),
       });
     }
-  });
-
-  inputSnapshot.slab.rooms.forEach((room) => {
-    const results = calculation.results.filter(
+    const topResults = calculation.results.filter(
       (result) => result.roomId === room.id && result.layer === "top",
     );
-    if (results.length > 0) {
+    if (topResults.length > 0) {
       groups.push({
         scopeId: `${room.id}:top`,
         scopeType: "room",
         roomId: room.id,
         title: `${room.name} · 面筋`,
-        results,
-        subtotalWeightKg: subtotal(results),
+        results: topResults,
+        subtotalWeightKg: subtotal(topResults),
       });
     }
   });

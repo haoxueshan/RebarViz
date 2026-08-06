@@ -73,7 +73,7 @@
   .reportMeta {
     display: grid;
     min-width: 138mm;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 3mm;
     margin: 0;
   }
@@ -314,7 +314,7 @@
   }
 
   .detailTable {
-    font-size: 7.5pt;
+    font-size: 8.2pt;
   }
 
   .detailTable small {
@@ -329,6 +329,11 @@
     font-weight: 700;
   }
 
+  .subtotalRow {
+    break-before: avoid;
+    page-break-before: avoid;
+  }
+
   .subtotalRow td:first-child {
     text-align: right;
   }
@@ -340,6 +345,11 @@
     font-size: 8.2pt;
   }
 
+  .groupRow {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
   .groupRow small {
     font-size: 7.2pt;
     font-weight: 400;
@@ -347,6 +357,14 @@
 
   .variantRow td {
     background: #fafafa;
+    font-size: 7.7pt;
+  }
+
+  .detailRow td {
+    padding: 1.2mm 2mm;
+    background: #f7f7f7;
+    color: #333;
+    font-size: 7.8pt;
   }
 
   .variantRow td:first-child,
@@ -354,24 +372,20 @@
     padding-left: 2.5mm;
   }
 
-  .fullDetailTable .colFigure { width: 5%; }
-  .fullDetailTable .colScope { width: 12%; }
-  .fullDetailTable .colType { width: 8%; }
-  .fullDetailTable .colSpec { width: 7%; }
-  .fullDetailTable .colCount { width: 7%; }
-  .fullDetailTable .colRun { width: 6%; }
-  .fullDetailTable .colAnchor { width: 13%; }
-  .fullDetailTable .colExtra { width: 10%; }
-  .fullDetailTable .colLength { width: 12%; }
-  .fullDetailTable .colWeight { width: 7%; }
-
-  .compactDetailTable .colFigure { width: 6%; }
+  .fullDetailTable .colFigure,
+  .compactDetailTable .colFigure { width: 7%; }
+  .fullDetailTable .colScope,
   .compactDetailTable .colScope { width: 19%; }
-  .compactDetailTable .colType { width: 13%; }
+  .fullDetailTable .colType,
+  .compactDetailTable .colType { width: 15%; }
+  .fullDetailTable .colSpec,
   .compactDetailTable .colSpec { width: 10%; }
+  .fullDetailTable .colCount,
   .compactDetailTable .colCount { width: 9%; }
-  .compactDetailTable .colLength { width: 15%; }
-  .compactDetailTable .colWeight { width: 13%; }
+  .fullDetailTable .colLength,
+  .compactDetailTable .colLength { width: 13%; }
+  .fullDetailTable .colWeight,
+  .compactDetailTable .colWeight { width: 14%; }
 
   .notes {
     break-inside: avoid;

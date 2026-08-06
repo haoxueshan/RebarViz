@@ -22,6 +22,11 @@ import type {
   SlabPrintSections,
   StoredCalculationRecord,
 } from "@/lib/slab-calculator-storage";
+import {
+  applyPrintPreset,
+  detectPrintPreset,
+  type SlabPrintPreset,
+} from "@/lib/slab-calculator-ui";
 
 type SlabPrintDialogProps = {
   open: boolean;
@@ -133,6 +138,7 @@ export function SlabPrintDialog({
   );
   const hasSection = hasSelectedPrintSection(options.sections);
   const canPrint = canPrintSlabReport(model, options);
+  const activePreset = detectPrintPreset(options);
 
   if (!open) return null;
 
@@ -230,6 +236,29 @@ export function SlabPrintDialog({
 
         <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-4 py-5 sm:px-6">
           <section>
+            <h3 className="font-semibold text-slate-900">打印模板</h3>
+            <div className="mt-3 grid gap-3 sm:grid-cols-3">
+              {([
+                ["site", "现场料单", "示意图、规格汇总和简洁明细"],
+                ["full", "完整计算报告", "全部章节和完整计算依据"],
+                ["custom", "自定义", "手动组合章节与明细模式"],
+              ] as Array<[SlabPrintPreset, string, string]>).map(([preset, label, description]) => (
+                <button
+                  key={preset}
+                  type="button"
+                  disabled={preset === "custom"}
+                  aria-pressed={activePreset === preset}
+                  onClick={() => preset !== "custom" && onChange(applyPrintPreset(options, preset))}
+                  className={`min-h-16 rounded-xl border p-3 text-left ${activePreset === preset ? "border-blue-600 bg-blue-50" : "border-slate-200 bg-white"} disabled:cursor-default`}
+                >
+                  <span className="block text-sm font-semibold text-slate-900">{label}</span>
+                  <span className="mt-1 block text-xs text-slate-500">{description}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section>
             <h3 className="font-semibold text-slate-900">打印范围</h3>
             <div className="mt-3 grid gap-3 md:grid-cols-3">
               {([
@@ -266,14 +295,14 @@ export function SlabPrintDialog({
             <section>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <h3 className="font-semibold text-slate-900">自定义数据选择</h3>
-                <div className="flex flex-wrap gap-2">
+                <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
                   <button type="button" onClick={() => replaceSelection(allResults)} className="min-h-11 rounded-lg border border-slate-300 px-3 text-sm font-medium hover:bg-slate-50">全选</button>
                   <button type="button" onClick={() => replaceSelection([])} className="min-h-11 rounded-lg border border-slate-300 px-3 text-sm font-medium hover:bg-slate-50">清空</button>
                   <button type="button" onClick={() => replaceSelection(allResults.filter((result) => result.layer === "bottom"))} className="min-h-11 rounded-lg border border-slate-300 px-3 text-sm font-medium hover:bg-slate-50">仅地筋</button>
                   <button type="button" onClick={() => replaceSelection(allResults.filter((result) => result.layer === "top"))} className="min-h-11 rounded-lg border border-slate-300 px-3 text-sm font-medium hover:bg-slate-50">仅面筋</button>
                   <button type="button" onClick={() => replaceSelection(allResults.filter((result) => result.direction === "x"))} className="min-h-11 rounded-lg border border-slate-300 px-3 text-sm font-medium hover:bg-slate-50">仅东西向</button>
                   <button type="button" onClick={() => replaceSelection(allResults.filter((result) => result.direction === "y"))} className="min-h-11 rounded-lg border border-slate-300 px-3 text-sm font-medium hover:bg-slate-50">仅南北向</button>
-                  <button type="button" onClick={() => replaceSelection(allResults.filter((result) => result.throughWall))} className="min-h-11 rounded-lg border border-slate-300 px-3 text-sm font-medium hover:bg-slate-50">仅通墙组合区</button>
+                  <button type="button" onClick={() => replaceSelection(allResults.filter((result) => result.throughWall))} className="min-h-11 rounded-lg border border-slate-300 px-3 text-sm font-medium hover:bg-slate-50">仅通墙筋</button>
                 </div>
               </div>
 

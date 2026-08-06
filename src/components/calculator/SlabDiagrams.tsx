@@ -287,7 +287,7 @@ export function SlabDiagramResultLegend({ scene }: { scene: SlabDiagramScene }) 
           {scene.selectionContext ? "当前筛选或选择没有钢筋结果，图中仅保留房间与墙体。" : "没有可绘制的正式钢筋结果。"}
         </div>
       ) : scene.barGroups.map((group) => (
-        <details key={group.resultId} data-result-id={group.resultId} className="rounded-lg border border-slate-200 bg-white" open={group.lengthMode === "zoned"}>
+        <details key={group.resultId} data-result-id={group.resultId} className="rounded-lg border border-slate-200 bg-white">
           <summary className="cursor-pointer list-none px-3 py-2 font-semibold text-slate-900">
             <span className="mr-2 inline-flex min-w-10 justify-center rounded bg-slate-900 px-2 py-0.5 text-xs text-white">{group.resultNumber}</span>
             {group.scopeName} · {group.specificationLabel} · {group.countLabel}
@@ -339,9 +339,7 @@ export function SlabLayoutDiagram({ state }: { state: SlabCalculatorState }) {
   const scene = buildSlabDiagramScene(state);
   return (
     <div data-testid="slab-layout-diagram" className="rounded-xl border border-slate-200 bg-white">
-      <div className="overflow-x-auto">
-        <div className="min-w-[720px]"><SlabDiagramCanvas scene={scene} ariaLabel="房间、墙体与方向布局预览" /></div>
-      </div>
+      <div className="w-full"><SlabDiagramCanvas scene={scene} ariaLabel="房间、墙体与方向布局预览" /></div>
       <SceneNotes scene={scene} preview />
     </div>
   );
@@ -363,9 +361,7 @@ export function SlabResultsDiagram({
   const scene = buildSlabDiagramScene(state, calculation, { visibleResultIds, selectionContext });
   return (
     <div className="rounded-xl border border-slate-200 bg-white">
-      <div className="overflow-x-auto">
-        <div className="min-w-[720px]"><SlabDiagramCanvas scene={scene} /></div>
-      </div>
+      <div className="w-full"><SlabDiagramCanvas scene={scene} /></div>
       <SlabDiagramKey />
       {showNote && <SceneNotes scene={scene} preview={false} />}
       <SlabDiagramResultLegend scene={scene} />

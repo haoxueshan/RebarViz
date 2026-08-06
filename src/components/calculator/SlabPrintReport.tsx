@@ -95,20 +95,16 @@ export function SlabPrintReport({
             <dd>{formatDateTime(record.calculatedAt)}</dd>
           </div>
           <div>
-            <dt>打印时间</dt>
-            <dd>{formatDateTime(printedAt)}</dd>
-          </div>
-          <div>
-            <dt>算法版本</dt>
-            <dd>{record.algorithmVersion}</dd>
-          </div>
-          <div>
             <dt>本次打印范围</dt>
             <dd>{rangeSummary}</dd>
           </div>
           <div>
             <dt>选择数量</dt>
             <dd>{model.selectedRowCount}/{model.fullRowCount} 项</dd>
+          </div>
+          <div>
+            <dt>房间数量</dt>
+            <dd>{slab.rooms.length} 间</dd>
           </div>
         </dl>
       </header>
@@ -145,10 +141,8 @@ export function SlabPrintReport({
             <div><dt>外墙厚度</dt><dd>{slab.outerWallThickness} mm</dd></div>
             <div><dt>内墙面筋锚固增加值</dt><dd>{slab.topAnchorExtra} mm</dd></div>
             <div><dt>根数算法</dt><dd>{countModeLabel(slab.countMode)}</dd></div>
-            <div><dt>面筋通墙</dt><dd>{throughWall ? `启用（${directionLabel(throughWall.direction)}）` : "未启用"}</dd></div>
-            <div><dt>通墙方向</dt><dd>{throughWall ? directionLabel(throughWall.direction) : "不适用"}</dd></div>
-            <div><dt>通墙净尺寸合计</dt><dd>{throughWall ? `${throughWall.netSpanTotal} mm` : "不适用"}</dd></div>
-            <div><dt>中间墙厚度合计</dt><dd>{throughWall ? `${throughWall.intermediateWallTotal} mm` : "不适用"}</dd></div>
+            <div><dt>面筋通墙</dt><dd>{throughWall ? directionLabel(throughWall.direction) : "未启用"}</dd></div>
+            <div><dt>通墙净跨 / 中间墙</dt><dd>{throughWall ? `${throughWall.netSpanTotal} / ${throughWall.intermediateWallTotal} mm` : "不适用"}</dd></div>
           </dl>
         </section>
       )}
@@ -159,17 +153,17 @@ export function SlabPrintReport({
           <table className={styles.table}>
             <thead>
               <tr>
-                <th>房间名称</th>
-                <th>房间 ID</th>
+                <th>序号</th>
+                <th>房间</th>
                 <th>东西向净尺寸</th>
                 <th>南北向净尺寸</th>
               </tr>
             </thead>
             <tbody>
-              {slab.rooms.map((room) => (
+              {slab.rooms.map((room, index) => (
                 <tr key={room.id}>
+                  <td>{String(index + 1).padStart(2, "0")}</td>
                   <td>{room.name}</td>
-                  <td>{room.id}</td>
                   <td>{room.spanX} mm</td>
                   <td>{room.spanY} mm</td>
                 </tr>
@@ -256,54 +250,33 @@ export function SlabPrintReport({
             data-testid="slab-print-result-legend"
             className={`${styles.table} ${styles.detailTable} ${options.detailMode === "full" ? styles.fullDetailTable : styles.compactDetailTable}`}
           >
-              {options.detailMode === "full" ? (
-                <colgroup>
-                  <col className={styles.colFigure} />
-                  <col className={styles.colScope} />
-                  <col className={styles.colType} />
-                  <col className={styles.colSpec} />
-                  <col className={styles.colCount} />
-                  <col className={styles.colRun} />
-                  <col className={styles.colAnchor} />
-                  <col className={styles.colAnchor} />
-                  <col className={styles.colExtra} />
-                  <col className={styles.colLength} />
-                  <col className={styles.colWeight} />
-                </colgroup>
-              ) : (
-                <colgroup>
-                  <col className={styles.colFigure} />
-                  <col className={styles.colScope} />
-                  <col className={styles.colType} />
-                  <col className={styles.colSpec} />
-                  <col className={styles.colCount} />
-                  <col className={styles.colLength} />
-                  <col className={styles.colLength} />
-                  <col className={styles.colWeight} />
-                </colgroup>
-              )}
+              <colgroup>
+                <col className={styles.colFigure} />
+                <col className={styles.colScope} />
+                <col className={styles.colType} />
+                <col className={styles.colSpec} />
+                <col className={styles.colCount} />
+                <col className={styles.colLength} />
+                <col className={styles.colLength} />
+                <col className={styles.colWeight} />
+              </colgroup>
               <thead>
                 <tr>
-                  <th>图中编号</th>
-                  <th>房间/组合区与分区范围</th>
+                  <th>编号</th>
+                  <th>房间/范围</th>
                   <th>类型与方向</th>
                   <th>规格</th>
-                  <th>{options.detailMode === "full" ? "正式根数/图示线" : "根数"}</th>
-                  {options.detailMode === "full" && <th>净跨</th>}
-                  {options.detailMode === "full" && <th>起点锚固</th>}
-                  {options.detailMode === "full" && <th>终点锚固</th>}
-                  {options.detailMode === "full" && <th>面筋增加位置（仅内墙端）</th>}
-                  <th>{options.detailMode === "full" ? "单根/总长度" : "单根长度"}</th>
-                  {options.detailMode === "compact" && <th>总长度</th>}
+                  <th>根数</th>
+                  <th>单根长度</th>
+                  <th>总长度</th>
                   <th>重量</th>
                 </tr>
               </thead>
               {model.groups.map((group) => (
                 <tbody key={group.scopeId} data-scope-id={group.scopeId}>
                   <tr className={styles.groupRow}>
-                    <th colSpan={options.detailMode === "full" ? 11 : 8}>
-                      {group.scopeName}　
-                      <small>{group.scopeType === "through" ? "通墙组合区" : `房间 ID：${group.roomId}`}</small>
+                    <th colSpan={8}>
+                      {group.scopeName}　<small>{group.scopeType === "through" ? "通墙组合区" : "房间独立排筋"}</small>
                     </th>
                   </tr>
                   {group.rows.flatMap((row) => {
@@ -313,44 +286,47 @@ export function SlabPrintReport({
                         <td>{row.scopeName}{row.lengthMode === "zoned" && <small>多长度，共{row.variantRows.length}个分区</small>}</td>
                         <td>{row.typeDirectionText}</td>
                         <td>Φ{row.diameter}@{row.spacing}</td>
-                        <td>{row.count} 根{options.detailMode === "full" && <small>图示 {row.representativeCount} 条</small>}</td>
-                        {options.detailMode === "full" && <td>{row.netRunSpanMm.toFixed(0)} mm</td>}
-                        {options.detailMode === "full" && <td>{row.lengthMode === "zoned" ? "见分区行" : row.startAnchorText}</td>}
-                        {options.detailMode === "full" && <td>{row.lengthMode === "zoned" ? "见分区行" : row.endAnchorText}</td>}
-                        {options.detailMode === "full" && <td>{row.lengthMode === "zoned" ? "按分区实际端" : row.extraModeText}</td>}
-                        <td>{row.lengthMode === "zoned" ? <><strong>多长度</strong><small>加权平均 {row.singleLengthM.toFixed(3)} m</small><small>总长 {row.totalLengthM.toFixed(3)} m</small></> : <>{row.singleLengthM.toFixed(3)} m{options.detailMode === "full" && <small>总长 {row.totalLengthM.toFixed(3)} m</small>}</>}</td>
-                        {options.detailMode === "compact" && <td>{row.totalLengthM.toFixed(3)} m</td>}
+                        <td>{row.count} 根</td>
+                        <td>{row.lengthMode === "zoned" ? "多长度" : `${row.singleLengthM.toFixed(3)} m`}</td>
+                        <td>{row.totalLengthM.toFixed(3)} m</td>
                         <td>{row.weightKg.toFixed(2)} kg</td>
                       </tr>
                     );
-                    if (row.lengthMode !== "zoned") return [parentRow];
+                    const detailRow = options.detailMode === "full" ? (
+                      <tr key={`${row.resultId}:detail`} className={styles.detailRow}>
+                        <td colSpan={8}>
+                          <strong>计算详情：</strong> 净跨 {row.netRunSpanMm.toFixed(0)}mm；
+                          起点 {row.lengthMode === "zoned" ? "按分区" : row.startAnchorText}；
+                          终点 {row.lengthMode === "zoned" ? "按分区" : row.endAnchorText}；
+                          面筋增加 {row.lengthMode === "zoned" ? "按分区实际内墙端" : row.extraModeText}；
+                          图示 {row.representativeCount} 条代表线。
+                        </td>
+                      </tr>
+                    ) : null;
+                    const variantRows = row.lengthMode === "zoned" ? row.variantRows.map((variant) => (
+                      <tr
+                        key={variant.variantId}
+                        data-result-id={row.resultId}
+                        data-variant-id={variant.variantId}
+                        className={styles.variantRow}
+                      >
+                        <td>{variant.figureNumber}</td>
+                        <td>分区 {variant.rangeText}</td>
+                        <td colSpan={2}>{options.detailMode === "full" ? `起点 ${variant.startAnchorText}；终点 ${variant.endAnchorText}；${variant.extraModeText}` : "分区下料"}</td>
+                        <td>{variant.count} 根</td>
+                        <td>{variant.singleLengthM.toFixed(3)} m</td>
+                        <td>{variant.totalLengthM.toFixed(3)} m</td>
+                        <td>{variant.weightKg.toFixed(2)} kg</td>
+                      </tr>
+                    )) : [];
                     return [
                       parentRow,
-                      ...row.variantRows.map((variant) => (
-                        <tr
-                          key={variant.variantId}
-                          data-result-id={row.resultId}
-                          data-variant-id={variant.variantId}
-                          className={styles.variantRow}
-                        >
-                          <td>{variant.figureNumber}</td>
-                          <td>分区 {variant.rangeText}</td>
-                          <td>分区长度</td>
-                          <td>同父项</td>
-                          <td>{variant.count} 根{options.detailMode === "full" && <small>图示 {variant.representativeCount} 条</small>}</td>
-                          {options.detailMode === "full" && <td>{row.netRunSpanMm.toFixed(0)} mm</td>}
-                          {options.detailMode === "full" && <td>{variant.startAnchorText}</td>}
-                          {options.detailMode === "full" && <td>{variant.endAnchorText}</td>}
-                          {options.detailMode === "full" && <td>{variant.extraModeText}</td>}
-                          <td>{variant.singleLengthM.toFixed(3)} m{options.detailMode === "full" && <small>总长 {variant.totalLengthM.toFixed(3)} m</small>}</td>
-                          {options.detailMode === "compact" && <td>{variant.totalLengthM.toFixed(3)} m</td>}
-                          <td>{variant.weightKg.toFixed(2)} kg</td>
-                        </tr>
-                      )),
+                      ...(detailRow ? [detailRow] : []),
+                      ...variantRows,
                     ];
                   })}
                   <tr className={styles.subtotalRow}>
-                    <td colSpan={options.detailMode === "full" ? 10 : 7}>本组重量小计（仅父级正式结果汇总）</td>
+                    <td colSpan={7}>本组重量小计</td>
                     <td>{group.subtotalWeightKg.toFixed(2)} kg</td>
                   </tr>
                 </tbody>

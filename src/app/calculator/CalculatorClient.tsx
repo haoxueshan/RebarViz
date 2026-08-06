@@ -59,6 +59,11 @@ import {
   numberValueToDraft,
   parseNumberDraft,
 } from "@/lib/number-field-draft";
+import {
+  getCalculationModeSummary,
+  getThroughExtraStatusText,
+  getTopDirectionStatusLabel,
+} from "@/lib/slab-calculator-ui";
 
 const fieldClass =
   "min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-500";
@@ -324,7 +329,15 @@ function CollapsibleSection({
   );
 }
 
-function DirectionTabs({ value, onChange }: { value: BarDirection; onChange: (direction: BarDirection) => void }) {
+function DirectionTabs({
+  value,
+  onChange,
+  labels,
+}: {
+  value: BarDirection;
+  onChange: (direction: BarDirection) => void;
+  labels?: Partial<Record<BarDirection, string>>;
+}) {
   return (
     <div className="mb-4 grid grid-cols-2 gap-2" role="tablist" aria-label="钢筋方向">
       {(["x", "y"] as const).map((direction) => (
@@ -336,7 +349,7 @@ function DirectionTabs({ value, onChange }: { value: BarDirection; onChange: (di
           onClick={() => onChange(direction)}
           className={`min-h-11 rounded-lg border px-4 py-2 text-sm font-semibold ${value === direction ? "border-blue-600 bg-blue-600 text-white" : "border-slate-300 bg-white text-slate-700"}`}
         >
-          {direction.toUpperCase()}向（{direction === "x" ? "西→东" : "南→北"}）
+          {labels?.[direction] ?? `${direction.toUpperCase()}向（${direction === "x" ? "西→东" : "南→北"}）`}
         </button>
       ))}
     </div>
@@ -736,9 +749,12 @@ export function CalculatorClient() {
     { value: "x", label: "沿X向排列" },
     { value: "y", label: "沿Y向排列" },
   ];
+  const modeSummary = getCalculationModeSummary(state);
+  const throughExtraStatus = getThroughExtraStatusText(state);
+  const throughHasError = errors.some((error) => error.includes("通墙"));
 
   return (
-    <main className="min-h-screen bg-gradient-to-b from-slate-100 to-white px-3 py-6 sm:px-6 lg:px-8">
+    <main className="min-h-screen bg-gradient-to-b from-slate-100 to-white px-3 pb-28 pt-6 sm:px-6 lg:px-8 xl:pb-6">
       <div className="mx-auto max-w-7xl">
         <header className="mb-6 rounded-2xl bg-slate-900 p-5 text-white shadow-lg sm:p-7">
           <div className="flex flex-wrap items-start justify-between gap-4">
@@ -800,8 +816,15 @@ export function CalculatorClient() {
                 <BarSettingsPanel layer="bottom" direction={ui.bottomDirection} state={state} onSettingsChange={(settings) => updateBar("bottom", ui.bottomDirection, settings)} onAnchorChange={(roomId, endpoint, rule) => updateRoomAnchor(roomId, "bottom", ui.bottomDirection, endpoint, rule)} onRestoreAuto={(roomId, endpoint) => restoreAnchor(roomId, "bottom", ui.bottomDirection, endpoint)} />
               </CollapsibleSection>
 
-              <CollapsibleSection number={3} title="面筋参数" description="普通面筋X/Y各自保存增加位置和房间级锚固。" open={ui.openSections.top} onToggle={(open) => toggleSection("top", open)}>
-                <DirectionTabs value={ui.topDirection} onChange={(topDirection) => setUi((current) => ({ ...current, topDirection }))} />
+              <CollapsibleSection number={3} title="普通面筋参数" description="设置各房间普通面筋规格、增加位置及端部锚固；启用通墙后，仅对应方向使用此处规格生成通墙筋。" open={ui.openSections.top} onToggle={(open) => toggleSection("top", open)}>
+                <DirectionTabs
+                  value={ui.topDirection}
+                  onChange={(topDirection) => setUi((current) => ({ ...current, topDirection }))}
+                  labels={{
+                    x: getTopDirectionStatusLabel("x", state),
+                    y: getTopDirectionStatusLabel("y", state),
+                  }}
+                />
                 <BarSettingsPanel layer="top" direction={ui.topDirection} state={state} onSettingsChange={(settings) => updateBar("top", ui.topDirection, settings)} onExtraModeChange={(extraMode) => updateBusinessState((current) => ({ ...current, top: { ...current.top, [ui.topDirection]: { ...current.top[ui.topDirection], extraMode } } }))} onAnchorChange={(roomId, endpoint, rule) => updateRoomAnchor(roomId, "top", ui.topDirection, endpoint, rule)} onRestoreAuto={(roomId, endpoint) => restoreAnchor(roomId, "top", ui.topDirection, endpoint)} />
               </CollapsibleSection>
 
@@ -809,15 +832,23 @@ export function CalculatorClient() {
                 <label className="inline-flex min-h-11 cursor-pointer items-center gap-3 text-sm font-semibold text-slate-800"><input type="checkbox" checked={state.through.enabled} disabled={state.slab.arrangement === "single"} onChange={(event) => updateBusinessState((current) => ({ ...current, through: { ...current.through, enabled: event.target.checked, direction: event.target.checked && current.slab.arrangement !== "single" ? current.slab.arrangement : "none" } }))} className="h-5 w-5 rounded border-slate-300 text-blue-600" />启用面筋通墙</label>
                 {state.slab.arrangement === "single" && <p className="mt-2 text-xs text-slate-500">至少两个房间且排列方向为X或Y时才能启用。</p>}
                 {state.through.enabled && state.through.direction !== "none" && (
-                  <div className="mt-4 space-y-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
-                    <p className="text-sm text-slate-700">当前通墙方向：<strong>{state.through.direction.toUpperCase()}向（{state.through.direction === "x" ? "西→东" : "南→北"}）</strong></p>
-                    <TopExtraModeSelector direction={state.through.direction} through mode={state.through.extraMode} onChange={(extraMode) => updateBusinessState((current) => ({ ...current, through: { ...current.through, extraMode } }))} />
+                  <div className={`mt-4 space-y-4 rounded-xl border p-4 ${throughHasError ? "border-rose-200 bg-rose-50" : "border-blue-200 bg-blue-50"}`}>
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">当前方向</p>
+                      <p className="mt-1 text-sm text-slate-700"><strong>{state.through.direction.toUpperCase()}向（{state.through.direction === "x" ? "西→东" : "南→北"}）</strong></p>
+                    </div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">通墙端部锚固</p>
                     <div className="grid gap-3 sm:grid-cols-2">
                       <AnchorRuleField label={state.through.direction === "x" ? "最西端" : "最南端"} rule={state.through.startAnchor} layer="top" state={state} applyTopExtra={shouldApplyTopExtra(state.through.extraMode, "start")} onChange={(startAnchor) => updateBusinessState((current) => ({ ...current, through: { ...current.through, startAnchor: { ...startAnchor, origin: "user" } } }))} onRestoreAuto={() => updateBusinessState((current) => ({ ...current, through: { ...current.through, startAnchor: { source: "outer-wall", manualValue: 0, origin: "auto" } } }))} />
                       <AnchorRuleField label={state.through.direction === "x" ? "最东端" : "最北端"} rule={state.through.endAnchor} layer="top" state={state} applyTopExtra={shouldApplyTopExtra(state.through.extraMode, "end")} onChange={(endAnchor) => updateBusinessState((current) => ({ ...current, through: { ...current.through, endAnchor: { ...endAnchor, origin: "user" } } }))} onRestoreAuto={() => updateBusinessState((current) => ({ ...current, through: { ...current.through, endAnchor: { source: "outer-wall", manualValue: 0, origin: "auto" } } }))} />
                     </div>
-                    <p className="text-xs leading-5 text-amber-900">面筋增加值仅作用于选中位置的内墙锚固；外墙锚固和手动锚固均不增加。</p>
-                    <p className="text-xs leading-5 text-amber-900">通墙只替换当前方向的普通面筋；垂直方向面筋仍按各房间独立计算。通墙校验会检查垂直净尺寸一致性。</p>
+                    <TopExtraModeSelector direction={state.through.direction} through mode={state.through.extraMode} onChange={(extraMode) => updateBusinessState((current) => ({ ...current, through: { ...current.through, extraMode } }))} />
+                    <p className="rounded-lg bg-white/80 px-3 py-2 text-xs font-medium leading-5 text-slate-700">{throughExtraStatus}</p>
+                    <div className="space-y-1 text-xs leading-5 text-slate-600">
+                      <p>面筋增加值仅作用于选中位置的内墙锚固；外墙锚固和手动锚固均不增加。</p>
+                      <p>通墙只替换当前方向的普通面筋；垂直方向面筋仍按各房间独立计算。</p>
+                      <p>中间穿过的内墙只计入连续钢筋长度，不重复叠加面筋增加值。</p>
+                    </div>
                   </div>
                 )}
               </CollapsibleSection>
@@ -825,12 +856,14 @@ export function CalculatorClient() {
 
             <aside className="space-y-4 xl:sticky xl:top-20">
               <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                <h2 className="font-bold text-slate-900">参数摘要</h2>
+                <h2 className="font-bold text-slate-900">当前计算模式</h2>
                 <dl className="mt-3 grid grid-cols-2 gap-3 text-sm">
-                  <div><dt className="text-xs text-slate-500">排列</dt><dd className="font-semibold">{state.slab.arrangement === "single" ? "单房间" : `${state.slab.arrangement.toUpperCase()}向 · ${state.slab.rooms.length}间`}</dd></div>
-                  <div><dt className="text-xs text-slate-500">墙厚</dt><dd className="font-semibold">内{state.slab.innerWallThickness} / 外{state.slab.outerWallThickness}mm</dd></div>
-                  <div><dt className="text-xs text-slate-500">根数算法</dt><dd className="font-semibold">{countModeLabel(state.slab.countMode)}</dd></div>
-                  <div><dt className="text-xs text-slate-500">通墙</dt><dd className="font-semibold">{state.through.enabled ? `${state.through.direction.toUpperCase()}向面筋` : "关闭"}</dd></div>
+                  <div className="col-span-2"><dt className="text-xs text-slate-500">房间</dt><dd className="font-semibold">{modeSummary.arrangement}</dd></div>
+                  <div><dt className="text-xs text-slate-500">地筋</dt><dd className="font-semibold">X：{modeSummary.bottomX}<br />Y：{modeSummary.bottomY}</dd></div>
+                  <div><dt className="text-xs text-slate-500">面筋</dt><dd className="font-semibold">X：{modeSummary.topX}<br />Y：{modeSummary.topY}</dd></div>
+                  <div><dt className="text-xs text-slate-500">墙厚</dt><dd className="font-semibold">内{state.slab.innerWallThickness} / 外{state.slab.outerWallThickness} mm</dd></div>
+                  <div><dt className="text-xs text-slate-500">内墙面筋增加</dt><dd className="font-semibold">{state.slab.topAnchorExtra} mm</dd></div>
+                  <div className="col-span-2"><dt className="text-xs text-slate-500">根数算法</dt><dd className="font-semibold">{countModeLabel(state.slab.countMode)}</dd></div>
                 </dl>
                 <p className="mt-3 rounded-lg bg-blue-50 p-3 text-xs leading-5 text-blue-800">此处只核对输入参数，不显示任何正式长度、根数或工程重量。</p>
               </section>
@@ -845,6 +878,15 @@ export function CalculatorClient() {
               <button data-testid="calculate-button" type="submit" disabled={status === "calculating"} className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-base font-bold text-white shadow hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60"><Calculator size={19} />{buttonText}</button>
               <p className="text-center text-xs leading-5 text-slate-500">点击后先完整校验；仅有效结果会保存并进入结果页。页面不会主动刷新。</p>
             </aside>
+          </div>
+          <div className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 px-3 pt-2 shadow-[0_-8px_24px_rgba(15,23,42,0.12)] backdrop-blur xl:hidden" style={{ paddingBottom: "calc(12px + env(safe-area-inset-bottom))" }}>
+            <div className="mx-auto flex max-w-7xl items-center gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold text-slate-900">{status === "invalid" ? "输入无效" : status === "dirty" ? "参数已修改" : status === "calculating" ? "正在计算" : "等待计算"}</p>
+                <p className="truncate text-xs text-slate-500">正式结果仅在校验通过后生成</p>
+              </div>
+              <button type="submit" disabled={status === "calculating"} className="inline-flex min-h-12 shrink-0 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white disabled:opacity-60"><Calculator size={18} />{buttonText}</button>
+            </div>
           </div>
         </form>
       </div>

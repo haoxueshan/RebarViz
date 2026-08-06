@@ -26,7 +26,7 @@ import {
   printSelectionSummary,
 } from "./slab-calculator-report";
 import {
-  DEFAULT_SLAB_PRINT_SECTIONS,
+  SITE_SLAB_PRINT_SECTIONS,
   createCalculationRecord,
   createDefaultSlabPrintOptions,
   createResultGroups,
@@ -229,8 +229,8 @@ describe("打印范围与局部汇总", () => {
     const report = buildSlabPrintReport(record, options);
 
     expect(options.rangeMode).toBe("all");
-    expect(options.detailMode).toBe("full");
-    expect(options.sections).toEqual(DEFAULT_SLAB_PRINT_SECTIONS);
+    expect(options.detailMode).toBe("compact");
+    expect(options.sections).toEqual(SITE_SLAB_PRINT_SECTIONS);
     expect(report.rows.map((row) => row.resultId)).toHaveLength(
       record.calculation.results.length,
     );

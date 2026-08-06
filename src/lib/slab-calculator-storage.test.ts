@@ -10,6 +10,7 @@ import {
   CALCULATOR_ALGORITHM_VERSION,
   CALCULATOR_SCHEMA_VERSION,
   DEFAULT_SLAB_PRINT_SECTIONS,
+  SITE_SLAB_PRINT_SECTIONS,
   RESULT_PRINT_SETTINGS_KEY,
   createCalculationRecord,
   createDefaultSlabPrintOptions,
@@ -163,9 +164,16 @@ describe("结果分组、筛选和分页", () => {
     ]);
     expect(groups[0].results).toHaveLength(1);
     expect(groups[1].roomId).toBe("room-a");
-    expect(groups[2].roomId).toBe("room-b");
-    expect(groups[3].roomId).toBe("room-a");
+    expect(groups[2].roomId).toBe("room-a");
+    expect(groups[3].roomId).toBe("room-b");
     expect(groups[4].roomId).toBe("room-b");
+    expect(groups.map((group) => group.scopeId)).toEqual([
+      "through:x",
+      "room-a:bottom",
+      "room-a:top",
+      "room-b:bottom",
+      "room-b:top",
+    ]);
     expect(new Set(groups.map((group) => group.scopeId)).size).toBe(5);
   });
 
@@ -312,8 +320,8 @@ describe("打印偏好存储", () => {
 
   it("损坏、版本不兼容或字段不完整的偏好恢复默认值", () => {
     const expected = {
-      detailMode: "full",
-      sections: DEFAULT_SLAB_PRINT_SECTIONS,
+      detailMode: "compact",
+      sections: SITE_SLAB_PRINT_SECTIONS,
     };
     expect(parseResultPrintSettings("broken")).toEqual(expected);
     expect(parseResultPrintSettings(JSON.stringify({
