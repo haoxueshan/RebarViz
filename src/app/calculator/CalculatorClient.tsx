@@ -13,6 +13,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { SlabLayoutDiagram } from "@/components/calculator/SlabDiagrams";
+import { CalculatorModeNav } from "@/components/calculator/CalculatorModeNav";
 import {
   calculateSlabResults,
   cloneDefaultSlabCalculatorState,
@@ -766,6 +767,8 @@ export function CalculatorClient() {
             <button type="button" onClick={resetData} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-white/20 bg-white/10 px-4 py-2 text-sm font-medium hover:bg-white/20"><RotateCcw size={16} />重置数据</button>
           </div>
         </header>
+
+        <CalculatorModeNav />
 
         <form
           ref={formRef}

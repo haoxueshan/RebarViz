@@ -43,7 +43,7 @@ export function Header() {
 
         <nav className={`${isPortal ? 'hidden' : 'hidden md:flex'} items-center gap-1`}>
           {NAV.map(({ href, label, icon: Icon }) => {
-            const active = pathname === href;
+            const active = pathname === href || (href === "/calculator" && pathname.startsWith("/calculator/"));
             return (
               <Link
                 key={href}
@@ -117,7 +117,7 @@ export function Header() {
       {mobileOpen && isLearningLanding && (
         <nav className="sm:hidden border-t px-4 py-2 space-y-1 border-white/5 bg-[#0a0f1a]/95 backdrop-blur-md">
           {NAV.map(({ href, label, icon: Icon }) => {
-            const active = pathname === href;
+            const active = pathname === href || (href === "/calculator" && pathname.startsWith("/calculator/"));
             return (
               <Link
                 key={href}
@@ -147,7 +147,7 @@ export function MobileBottomNav() {
   return (
     <nav className="sm:hidden fixed bottom-0 inset-x-0 z-50 bg-white/95 backdrop-blur-md border-t border-gray-200 flex items-stretch safe-bottom">
       {NAV.map(({ href, label, icon: Icon }) => {
-        const active = pathname === href;
+        const active = pathname === href || (href === "/calculator" && pathname.startsWith("/calculator/"));
         return (
           <Link
             key={href}
