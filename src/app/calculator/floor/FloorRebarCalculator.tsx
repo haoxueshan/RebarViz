@@ -1,77 +1,107 @@
 "use client";
 
-import {
-  Copy,
-  Grid2X2,
-  House,
-  Info,
-  Move,
-  Plus,
-  RotateCcw,
-  Trash2,
-} from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Copy, DoorOpen, Grid2X2, House, Info, Plus, RotateCcw, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { CalculatorModeNav } from "@/components/calculator/CalculatorModeNav";
+import { FloorCanvas, type FloorSelection } from "@/components/calculator/floor/FloorCanvas";
 import {
-  buildFloorBoundarySegments,
+  buildFloorAtomicBoundarySegments,
+  buildFloorDisplayBoundarySegments,
   DEFAULT_FLOOR_PLAN_STATE,
   floorPlanBounds,
-  normalizeFloorPlanState,
+  nextAvailableFloorName,
+  snapFloorOpening,
   snapFloorSlab,
-  validateFloorPlan,
+  validateFloorPlanV2,
+  type FloorAtomicBoundarySegment,
+  type FloorBoundarySegment,
+  type FloorEdgeRange,
+  type FloorOpening,
+  type FloorOpeningType,
   type FloorPlanState,
+  type FloorResolvedSupport,
   type FloorSlab,
+  type FloorSlabType,
+  type FloorSupportRule,
+  type FloorSupportRuleTarget,
 } from "@/lib/floor-plan";
+import { createFloorDraftRecord, FLOOR_DRAFT_KEY, parseFloorDraftRecord } from "@/lib/floor-plan-storage";
 
-const FLOOR_DRAFT_KEY = "rebarviz:floor-rebar:draft:v1";
-const SVG_WIDTH = 1000;
-const SVG_HEIGHT = 650;
-const PLOT = { x: 72, y: 54, width: 856, height: 520 };
-
-type DragState = {
-  pointerId: number;
-  slabId: string;
-  startClientX: number;
-  startClientY: number;
-  startX: number;
-  startY: number;
-  pixelsPerWorldX: number;
-  pixelsPerWorldY: number;
-};
+const SLAB_TYPE_OPTIONS: Array<{ value: FloorSlabType; label: string }> = [
+  { value: "room", label: "房间" }, { value: "corridor", label: "内走廊" }, { value: "hall", label: "客厅" },
+  { value: "balcony", label: "阳台" }, { value: "other", label: "其他板区" },
+];
+const OPENING_TYPE_OPTIONS: Array<{ value: FloorOpeningType; label: string }> = [
+  { value: "stair", label: "楼梯间" }, { value: "shaft", label: "井道" }, { value: "void", label: "挑空" }, { value: "other", label: "其他洞口" },
+];
 
 function cloneDefaultState(): FloorPlanState {
   return structuredClone(DEFAULT_FLOOR_PLAN_STATE);
 }
 
-function nextRoomName(slabs: FloorSlab[]): string {
-  const alphabetIndex = slabs.length;
-  return alphabetIndex < 26 ? `房间${String.fromCharCode(65 + alphabetIndex)}` : `房间${alphabetIndex + 1}`;
-}
-
-function nextRoomId(): string {
-  return `floor-room-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+function nextObjectId(kind: "slab" | "opening"): string {
+  return `floor-${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
 function formatMm(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
+function rangeKey(range: FloorEdgeRange): string {
+  return range.mode === "whole" ? "whole" : `${range.startMm}-${range.endMm}`;
+}
+
+function targetKey(target: FloorSupportRuleTarget): string {
+  return target.kind === "slab-edge"
+    ? `slab:${target.slabId}:${target.side}:${rangeKey(target.range)}`
+    : `opening:${target.openingId}:${target.side}:${rangeKey(target.range)}`;
+}
+
+function sideLabel(side: FloorSupportRuleTarget["side"]): string {
+  return side === "west" ? "西侧" : side === "east" ? "东侧" : side === "south" ? "南侧" : "北侧";
+}
+
+function supportLabel(support: FloorResolvedSupport): string {
+  if (support === "outer-wall") return "建筑外墙";
+  if (support === "inner-wall") return "内墙";
+  if (support === "continuous") return "连续楼板";
+  return "洞口裁断";
+}
+
+function geometryLabel(segment: FloorAtomicBoundarySegment): string {
+  if (segment.geometryKind === "building-exterior") return "建筑外边";
+  if (segment.geometryKind === "shared-slab") return "共享板边";
+  return "洞口边";
+}
+
+function segmentLength(segment: FloorAtomicBoundarySegment): number {
+  return Math.abs(segment.endX - segment.startX) + Math.abs(segment.endY - segment.startY);
+}
+
+function targetForSelection(segment: FloorAtomicBoundarySegment, selection: Exclude<FloorSelection, null>): FloorSupportRuleTarget | undefined {
+  return segment.targets.find((target) => selection.kind === "slab"
+    ? target.kind === "slab-edge" && target.slabId === selection.id
+    : target.kind === "opening-edge" && target.openingId === selection.id);
+}
+
 function DraftNumberField({
+  fieldKey,
   label,
   value,
   onChange,
+  onValidityChange,
   min,
-  suffix = "mm",
 }: {
+  fieldKey: string;
   label: string;
   value: number;
   onChange: (value: number) => void;
+  onValidityChange: (key: string, valid: boolean) => void;
   min?: number;
-  suffix?: string;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
-  const displayedValue = draft ?? String(value);
-
+  const displayed = draft ?? String(value);
+  const invalid = draft !== null && (draft.trim() === "" || !Number.isFinite(Number(draft)) || (min !== undefined && Number(draft) < min));
   return (
     <label className="block">
       <span className="mb-1.5 block text-xs font-medium text-slate-600">{label}</span>
@@ -79,220 +109,113 @@ function DraftNumberField({
         <input
           type="number"
           inputMode="decimal"
-          value={displayedValue}
+          value={displayed}
           min={min}
-          onFocus={(event) => {
-            setDraft(String(value));
-            event.currentTarget.select();
-          }}
+          aria-invalid={invalid}
+          onFocus={(event) => { setDraft(String(value)); event.currentTarget.select(); }}
           onChange={(event) => {
             const raw = event.target.value;
             setDraft(raw);
-            if (raw.trim() === "") return;
             const parsed = Number(raw);
-            if (Number.isFinite(parsed)) onChange(parsed);
+            const valid = raw.trim() !== "" && Number.isFinite(parsed) && (min === undefined || parsed >= min);
+            onValidityChange(fieldKey, valid);
+            if (valid) onChange(parsed);
           }}
-          onBlur={() => {
-            setDraft(null);
-          }}
-          className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 pr-11 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+          className={`h-11 w-full rounded-xl border bg-white px-3 pr-11 text-sm text-slate-900 outline-none transition focus:ring-2 ${invalid ? "border-rose-500 focus:ring-rose-100" : "border-slate-300 focus:border-blue-500 focus:ring-blue-100"}`}
         />
-        <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-slate-400">{suffix}</span>
+        <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-slate-400">mm</span>
       </span>
+      {invalid && <span className="mt-1 block text-xs text-rose-600">请输入{min === 1 ? "大于0的" : "有效"}数字。</span>}
     </label>
   );
 }
 
 function WorkflowTabs() {
-  const items = ["楼层", "地筋", "面筋", "屋檐", "料单"];
   return (
     <div className="mb-5 grid grid-cols-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" aria-label="整层计算步骤">
-      {items.map((item, index) => (
-        <div
-          key={item}
-          className={`min-w-0 px-1 py-3 text-center text-xs font-semibold sm:text-sm ${index === 0 ? "bg-blue-600 text-white" : "border-l border-slate-200 bg-slate-50 text-slate-400"}`}
-          aria-current={index === 0 ? "step" : undefined}
-        >
-          <span className="hidden sm:inline">{index + 1}. </span>{item}
-          {index > 0 && <span className="ml-1 hidden text-[10px] font-normal lg:inline">后续阶段</span>}
+      {["楼层", "地筋", "面筋", "屋檐", "料单"].map((item, index) => (
+        <div key={item} className={`min-w-0 px-1 py-3 text-center text-xs font-semibold sm:text-sm ${index === 0 ? "bg-blue-600 text-white" : "border-l border-slate-200 bg-slate-50 text-slate-400"}`} aria-current={index === 0 ? "step" : undefined}>
+          <span className="hidden sm:inline">{index + 1}. </span>{item}{index > 0 && <span className="ml-1 hidden text-[10px] font-normal lg:inline">后续阶段</span>}
         </div>
       ))}
     </div>
   );
 }
 
-function FloorCanvas({
+function BoundaryPanel({
   state,
-  selectedId,
-  onSelect,
-  onMove,
+  selection,
+  segments,
+  selectedBoundaryId,
+  onSelectBoundary,
+  onSetSupport,
 }: {
   state: FloorPlanState;
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-  onMove: (id: string, x: number, y: number, finished: boolean) => void;
+  selection: FloorSelection;
+  segments: FloorAtomicBoundarySegment[];
+  selectedBoundaryId: string | null;
+  onSelectBoundary: (id: string) => void;
+  onSetSupport: (segment: FloorAtomicBoundarySegment, target: FloorSupportRuleTarget, support: FloorSupportRule["support"]) => void;
 }) {
-  const svgRef = useRef<SVGSVGElement>(null);
-  const dragRef = useRef<DragState | null>(null);
-  const bounds = useMemo(() => floorPlanBounds(state.slabs), [state.slabs]);
-  const walls = useMemo(() => buildFloorBoundarySegments(state), [state]);
-  const worldWidth = Math.max(bounds.maxX - bounds.minX, 1);
-  const worldHeight = Math.max(bounds.maxY - bounds.minY, 1);
-  const padding = Math.max(state.outerWallThickness, 240) * 1.6;
-  const scale = Math.min(PLOT.width / (worldWidth + padding * 2), PLOT.height / (worldHeight + padding * 2));
-  const drawnWidth = worldWidth * scale;
-  const drawnHeight = worldHeight * scale;
-  const originX = PLOT.x + (PLOT.width - drawnWidth) / 2 - bounds.minX * scale;
-  const originY = PLOT.y + (PLOT.height - drawnHeight) / 2 + bounds.maxY * scale;
-  const toX = (x: number) => originX + x * scale;
-  const toY = (y: number) => originY - y * scale;
-
-  const finishDrag = (event: React.PointerEvent<SVGSVGElement>) => {
-    const drag = dragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-    const moved = state.slabs.find((slab) => slab.id === drag.slabId);
-    if (moved) onMove(moved.id, moved.x, moved.y, true);
-    dragRef.current = null;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-  };
-
+  if (!selection) return null;
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-4 py-3">
-        <div>
-          <h2 className="font-semibold text-slate-900">整层房间拼图</h2>
-          <p className="mt-0.5 text-xs text-slate-500">拖动房间自动吸附；坐标以西南角为原点，X向东、Y向北。</p>
-        </div>
-        <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700"><Move size={13} /> 可拖动</span>
+    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <h2 className="font-semibold text-slate-900">{selection.kind === "slab" ? "板区边界关系" : "洞口边界处理"}</h2>
+      <p className="mt-1 text-xs leading-5 text-slate-500">几何关系与实际支承分开保存；此处不设置钢筋锚固长度。</p>
+      <div className="mt-4 max-h-80 space-y-3 overflow-y-auto pr-1">
+        {segments.length === 0 && <p className="text-sm text-slate-500">当前对象没有可编辑边界。</p>}
+        {segments.map((segment) => {
+          const target = targetForSelection(segment, selection);
+          const relatedNames = segment.slabIds.filter((id) => id !== selection.id).map((id) => state.slabs.find((slab) => slab.id === id)?.name).filter(Boolean);
+          const selected = selectedBoundaryId === segment.id;
+          return (
+            <div key={segment.id} className={`rounded-xl border p-3 ${selected ? "border-orange-400 bg-orange-50" : "border-slate-200 bg-slate-50"}`}>
+              <button type="button" onClick={() => onSelectBoundary(segment.id)} className="flex min-h-11 w-full items-start justify-between gap-2 text-left">
+                <span><strong className="block text-sm text-slate-900">{target ? sideLabel(target.side) : geometryLabel(segment)} · {formatMm(segmentLength(segment))}mm</strong><span className="mt-1 block text-xs text-slate-500">几何：{geometryLabel(segment)}{relatedNames.length > 0 ? ` · 与${relatedNames.join("、")}` : ""}</span></span>
+                <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[11px] font-medium text-slate-700">{supportLabel(segment.support)}</span>
+              </button>
+              {target && segment.geometryKind === "shared-slab" && (
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <button type="button" onClick={() => onSetSupport(segment, target, "inner-wall")} aria-pressed={segment.support === "inner-wall"} className={`min-h-11 rounded-lg border text-xs font-medium ${segment.support === "inner-wall" ? "border-blue-600 bg-blue-600 text-white" : "border-slate-300 bg-white text-slate-700"}`}>内墙</button>
+                  <button type="button" onClick={() => onSetSupport(segment, target, "continuous")} aria-pressed={segment.support === "continuous"} className={`min-h-11 rounded-lg border text-xs font-medium ${segment.support === "continuous" ? "border-slate-700 bg-slate-700 text-white" : "border-slate-300 bg-white text-slate-700"}`}>连续楼板</button>
+                </div>
+              )}
+              {target && segment.geometryKind === "opening-edge" && (
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <button type="button" onClick={() => onSetSupport(segment, target, "opening-cut")} aria-pressed={segment.support === "opening-cut"} className={`min-h-11 rounded-lg border text-xs font-medium ${segment.support === "opening-cut" ? "border-slate-700 bg-slate-700 text-white" : "border-slate-300 bg-white text-slate-700"}`}>洞口裁断</button>
+                  <button type="button" onClick={() => onSetSupport(segment, target, "inner-wall")} aria-pressed={segment.support === "inner-wall"} className={`min-h-11 rounded-lg border text-xs font-medium ${segment.support === "inner-wall" ? "border-blue-600 bg-blue-600 text-white" : "border-slate-300 bg-white text-slate-700"}`}>按内墙</button>
+                </div>
+              )}
+              {!target && segment.geometryKind === "opening-edge" && <p className="mt-2 text-xs text-slate-500">请选中对应洞口后设置该边。</p>}
+              {segment.geometryKind === "building-exterior" && <p className="mt-2 text-xs text-slate-500">建筑真正外边固定按外墙处理，未来可作为屋檐宿主边。</p>}
+            </div>
+          );
+        })}
       </div>
-      <svg
-        ref={svgRef}
-        viewBox={`0 0 ${SVG_WIDTH} ${SVG_HEIGHT}`}
-        className="block h-auto w-full touch-none bg-white"
-        role="img"
-        aria-label="整层房间和内外墙布局预览"
-        onPointerMove={(event) => {
-          const drag = dragRef.current;
-          if (!drag || drag.pointerId !== event.pointerId) return;
-          const x = drag.startX + (event.clientX - drag.startClientX) * drag.pixelsPerWorldX;
-          const y = drag.startY - (event.clientY - drag.startClientY) * drag.pixelsPerWorldY;
-          onMove(drag.slabId, Math.round(x), Math.round(y), false);
-        }}
-        onPointerUp={finishDrag}
-        onPointerCancel={finishDrag}
-      >
-        <defs>
-          <pattern id="floor-grid" width="25" height="25" patternUnits="userSpaceOnUse">
-            <path d="M 25 0 L 0 0 0 25" fill="none" stroke="#e2e8f0" strokeWidth="1" />
-          </pattern>
-        </defs>
-        <rect x={PLOT.x} y={PLOT.y} width={PLOT.width} height={PLOT.height} rx="16" fill="url(#floor-grid)" stroke="#cbd5e1" />
-
-        {state.slabs.map((slab, index) => {
-          const x = toX(slab.x);
-          const y = toY(slab.y + slab.height);
-          const width = Math.max(slab.width * scale, 1);
-          const height = Math.max(slab.height * scale, 1);
-          const selected = selectedId === slab.id;
-          return (
-            <g key={slab.id}>
-              <rect
-                x={x}
-                y={y}
-                width={width}
-                height={height}
-                fill={selected ? "#dbeafe" : index % 2 === 0 ? "#f8fafc" : "#f1f5f9"}
-                stroke={selected ? "#2563eb" : "#94a3b8"}
-                strokeWidth={selected ? 4 : 2}
-                className="cursor-move"
-                onPointerDown={(event) => {
-                  event.stopPropagation();
-                  onSelect(slab.id);
-                  const svg = svgRef.current;
-                  if (!svg) return;
-                  const rect = svg.getBoundingClientRect();
-                  event.currentTarget.ownerSVGElement?.setPointerCapture(event.pointerId);
-                  dragRef.current = {
-                    pointerId: event.pointerId,
-                    slabId: slab.id,
-                    startClientX: event.clientX,
-                    startClientY: event.clientY,
-                    startX: slab.x,
-                    startY: slab.y,
-                    pixelsPerWorldX: SVG_WIDTH / rect.width / scale,
-                    pixelsPerWorldY: SVG_HEIGHT / rect.height / scale,
-                  };
-                }}
-              />
-              <title>{`${slab.name}：${formatMm(slab.width)} × ${formatMm(slab.height)}mm；坐标 (${formatMm(slab.x)}, ${formatMm(slab.y)})`}</title>
-            </g>
-          );
-        })}
-
-        {walls.map((wall) => {
-          const strokeWidth = Math.max(3, Math.min(12, wall.thicknessMm * scale));
-          return (
-            <line
-              key={wall.id}
-              x1={toX(wall.startX)}
-              y1={toY(wall.startY)}
-              x2={toX(wall.endX)}
-              y2={toY(wall.endY)}
-              stroke={wall.type === "inner-wall" ? "#2563eb" : "#0f172a"}
-              strokeWidth={strokeWidth}
-              strokeLinecap="square"
-              strokeDasharray={wall.type === "inner-wall" ? "12 7" : undefined}
-              pointerEvents="none"
-            />
-          );
-        })}
-
-        {state.slabs.map((slab, index) => {
-          const centerX = toX(slab.x + slab.width / 2);
-          const centerY = toY(slab.y + slab.height / 2);
-          const shortName = slab.name.length > 10 ? `${slab.name.slice(0, 9)}…` : slab.name;
-          return (
-            <g key={`label-${slab.id}`} pointerEvents="none">
-              <rect x={centerX - 72} y={centerY - 27} width="144" height="54" rx="8" fill="white" fillOpacity="0.9" />
-              <text x={centerX} y={centerY - 4} textAnchor="middle" fontSize="15" fontWeight="700" fill="#0f172a">{shortName}</text>
-              <text x={centerX} y={centerY + 16} textAnchor="middle" fontSize="12" fill="#475569">{`${formatMm(slab.width)} × ${formatMm(slab.height)} mm`}</text>
-              <title>{`${index + 1}. ${slab.name}`}</title>
-            </g>
-          );
-        })}
-
-        <g aria-label="方向标识" fontSize="13" fill="#334155">
-          <line x1="92" y1="608" x2="198" y2="608" stroke="#2563eb" strokeWidth="3" markerEnd="url(#none)" />
-          <path d="M198 608 l-12 -6 v12 z" fill="#2563eb" />
-          <text x="92" y="630">西</text><text x="202" y="630">东 · X</text>
-          <line x1="48" y1="555" x2="48" y2="445" stroke="#dc2626" strokeWidth="3" />
-          <path d="M48 445 l-6 12 h12 z" fill="#dc2626" />
-          <text x="30" y="558">南</text><text x="24" y="432">北 · Y</text>
-        </g>
-        <g transform="translate(700 600)" fontSize="12" fill="#475569">
-          <line x1="0" y1="0" x2="42" y2="0" stroke="#0f172a" strokeWidth="7" /><text x="50" y="4">外墙 {formatMm(state.outerWallThickness)}mm</text>
-          <line x1="150" y1="0" x2="192" y2="0" stroke="#2563eb" strokeWidth="7" strokeDasharray="10 6" /><text x="200" y="4">内墙 {formatMm(state.innerWallThickness)}mm</text>
-        </g>
-      </svg>
-    </div>
+    </section>
   );
 }
 
 export default function FloorRebarCalculator() {
   const [state, setState] = useState<FloorPlanState>(cloneDefaultState);
-  const [selectedId, setSelectedId] = useState<string | null>(DEFAULT_FLOOR_PLAN_STATE.slabs[0].id);
+  const [selection, setSelection] = useState<FloorSelection>({ kind: "slab", id: DEFAULT_FLOOR_PLAN_STATE.slabs[0].id });
+  const [selectedBoundaryId, setSelectedBoundaryId] = useState<string | null>(null);
+  const [invalidDrafts, setInvalidDrafts] = useState<Set<string>>(new Set());
   const [hydrated, setHydrated] = useState(false);
+  const [inputRevision, setInputRevision] = useState(0);
 
   useEffect(() => {
     try {
       const saved = window.localStorage.getItem(FLOOR_DRAFT_KEY);
       if (saved) {
-        const restored = normalizeFloorPlanState(JSON.parse(saved));
-        setState(restored);
-        setSelectedId(restored.slabs[0]?.id ?? null);
+        const record = parseFloorDraftRecord(JSON.parse(saved));
+        if (record) {
+          setState(record.state);
+          setSelection(record.state.slabs[0] ? { kind: "slab", id: record.state.slabs[0].id } : record.state.openings[0] ? { kind: "opening", id: record.state.openings[0].id } : null);
+        }
       }
     } catch {
-      // 损坏草稿使用默认布局，避免阻塞页面。
+      // 损坏草稿使用默认布局，不阻塞Geometry V2页面。
     } finally {
       setHydrated(true);
     }
@@ -301,154 +224,223 @@ export default function FloorRebarCalculator() {
   useEffect(() => {
     if (!hydrated) return;
     const timer = window.setTimeout(() => {
-      window.localStorage.setItem(FLOOR_DRAFT_KEY, JSON.stringify(state));
+      window.localStorage.setItem(FLOOR_DRAFT_KEY, JSON.stringify(createFloorDraftRecord(state)));
     }, 300);
     return () => window.clearTimeout(timer);
   }, [hydrated, state]);
 
-  const walls = useMemo(() => buildFloorBoundarySegments(state), [state]);
-  const errors = useMemo(() => validateFloorPlan(state), [state]);
-  const selected = state.slabs.find((slab) => slab.id === selectedId) ?? null;
-  const innerWalls = walls.filter((wall) => wall.type === "inner-wall");
-  const outerWalls = walls.filter((wall) => wall.type === "outer-wall");
+  const atomic = useMemo(() => buildFloorAtomicBoundarySegments(state), [state]);
+  const displays = useMemo(() => buildFloorDisplayBoundarySegments(state), [state]);
+  const issues = useMemo(() => validateFloorPlanV2(state), [state]);
+  const errors = issues.filter((issue) => issue.level === "error");
+  const warnings = issues.filter((issue) => issue.level === "warning");
+  const selectedSlab = selection?.kind === "slab" ? state.slabs.find((slab) => slab.id === selection.id) ?? null : null;
+  const selectedOpening = selection?.kind === "opening" ? state.openings.find((opening) => opening.id === selection.id) ?? null : null;
+  const selectedSegments = selection ? atomic.filter((segment) => selection.kind === "slab" ? segment.slabIds.includes(selection.id) : segment.openingId === selection.id) : [];
 
-  const updateSelected = (patch: Partial<FloorSlab>) => {
-    if (!selectedId) return;
+  const setDraftValidity = (key: string, valid: boolean) => {
+    setInvalidDrafts((current) => { const next = new Set(current); if (valid) next.delete(key); else next.add(key); return next; });
+  };
+
+  const updateSlab = (patch: Partial<FloorSlab>) => {
+    if (!selectedSlab) return;
+    setState((current) => ({ ...current, slabs: current.slabs.map((slab) => slab.id === selectedSlab.id ? { ...slab, ...patch } : slab) }));
+  };
+
+  const updateOpening = (patch: Partial<FloorOpening>) => {
+    if (!selectedOpening) return;
+    setState((current) => ({ ...current, openings: current.openings.map((opening) => opening.id === selectedOpening.id ? { ...opening, ...patch } : opening) }));
+  };
+
+  const addSlab = () => {
+    const bounds = floorPlanBounds(state.slabs);
+    const next: FloorSlab = { id: nextObjectId("slab"), name: nextAvailableFloorName(state.slabs.map((slab) => slab.name), "板区"), type: "room", x: bounds.maxX, y: bounds.minY, width: 3600, height: 3600 };
+    setState((current) => ({ ...current, slabs: [...current.slabs, next] }));
+    setSelection({ kind: "slab", id: next.id });
+    setSelectedBoundaryId(null);
+  };
+
+  const addOpening = () => {
+    const host = selectedSlab ?? state.slabs[0];
+    const width = host ? Math.min(2400, Math.max(600, host.width / 2)) : 2400;
+    const height = host ? Math.min(2400, Math.max(600, host.height / 2)) : 2400;
+    const next: FloorOpening = {
+      id: nextObjectId("opening"), name: nextAvailableFloorName(state.openings.map((opening) => opening.name), "洞口"), type: "stair",
+      x: host ? host.x + (host.width - width) / 2 : 0, y: host ? host.y + (host.height - height) / 2 : 0, width, height,
+    };
+    setState((current) => ({ ...current, openings: [...current.openings, next] }));
+    setSelection({ kind: "opening", id: next.id });
+    setSelectedBoundaryId(null);
+  };
+
+  const duplicateSelected = () => {
+    if (selectedSlab) {
+      const next = { ...selectedSlab, id: nextObjectId("slab"), name: nextAvailableFloorName(state.slabs.map((slab) => slab.name), "板区"), x: selectedSlab.x + selectedSlab.width };
+      setState((current) => ({ ...current, slabs: [...current.slabs, next] }));
+      setSelection({ kind: "slab", id: next.id });
+    } else if (selectedOpening) {
+      const next = { ...selectedOpening, id: nextObjectId("opening"), name: nextAvailableFloorName(state.openings.map((opening) => opening.name), "洞口"), x: selectedOpening.x + state.snapDistanceMm, y: selectedOpening.y + state.snapDistanceMm };
+      setState((current) => ({ ...current, openings: [...current.openings, next] }));
+      setSelection({ kind: "opening", id: next.id });
+    }
+  };
+
+  const deleteSelected = () => {
+    if (!selection) return;
+    const object = selectedSlab ?? selectedOpening;
+    if (!object || (selection.kind === "slab" && state.slabs.length <= 1)) return;
+    if (!window.confirm(`确定删除“${object.name}”吗？`)) return;
     setState((current) => ({
       ...current,
-      slabs: current.slabs.map((slab) => slab.id === selectedId ? { ...slab, ...patch } : slab),
+      slabs: selection.kind === "slab" ? current.slabs.filter((slab) => slab.id !== selection.id) : current.slabs,
+      openings: selection.kind === "opening" ? current.openings.filter((opening) => opening.id !== selection.id) : current.openings,
+      supportRules: current.supportRules.filter((rule) => rule.target.kind === "slab-edge" ? rule.target.slabId !== selection.id : rule.target.openingId !== selection.id),
     }));
+    const fallback = selection.kind === "slab" ? state.slabs.find((slab) => slab.id !== selection.id) : state.slabs[0];
+    setSelection(fallback ? { kind: "slab", id: fallback.id } : null);
+    setSelectedBoundaryId(null);
+    setInvalidDrafts(new Set());
   };
 
-  const addRoom = () => {
-    const bounds = floorPlanBounds(state.slabs);
-    const room: FloorSlab = {
-      id: nextRoomId(),
-      name: nextRoomName(state.slabs),
-      x: bounds.maxX,
-      y: bounds.minY,
-      width: 3600,
-      height: 3600,
-    };
-    setState((current) => ({ ...current, slabs: [...current.slabs, room] }));
-    setSelectedId(room.id);
-  };
-
-  const duplicateRoom = () => {
-    if (!selected) return;
-    const room: FloorSlab = {
-      ...selected,
-      id: nextRoomId(),
-      name: `${selected.name}副本`,
-      x: selected.x + selected.width,
-    };
-    setState((current) => ({ ...current, slabs: [...current.slabs, room] }));
-    setSelectedId(room.id);
-  };
-
-  const deleteRoom = () => {
-    if (!selected || state.slabs.length <= 1) return;
-    if (!window.confirm(`确定删除“${selected.name}”吗？`)) return;
-    const next = state.slabs.filter((slab) => slab.id !== selected.id);
-    setState((current) => ({ ...current, slabs: next }));
-    setSelectedId(next[0]?.id ?? null);
-  };
-
-  const moveRoom = (id: string, x: number, y: number, finished: boolean) => {
+  const moveObject = (nextSelection: Exclude<FloorSelection, null>, x: number, y: number, finished: boolean) => {
     setState((current) => {
-      const slab = current.slabs.find((item) => item.id === id);
-      if (!slab) return current;
-      const moved = { ...slab, x, y };
-      const finalSlab = finished
-        ? snapFloorSlab(moved, current.slabs.filter((item) => item.id !== id), current.snapDistanceMm)
-        : moved;
-      return { ...current, slabs: current.slabs.map((item) => item.id === id ? finalSlab : item) };
+      if (nextSelection.kind === "slab") {
+        const object = current.slabs.find((slab) => slab.id === nextSelection.id);
+        if (!object) return current;
+        const moved = { ...object, x, y };
+        const finalObject = finished ? snapFloorSlab(moved, current.slabs.filter((slab) => slab.id !== object.id), current.snapDistanceMm) : moved;
+        return { ...current, slabs: current.slabs.map((slab) => slab.id === object.id ? finalObject : slab) };
+      }
+      const object = current.openings.find((opening) => opening.id === nextSelection.id);
+      if (!object) return current;
+      const moved = { ...object, x, y };
+      const finalObject = finished ? snapFloorOpening(moved, current.slabs, current.openings.filter((opening) => opening.id !== object.id), current.snapDistanceMm) : moved;
+      return { ...current, openings: current.openings.map((opening) => opening.id === object.id ? finalObject : opening) };
     });
   };
 
-  if (!hydrated) {
-    return <main className="mx-auto min-h-[60vh] max-w-7xl px-4 py-10 text-sm text-slate-500">正在恢复整层平面草稿…</main>;
-  }
+  const setSegmentSupport = (segment: FloorAtomicBoundarySegment, target: FloorSupportRuleTarget, support: FloorSupportRule["support"]) => {
+    const key = targetKey(target);
+    setState((current) => ({
+      ...current,
+      supportRules: [
+        ...current.supportRules.filter((rule) => targetKey(rule.target) !== key),
+        { id: `support:${key}`, target: structuredClone(target), support },
+      ],
+    }));
+    setSelectedBoundaryId(segment.id);
+  };
+
+  const selectDisplayBoundary = (segment: FloorBoundarySegment) => {
+    setSelectedBoundaryId(segment.atomicIds[0] ?? null);
+    if (segment.openingId) setSelection({ kind: "opening", id: segment.openingId });
+    else if (segment.slabIds[0]) setSelection({ kind: "slab", id: segment.slabIds[0] });
+  };
+
+  if (!hydrated) return <main className="mx-auto min-h-[60vh] max-w-7xl px-4 py-10 text-sm text-slate-500">正在迁移并恢复整层几何草稿…</main>;
+
+  const field = (key: string, label: string, value: number, onChange: (value: number) => void, min?: number) => (
+    <DraftNumberField key={`${inputRevision}:${key}`} fieldKey={key} label={label} value={value} onChange={onChange} onValidityChange={setDraftValidity} min={min} />
+  );
+  const stats = {
+    exterior: atomic.filter((segment) => segment.geometryKind === "building-exterior").length,
+    inner: atomic.filter((segment) => segment.support === "inner-wall").length,
+    continuous: atomic.filter((segment) => segment.support === "continuous").length,
+    opening: atomic.filter((segment) => segment.geometryKind === "opening-edge").length,
+  };
 
   return (
     <main className="mx-auto max-w-[1500px] px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
-        <p className="text-sm font-semibold text-blue-600">FloorRebarCalculator · 第一阶段</p>
-        <h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-950">整层钢筋平铺计算</h1>
-        <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">先拼出整层房间平面，并由共享边自动识别内墙和外墙。本阶段只建立几何与墙体拓扑，不生成钢筋工程量。</p>
+        <p className="text-sm font-semibold text-blue-600">FloorRebarCalculator · 几何拓扑 V2</p>
+        <h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-950">整层楼板板筋系统</h1>
+        <p className="mt-3 max-w-4xl text-sm leading-6 text-slate-600">当前阶段只负责整层有板区域、洞口及支承关系建模，为后续地筋、面筋、通墙、屋檐和钢筋料单提供几何基础。</p>
       </header>
-
       <CalculatorModeNav />
       <WorkflowTabs />
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.65fr)_minmax(340px,0.75fr)]">
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.65fr)_minmax(360px,0.75fr)]">
         <section className="min-w-0 space-y-4">
-          <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={addRoom} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"><Plus size={17} />添加房间</button>
-            <button type="button" onClick={duplicateRoom} disabled={!selected} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40"><Copy size={16} />复制房间</button>
-            <button type="button" onClick={deleteRoom} disabled={!selected || state.slabs.length <= 1} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-rose-200 bg-white px-4 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-40"><Trash2 size={16} />删除房间</button>
-            <button
-              type="button"
-              onClick={() => {
-                if (!window.confirm("确定恢复整层平面默认数据吗？当前草稿将被替换。")) return;
-                const next = cloneDefaultState();
-                setState(next);
-                setSelectedId(next.slabs[0].id);
-                window.localStorage.removeItem(FLOOR_DRAFT_KEY);
-              }}
-              className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-            ><RotateCcw size={16} />重置平面</button>
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+            <button type="button" onClick={addSlab} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"><Plus size={17} />添加板区</button>
+            <button type="button" onClick={addOpening} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700"><DoorOpen size={17} />添加洞口</button>
+            <button type="button" onClick={duplicateSelected} disabled={!selection} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-40"><Copy size={16} />复制所选</button>
+            <button type="button" onClick={deleteSelected} disabled={!selection || (selection.kind === "slab" && state.slabs.length <= 1)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-rose-200 bg-white px-4 py-2 text-sm font-semibold text-rose-700 disabled:opacity-40"><Trash2 size={16} />删除所选</button>
+            <button type="button" onClick={() => {
+              if (!window.confirm("确定恢复Geometry V2默认数据吗？当前整层草稿将被替换。")) return;
+              const next = cloneDefaultState();
+              setState(next); setSelection({ kind: "slab", id: next.slabs[0].id }); setSelectedBoundaryId(null); setInvalidDrafts(new Set()); setInputRevision((value) => value + 1); window.localStorage.removeItem(FLOOR_DRAFT_KEY);
+            }} className="col-span-2 inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 sm:col-span-1"><RotateCcw size={16} />重置平面</button>
           </div>
 
-          <FloorCanvas state={state} selectedId={selectedId} onSelect={setSelectedId} onMove={moveRoom} />
+          <FloorCanvas state={state} selection={selection} selectedBoundaryId={selectedBoundaryId} onSelect={(next) => { setSelection(next); setSelectedBoundaryId(null); setInvalidDrafts(new Set()); }} onSelectBoundary={selectDisplayBoundary} onMove={moveObject} />
 
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className="rounded-2xl border border-slate-200 bg-white p-4"><span className="text-xs text-slate-500">房间板块</span><strong className="mt-1 block text-2xl text-slate-950">{state.slabs.length}</strong></div>
-            <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4"><span className="text-xs text-blue-700">共享内墙段</span><strong className="mt-1 block text-2xl text-blue-950">{innerWalls.length}</strong></div>
-            <div className="rounded-2xl border border-slate-300 bg-slate-100 p-4"><span className="text-xs text-slate-600">外墙轮廓段</span><strong className="mt-1 block text-2xl text-slate-950">{outerWalls.length}</strong></div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            {[["板区", state.slabs.length, "slate"], ["洞口", state.openings.length, "rose"], ["建筑外边", stats.exterior, "slate"], ["内墙段", stats.inner, "blue"], ["连续板边", stats.continuous, "cyan"], ["洞口边", stats.opening, "amber"]].map(([label, value, tone]) => (
+              <div key={String(label)} className={`rounded-2xl border p-4 ${tone === "blue" ? "border-blue-200 bg-blue-50" : tone === "rose" ? "border-rose-200 bg-rose-50" : tone === "cyan" ? "border-cyan-200 bg-cyan-50" : tone === "amber" ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-white"}`}><span className="text-xs text-slate-600">{label}</span><strong className="mt-1 block text-2xl text-slate-950">{value}</strong></div>
+            ))}
           </div>
         </section>
 
         <aside className="space-y-4 xl:sticky xl:top-20 xl:self-start">
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center gap-2"><House size={18} className="text-blue-600" /><h2 className="font-semibold text-slate-900">整层设置</h2></div>
+            <div className="flex items-center gap-2"><House size={18} className="text-blue-600" /><h2 className="font-semibold text-slate-900">净跨拓扑设置</h2></div>
+            <p className="mt-2 text-xs leading-5 text-slate-500">X/Y仅表达板区净跨拼接，不含墙厚；墙厚通过支承拓扑单独保存。</p>
             <div className="mt-4 grid gap-4 sm:grid-cols-3 xl:grid-cols-1">
-              <DraftNumberField label="内墙厚度" value={state.innerWallThickness} min={1} onChange={(value) => setState((current) => ({ ...current, innerWallThickness: value }))} />
-              <DraftNumberField label="外墙厚度" value={state.outerWallThickness} min={1} onChange={(value) => setState((current) => ({ ...current, outerWallThickness: value }))} />
-              <DraftNumberField label="自动吸附距离" value={state.snapDistanceMm} min={0} onChange={(value) => setState((current) => ({ ...current, snapDistanceMm: value }))} />
+              {field("inner-wall", "内墙厚度", state.innerWallThickness, (value) => setState((current) => ({ ...current, innerWallThickness: value })), 1)}
+              {field("outer-wall", "外墙厚度", state.outerWallThickness, (value) => setState((current) => ({ ...current, outerWallThickness: value })), 1)}
+              {field("snap", "自动吸附距离", state.snapDistanceMm, (value) => setState((current) => ({ ...current, snapDistanceMm: value })), 0)}
             </div>
           </section>
 
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center gap-2"><Grid2X2 size={18} className="text-blue-600" /><h2 className="font-semibold text-slate-900">房间精确参数</h2></div>
-            {selected ? (
+          {selectedSlab && (
+            <section className="rounded-2xl border border-blue-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center gap-2"><Grid2X2 size={18} className="text-blue-600" /><h2 className="font-semibold text-slate-900">板区精确参数</h2></div>
               <div className="mt-4 space-y-4">
-                <label className="block"><span className="mb-1.5 block text-xs font-medium text-slate-600">房间名称</span><input value={selected.name} onChange={(event) => updateSelected({ name: event.target.value })} className="h-11 w-full rounded-xl border border-slate-300 px-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" /></label>
+                <label className="block"><span className="mb-1.5 block text-xs font-medium text-slate-600">板区名称</span><input value={selectedSlab.name} onChange={(event) => updateSlab({ name: event.target.value })} className="h-11 w-full rounded-xl border border-slate-300 px-3 text-sm" /></label>
+                <label className="block"><span className="mb-1.5 block text-xs font-medium text-slate-600">板区类型</span><select value={selectedSlab.type} onChange={(event) => updateSlab({ type: event.target.value as FloorSlabType })} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm">{SLAB_TYPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
                 <div className="grid grid-cols-2 gap-3">
-                  <DraftNumberField label="西南角 X" value={selected.x} onChange={(value) => updateSelected({ x: value })} />
-                  <DraftNumberField label="西南角 Y" value={selected.y} onChange={(value) => updateSelected({ y: value })} />
-                  <DraftNumberField label="东西向净尺寸" value={selected.width} min={1} onChange={(value) => updateSelected({ width: value })} />
-                  <DraftNumberField label="南北向净尺寸" value={selected.height} min={1} onChange={(value) => updateSelected({ height: value })} />
+                  {field(`${selectedSlab.id}:x`, "西南角 X", selectedSlab.x, (value) => updateSlab({ x: value }))}
+                  {field(`${selectedSlab.id}:y`, "西南角 Y", selectedSlab.y, (value) => updateSlab({ y: value }))}
+                  {field(`${selectedSlab.id}:w`, "东西向净尺寸", selectedSlab.width, (value) => updateSlab({ width: value }), 1)}
+                  {field(`${selectedSlab.id}:h`, "南北向净尺寸", selectedSlab.height, (value) => updateSlab({ height: value }), 1)}
                 </div>
-                <p className="rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-600">坐标与尺寸单位统一为 mm。拖动结束后，房间边缘会在 {formatMm(state.snapDistanceMm)}mm 范围内自动吸附。</p>
               </div>
-            ) : <p className="mt-4 text-sm text-slate-500">请在图中选择一个房间。</p>}
+            </section>
+          )}
+
+          {selectedOpening && (
+            <section className="rounded-2xl border border-rose-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center gap-2"><DoorOpen size={18} className="text-rose-600" /><h2 className="font-semibold text-slate-900">洞口精确参数</h2></div>
+              <div className="mt-4 space-y-4">
+                <label className="block"><span className="mb-1.5 block text-xs font-medium text-slate-600">洞口名称</span><input value={selectedOpening.name} onChange={(event) => updateOpening({ name: event.target.value })} className="h-11 w-full rounded-xl border border-slate-300 px-3 text-sm" /></label>
+                <label className="block"><span className="mb-1.5 block text-xs font-medium text-slate-600">洞口类型</span><select value={selectedOpening.type} onChange={(event) => updateOpening({ type: event.target.value as FloorOpeningType })} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm">{OPENING_TYPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+                <div className="grid grid-cols-2 gap-3">
+                  {field(`${selectedOpening.id}:x`, "西南角 X", selectedOpening.x, (value) => updateOpening({ x: value }))}
+                  {field(`${selectedOpening.id}:y`, "西南角 Y", selectedOpening.y, (value) => updateOpening({ y: value }))}
+                  {field(`${selectedOpening.id}:w`, "东西向尺寸", selectedOpening.width, (value) => updateOpening({ width: value }), 1)}
+                  {field(`${selectedOpening.id}:h`, "南北向尺寸", selectedOpening.height, (value) => updateOpening({ height: value }), 1)}
+                </div>
+                <p className="rounded-xl bg-rose-50 p-3 text-xs leading-5 text-rose-800">洞口会从与其重叠的板区中扣除。楼梯间仅表示无普通水平楼板区域，不表示楼梯平台。</p>
+              </div>
+            </section>
+          )}
+
+          <BoundaryPanel state={state} selection={selection} segments={selectedSegments} selectedBoundaryId={selectedBoundaryId} onSelectBoundary={setSelectedBoundaryId} onSetSupport={setSegmentSupport} />
+
+          <section className={`rounded-2xl border p-5 ${errors.length > 0 || invalidDrafts.size > 0 ? "border-rose-200 bg-rose-50" : warnings.length > 0 ? "border-amber-200 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}>
+            <h2 className="font-semibold text-slate-900">{errors.length > 0 || invalidDrafts.size > 0 ? "几何输入无效" : warnings.length > 0 ? "几何有效，但需要确认" : "几何与支承拓扑有效"}</h2>
+            {invalidDrafts.size > 0 && <p className="mt-2 text-sm text-rose-800">有 {invalidDrafts.size} 个数字输入仍为空或非法，旧数值不会被当作当前输入提交。</p>}
+            <ul className="mt-2 space-y-1 text-sm text-slate-700">{issues.map((issue) => <li key={`${issue.code}:${issue.message}`} className={issue.level === "error" ? "text-rose-800" : "text-amber-900"}>• {issue.message}</li>)}</ul>
+            {issues.length === 0 && invalidDrafts.size === 0 && <p className="mt-2 text-sm leading-6 text-emerald-800">系统已区分建筑外边、共享板边、连续板边与洞口裁断边。</p>}
           </section>
 
-          <section className={`rounded-2xl border p-5 ${errors.length === 0 ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50"}`}>
-            <h2 className={`font-semibold ${errors.length === 0 ? "text-emerald-900" : "text-rose-900"}`}>{errors.length === 0 ? "平面拓扑有效" : "需要修正平面"}</h2>
-            {errors.length === 0 ? (
-              <p className="mt-2 text-sm leading-6 text-emerald-800">房间未重叠，共享边已识别为内墙，其余暴露边界已识别为外墙。</p>
-            ) : (
-              <ul className="mt-2 space-y-1 text-sm text-rose-800">{errors.map((error) => <li key={error}>• {error}</li>)}</ul>
-            )}
-          </section>
-
-          <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm leading-6 text-amber-900">
-            <div className="flex items-start gap-2"><Info size={18} className="mt-0.5 shrink-0" /><div><strong>阶段范围</strong><p className="mt-1">当前仅完成整层拼图、吸附和墙体拓扑。地筋、面筋、通墙路径、屋檐和整层料单会在后续阶段基于这份平面继续实现。</p></div></div>
+          <section className="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm leading-6 text-slate-700">
+            <div className="flex items-start gap-2"><Info size={18} className="mt-0.5 shrink-0 text-blue-600" /><div><strong>阶段范围</strong><p className="mt-1">Geometry V2不生成任何钢筋、长度、重量或料单。下一阶段才会基于Atomic Boundary和Resolved Support开始整层地筋。</p></div></div>
           </section>
         </aside>
       </div>
+      <p className="mt-5 text-xs text-slate-500">当前显示边界 {displays.length} 段；未来计算使用原子边界 {atomic.length} 段。显示段ID不会用于保存支承或屋檐业务规则。</p>
     </main>
   );
 }
