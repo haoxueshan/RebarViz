@@ -96,3 +96,46 @@ test("Bottom数字空草稿阻止旧值生成正式结果", async ({ page }) => 
   await expect(page.getByText("地筋结果无效")).toBeVisible();
   await expect(page.getByText(/未使用旧值计算/)).toBeVisible();
 });
+
+test("Bottom V1.1局部continuous与inner-wall同时生成完整长筋和短筋Piece", async ({ page }) => {
+  await page.goto("/calculator/floor");
+  await page.evaluate(() => {
+    localStorage.setItem("rebarviz:floor-rebar:draft:v1", JSON.stringify({
+      schemaVersion: 2,
+      savedAt: new Date().toISOString(),
+      state: {
+        coordinateModel: "net-layout-v1",
+        slabs: [
+          { id: "a", name: "板区A", type: "room", x: 0, y: 0, width: 4000, height: 4000 },
+          { id: "b", name: "板区B", type: "room", x: 4000, y: 0, width: 4000, height: 4000 },
+        ],
+        openings: [],
+        supportRules: [{
+          id: "partial-continuous",
+          target: { kind: "slab-edge", slabId: "a", side: "east", range: { mode: "offset", startMm: 0, endMm: 2000 } },
+          support: "continuous",
+        }],
+        innerWallThickness: 240,
+        outerWallThickness: 370,
+        snapDistanceMm: 150,
+      },
+    }));
+    localStorage.setItem("rebarviz:floor-rebar:bottom:v1", JSON.stringify({
+      schemaVersion: 1,
+      savedAt: new Date().toISOString(),
+      state: {
+        countMode: "project",
+        defaults: { x: { diameter: 12, spacing: 1000 }, y: { diameter: 10, spacing: 1000 } },
+        slabOverrides: {},
+      },
+    }));
+  });
+  await page.reload();
+  await page.getByRole("button", { name: /2\. 地筋/ }).click();
+  await expect(page.getByText("正式地筋结果有效")).toBeVisible();
+  await expect(page.getByText("8.740m")).toBeVisible();
+  await expect(page.getByText("4.610m")).toBeVisible();
+  const rows = page.locator("tbody tr");
+  await expect(rows.filter({ hasText: "8.740m" })).toContainText("2根");
+  await expect(rows.filter({ hasText: "4.610m" })).toContainText("4根");
+});

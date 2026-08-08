@@ -84,7 +84,8 @@ export const DEFAULT_FLOOR_BOTTOM_STATE: FloorBottomState = {
   slabOverrides: {},
 };
 
-const EPSILON = 1e-7;
+const GEOMETRY_EPSILON = 1e-7;
+export const LENGTH_GROUP_EPSILON_MM = 1e-6;
 const COUNT_MODES: readonly CountMode[] = ["project", "round", "floor"];
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -149,19 +150,19 @@ function cellSharedEdge(
   right: FloorTopologyCell,
 ): { orientation: "horizontal" | "vertical"; coordinate: number; start: number; end: number } | null {
   const overlapY = Math.min(left.y + left.height, right.y + right.height) - Math.max(left.y, right.y);
-  if (overlapY > EPSILON && (Math.abs(left.x + left.width - right.x) <= EPSILON || Math.abs(right.x + right.width - left.x) <= EPSILON)) {
+  if (overlapY > GEOMETRY_EPSILON && (Math.abs(left.x + left.width - right.x) <= GEOMETRY_EPSILON || Math.abs(right.x + right.width - left.x) <= GEOMETRY_EPSILON)) {
     return {
       orientation: "vertical",
-      coordinate: Math.abs(left.x + left.width - right.x) <= EPSILON ? right.x : left.x,
+      coordinate: Math.abs(left.x + left.width - right.x) <= GEOMETRY_EPSILON ? right.x : left.x,
       start: Math.max(left.y, right.y),
       end: Math.min(left.y + left.height, right.y + right.height),
     };
   }
   const overlapX = Math.min(left.x + left.width, right.x + right.width) - Math.max(left.x, right.x);
-  if (overlapX > EPSILON && (Math.abs(left.y + left.height - right.y) <= EPSILON || Math.abs(right.y + right.height - left.y) <= EPSILON)) {
+  if (overlapX > GEOMETRY_EPSILON && (Math.abs(left.y + left.height - right.y) <= GEOMETRY_EPSILON || Math.abs(right.y + right.height - left.y) <= GEOMETRY_EPSILON)) {
     return {
       orientation: "horizontal",
-      coordinate: Math.abs(left.y + left.height - right.y) <= EPSILON ? right.y : left.y,
+      coordinate: Math.abs(left.y + left.height - right.y) <= GEOMETRY_EPSILON ? right.y : left.y,
       start: Math.max(left.x, right.x),
       end: Math.min(left.x + left.width, right.x + right.width),
     };
@@ -175,11 +176,11 @@ function atomicCoversEdge(
 ): boolean {
   if (segment.orientation !== edge.orientation) return false;
   if (edge.orientation === "vertical") {
-    return Math.abs(segment.startX - edge.coordinate) <= EPSILON &&
-      segment.startY < edge.end - EPSILON && segment.endY > edge.start + EPSILON;
+    return Math.abs(segment.startX - edge.coordinate) <= GEOMETRY_EPSILON &&
+      segment.startY < edge.end - GEOMETRY_EPSILON && segment.endY > edge.start + GEOMETRY_EPSILON;
   }
-  return Math.abs(segment.startY - edge.coordinate) <= EPSILON &&
-    segment.startX < edge.end - EPSILON && segment.endX > edge.start + EPSILON;
+  return Math.abs(segment.startY - edge.coordinate) <= GEOMETRY_EPSILON &&
+    segment.startX < edge.end - GEOMETRY_EPSILON && segment.endX > edge.start + GEOMETRY_EPSILON;
 }
 
 export function buildFloorBottomRebarDomains(
@@ -305,22 +306,22 @@ function validateBottomState(
   return errors;
 }
 
-type LineInterval = {
+export type FloorLineInterval = {
   start: number;
   end: number;
   slabIds: Set<string>;
 };
 
-function lineIntervals(
+export function buildRawFloorLineIntervals(
   direction: "x" | "y",
   positionMm: number,
   cells: readonly FloorTopologyCell[],
-): LineInterval[] {
-  const raw = cells.flatMap((cell): LineInterval[] => {
+): FloorLineInterval[] {
+  return cells.flatMap((cell): FloorLineInterval[] => {
     // 理论位置恰好落在cell分界时采用[lower, upper)的确定性归属，避免钢筋线无声丢失。
     const crosses = direction === "x"
-      ? positionMm >= cell.y - EPSILON && positionMm < cell.y + cell.height - EPSILON
-      : positionMm >= cell.x - EPSILON && positionMm < cell.x + cell.width - EPSILON;
+      ? positionMm >= cell.y - GEOMETRY_EPSILON && positionMm < cell.y + cell.height - GEOMETRY_EPSILON
+      : positionMm >= cell.x - GEOMETRY_EPSILON && positionMm < cell.x + cell.width - GEOMETRY_EPSILON;
     if (!crosses || !cell.effectiveSlabId) return [];
     return [{
       start: direction === "x" ? cell.x : cell.y,
@@ -328,47 +329,152 @@ function lineIntervals(
       slabIds: new Set([cell.effectiveSlabId]),
     }];
   }).sort((left, right) => left.start - right.start || left.end - right.end);
-  const merged: LineInterval[] = [];
+}
+
+function segmentAxisRange(
+  segment: FloorAtomicBoundarySegment,
+  direction: "x" | "y",
+): [number, number] {
+  return direction === "x"
+    ? [Math.min(segment.startY, segment.endY), Math.max(segment.startY, segment.endY)]
+    : [Math.min(segment.startX, segment.endX), Math.max(segment.startX, segment.endX)];
+}
+
+function segmentOnRunCoordinate(
+  segment: FloorAtomicBoundarySegment,
+  direction: "x" | "y",
+  runMm: number,
+): boolean {
+  return direction === "x"
+    ? segment.orientation === "vertical" && Math.abs(segment.startX - runMm) <= GEOMETRY_EPSILON
+    : segment.orientation === "horizontal" && Math.abs(segment.startY - runMm) <= GEOMETRY_EPSILON;
+}
+
+/**
+ * Atomic段采用[lower, upper)归属；若当前位置没有后继起始段，则允许最后一段包含最大终点。
+ * 这样局部support交点不会同时归属前后两段，整条宿主边最大端点又仍可解析。
+ */
+export function pointBelongsToAtomicSegment(
+  segment: FloorAtomicBoundarySegment,
+  direction: "x" | "y",
+  runMm: number,
+  positionMm: number,
+  atomic: readonly FloorAtomicBoundarySegment[],
+): boolean {
+  if (!segmentOnRunCoordinate(segment, direction, runMm)) return false;
+  const [start, end] = segmentAxisRange(segment, direction);
+  if (positionMm < start - GEOMETRY_EPSILON || positionMm > end + GEOMETRY_EPSILON) return false;
+  if (positionMm < end - GEOMETRY_EPSILON) return true;
+  const hasSuccessor = atomic.some((candidate) => {
+    if (candidate.id === segment.id || !segmentOnRunCoordinate(candidate, direction, runMm)) return false;
+    const [candidateStart] = segmentAxisRange(candidate, direction);
+    return Math.abs(candidateStart - positionMm) <= GEOMETRY_EPSILON &&
+      candidate.slabIds.some((slabId) => segment.slabIds.includes(slabId));
+  });
+  return !hasSuccessor;
+}
+
+type CrossingBoundaryResolution = {
+  segment?: FloorAtomicBoundarySegment;
+  errorCode?: "bottom-line-crossing-boundary-missing" | "bottom-line-crossing-boundary-ambiguous";
+};
+
+export function findCrossingAtomicBoundary(
+  atomic: readonly FloorAtomicBoundarySegment[],
+  direction: "x" | "y",
+  runMm: number,
+  positionMm: number,
+  leftSlabIds: ReadonlySet<string>,
+  rightSlabIds: ReadonlySet<string>,
+): CrossingBoundaryResolution {
+  const candidates = atomic.filter((segment) =>
+    segment.geometryKind === "shared-slab" &&
+    pointBelongsToAtomicSegment(segment, direction, runMm, positionMm, atomic) &&
+    segment.slabIds.some((slabId) => leftSlabIds.has(slabId)) &&
+    segment.slabIds.some((slabId) => rightSlabIds.has(slabId)),
+  );
+  if (candidates.length === 0) return { errorCode: "bottom-line-crossing-boundary-missing" };
+  const supports = new Set(candidates.map((segment) => segment.support));
+  if (supports.size > 1) return { errorCode: "bottom-line-crossing-boundary-ambiguous" };
+  return { segment: [...candidates].sort((left, right) => left.id.localeCompare(right.id))[0] };
+}
+
+export type FloorLineIntervalMergeResult = {
+  intervals: FloorLineInterval[];
+  errors: FloorBottomIssue[];
+};
+
+export function mergeFloorLineIntervalsBySupport(
+  direction: "x" | "y",
+  positionMm: number,
+  raw: readonly FloorLineInterval[],
+  atomic: readonly FloorAtomicBoundarySegment[],
+): FloorLineIntervalMergeResult {
+  const merged: FloorLineInterval[] = [];
+  const errors: FloorBottomIssue[] = [];
   raw.forEach((interval) => {
     const previous = merged.at(-1);
-    if (previous && interval.start <= previous.end + EPSILON) {
+    if (!previous || interval.start > previous.end + GEOMETRY_EPSILON) {
+      merged.push({ start: interval.start, end: interval.end, slabIds: new Set(interval.slabIds) });
+      return;
+    }
+    const overlaps = interval.start < previous.end - GEOMETRY_EPSILON;
+    const sameSlab = [...interval.slabIds].some((slabId) => previous.slabIds.has(slabId));
+    let canMerge = overlaps || sameSlab;
+    if (!canMerge) {
+      const crossing = findCrossingAtomicBoundary(
+        atomic,
+        direction,
+        previous.end,
+        positionMm,
+        previous.slabIds,
+        interval.slabIds,
+      );
+      if (!crossing.segment) {
+        errors.push({
+          code: crossing.errorCode ?? "bottom-line-crossing-boundary-missing",
+          message: `地筋在 ${direction === "x" ? "X" : "Y"}=${previous.end}mm、垂直位置${positionMm}mm处无法确定跨板支承，已停止正式计算。`,
+        });
+      } else {
+        canMerge = crossing.segment.support === "continuous";
+      }
+    }
+    if (canMerge) {
       previous.end = Math.max(previous.end, interval.end);
       interval.slabIds.forEach((slabId) => previous.slabIds.add(slabId));
     } else {
       merged.push({ start: interval.start, end: interval.end, slabIds: new Set(interval.slabIds) });
     }
   });
-  return merged;
+  return { intervals: merged, errors };
 }
 
-function pointOnBoundary(
-  segment: FloorAtomicBoundarySegment,
-  direction: "x" | "y",
-  runMm: number,
-  positionMm: number,
-): boolean {
-  if (direction === "x") {
-    return segment.orientation === "vertical" && Math.abs(segment.startX - runMm) <= EPSILON &&
-      positionMm >= Math.min(segment.startY, segment.endY) - EPSILON && positionMm <= Math.max(segment.startY, segment.endY) + EPSILON;
-  }
-  return segment.orientation === "horizontal" && Math.abs(segment.startY - runMm) <= EPSILON &&
-    positionMm >= Math.min(segment.startX, segment.endX) - EPSILON && positionMm <= Math.max(segment.startX, segment.endX) + EPSILON;
-}
+export type FloorEndpointBoundaryResolution = {
+  segment?: FloorAtomicBoundarySegment;
+  errorCode?: "bottom-endpoint-boundary-missing" | "bottom-endpoint-boundary-ambiguous";
+  candidateIds: string[];
+};
 
-function endpointBoundary(
+export function resolveFloorEndpointBoundary(
   atomic: readonly FloorAtomicBoundarySegment[],
   direction: "x" | "y",
   runMm: number,
   positionMm: number,
   slabIds: ReadonlySet<string>,
-): FloorAtomicBoundarySegment | undefined {
-  return atomic
-    .filter((segment) => pointOnBoundary(segment, direction, runMm, positionMm) && segment.slabIds.some((slabId) => slabIds.has(slabId)))
-    .sort((left, right) => {
-      const leftContinuous = left.support === "continuous" ? 1 : 0;
-      const rightContinuous = right.support === "continuous" ? 1 : 0;
-      return leftContinuous - rightContinuous || segmentLength(left) - segmentLength(right) || left.id.localeCompare(right.id);
-    })[0];
+): FloorEndpointBoundaryResolution {
+  const candidates = atomic.filter((segment) =>
+    pointBelongsToAtomicSegment(segment, direction, runMm, positionMm, atomic) &&
+    segment.slabIds.some((slabId) => slabIds.has(slabId)),
+  );
+  const candidateIds = candidates.map((segment) => segment.id).sort();
+  if (candidates.length === 0) return { errorCode: "bottom-endpoint-boundary-missing", candidateIds };
+  if (new Set(candidates.map((segment) => segment.support)).size > 1) {
+    return { errorCode: "bottom-endpoint-boundary-ambiguous", candidateIds };
+  }
+  return {
+    segment: [...candidates].sort((left, right) => segmentLength(left) - segmentLength(right) || left.id.localeCompare(right.id))[0],
+    candidateIds,
+  };
 }
 
 function anchorForSupport(segment: FloorAtomicBoundarySegment): number | null {
@@ -395,6 +501,54 @@ function emptyCalculation(
     warnings,
     isValid: false,
   };
+}
+
+export function stableLengthKey(mm: number): string {
+  return Number(mm.toFixed(6)).toString();
+}
+
+export function buildFloorBottomBomGroups(
+  pieces: readonly FloorBarPiece[],
+): FloorBottomBomGroup[] {
+  const grouped = new Map<string, FloorBottomBomGroup>();
+  pieces.forEach((piece) => {
+    const key = [
+      piece.domainId,
+      piece.direction,
+      piece.diameter,
+      piece.spacing,
+      stableLengthKey(piece.singleLengthMm),
+    ].join(":");
+    const unitWeightKgM = theoreticalUnitWeight(piece.diameter);
+    const current = grouped.get(key) ?? {
+      id: `bottom-bom:${key}`,
+      domainId: piece.domainId,
+      slabIds: [...piece.slabIds],
+      direction: piece.direction,
+      diameter: piece.diameter,
+      spacing: piece.spacing,
+      // 保留首根Piece的真实长度；stable key只影响分组，不改写正式Piece。
+      singleLengthMm: piece.singleLengthMm,
+      count: 0,
+      totalLengthM: 0,
+      unitWeightKgM,
+      weightKg: 0,
+      pieceIds: [],
+    };
+    // 相同stable key的长度差理论上严格不超过该容差。
+    if (Math.abs(piece.singleLengthMm - current.singleLengthMm) > LENGTH_GROUP_EPSILON_MM) {
+      throw new Error("Floor Bottom BOM长度分组超出容差。");
+    }
+    current.count += 1;
+    current.totalLengthM += piece.singleLengthMm / 1000;
+    current.weightKg += (piece.singleLengthMm / 1000) * unitWeightKgM;
+    current.pieceIds.push(piece.id);
+    current.slabIds = [...new Set([...current.slabIds, ...piece.slabIds])].sort();
+    grouped.set(key, current);
+  });
+  return [...grouped.values()].sort((left, right) =>
+    left.domainId.localeCompare(right.domainId) || left.direction.localeCompare(right.direction) || left.singleLengthMm - right.singleLengthMm,
+  );
 }
 
 export function calculateFloorBottomRebar(
@@ -442,17 +596,29 @@ export function calculateFloorBottomRebar(
           positionMm,
         };
         lines.push(line);
-        lineIntervals(direction, positionMm, domainCells).forEach((interval, pieceIndex) => {
-          const startBoundary = endpointBoundary(atomic, direction, interval.start, positionMm, interval.slabIds);
-          const endBoundary = endpointBoundary(atomic, direction, interval.end, positionMm, interval.slabIds);
-          if (!startBoundary || !endBoundary) {
+        const intervalResult = mergeFloorLineIntervalsBySupport(
+          direction,
+          positionMm,
+          buildRawFloorLineIntervals(direction, positionMm, domainCells),
+          atomic,
+        );
+        calculationErrors.push(...intervalResult.errors.map((error) => ({ ...error, objectIds: [line.id] })));
+        intervalResult.intervals.forEach((interval, pieceIndex) => {
+          const startBoundaryResult = resolveFloorEndpointBoundary(atomic, direction, interval.start, positionMm, interval.slabIds);
+          const endBoundaryResult = resolveFloorEndpointBoundary(atomic, direction, interval.end, positionMm, interval.slabIds);
+          if (!startBoundaryResult.segment || !endBoundaryResult.segment) {
+            const ambiguous = startBoundaryResult.errorCode === "bottom-endpoint-boundary-ambiguous" || endBoundaryResult.errorCode === "bottom-endpoint-boundary-ambiguous";
             calculationErrors.push({
-              code: "bottom-endpoint-boundary-missing",
-              message: `地筋线“${line.id}”无法解析完整的原子边界端点。`,
-              objectIds: [line.id],
+              code: ambiguous ? "bottom-endpoint-boundary-ambiguous" : "bottom-endpoint-boundary-missing",
+              message: ambiguous
+                ? `地筋线“${line.id}”的端点同时命中不同支承类型，无法确定正式锚固。`
+                : `地筋线“${line.id}”无法解析完整的原子边界端点。`,
+              objectIds: [line.id, ...startBoundaryResult.candidateIds, ...endBoundaryResult.candidateIds],
             });
             return;
           }
+          const startBoundary = startBoundaryResult.segment;
+          const endBoundary = endBoundaryResult.segment;
           const startAnchorMm = anchorForSupport(startBoundary);
           const endAnchorMm = anchorForSupport(endBoundary);
           if (startAnchorMm === null || endAnchorMm === null) {
@@ -491,34 +657,7 @@ export function calculateFloorBottomRebar(
   });
   if (calculationErrors.length > 0) return emptyCalculation(domains, calculationErrors, warnings);
 
-  const grouped = new Map<string, FloorBottomBomGroup>();
-  pieces.forEach((piece) => {
-    const key = `${piece.domainId}:${piece.direction}:${piece.diameter}:${piece.spacing}:${piece.singleLengthMm}`;
-    const unitWeightKgM = theoreticalUnitWeight(piece.diameter);
-    const current = grouped.get(key) ?? {
-      id: `bottom-bom:${key}`,
-      domainId: piece.domainId,
-      slabIds: [...piece.slabIds],
-      direction: piece.direction,
-      diameter: piece.diameter,
-      spacing: piece.spacing,
-      singleLengthMm: piece.singleLengthMm,
-      count: 0,
-      totalLengthM: 0,
-      unitWeightKgM,
-      weightKg: 0,
-      pieceIds: [],
-    };
-    current.count += 1;
-    current.totalLengthM += piece.singleLengthMm / 1000;
-    current.weightKg += (piece.singleLengthMm / 1000) * unitWeightKgM;
-    current.pieceIds.push(piece.id);
-    current.slabIds = [...new Set([...current.slabIds, ...piece.slabIds])].sort();
-    grouped.set(key, current);
-  });
-  const groups = [...grouped.values()].sort((left, right) =>
-    left.domainId.localeCompare(right.domainId) || left.direction.localeCompare(right.direction) || left.singleLengthMm - right.singleLengthMm,
-  );
+  const groups = buildFloorBottomBomGroups(pieces);
   const totalLengthM = pieces.reduce((sum, piece) => sum + piece.singleLengthMm / 1000, 0);
   const totalWeightKg = pieces.reduce(
     (sum, piece) => sum + (piece.singleLengthMm / 1000) * theoreticalUnitWeight(piece.diameter),

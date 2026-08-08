@@ -127,6 +127,22 @@ describe("Geometry与Support分离", () => {
     expect(buildFloorAtomicBoundarySegments(state).find((segment) => segment.slabIds.includes("a") && segment.slabIds.includes("b"))?.support).toBe("continuous");
   });
 
+  it("offset支承范围进入关键坐标并把共享Atomic精确切成continuous与默认inner-wall", () => {
+    const state = plan([slab({ id: "a", x: 0, y: 0, width: 4000, height: 4000 }), slab({ id: "b", x: 4000, y: 0, width: 4000, height: 4000 })]);
+    state.supportRules = [{
+      id: "partial",
+      target: { kind: "slab-edge", slabId: "a", side: "east", range: { mode: "offset", startMm: 0, endMm: 2000 } },
+      support: "continuous",
+    }];
+    const shared = buildFloorAtomicBoundarySegments(state).filter((segment) => segment.geometryKind === "shared-slab");
+    expect(shared).toHaveLength(2);
+    expect(shared.map((segment) => ({ startY: segment.startY, endY: segment.endY, support: segment.support }))).toEqual([
+      { startY: 0, endY: 2000, support: "continuous" },
+      { startY: 2000, endY: 4000, support: "inner-wall" },
+    ]);
+    expect(buildFloorTopologyCells(state).some((cell) => cell.y === 2000)).toBe(true);
+  });
+
   it("洞口边默认opening-cut，可通过稳定opening edge规则改为inner-wall", () => {
     const state = plan([slab({ id: "s", x: 0, y: 0, width: 5000, height: 5000 })], [opening({ id: "o", x: 1000, y: 1000, width: 1000, height: 1000 })]);
     expect(buildFloorAtomicBoundarySegments(state).filter((segment) => segment.geometryKind === "opening-edge").every((segment) => segment.support === "opening-cut")).toBe(true);

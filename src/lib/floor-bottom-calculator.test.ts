@@ -1,18 +1,24 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildFloorBottomBomGroups,
   buildFloorBottomRebarDomains,
   calculateFloorBottomRebar,
   DEFAULT_FLOOR_BOTTOM_STATE,
+  mergeFloorLineIntervalsBySupport,
+  pointBelongsToAtomicSegment,
+  resolveFloorEndpointBoundary,
   type FloorBottomState,
 } from "./floor-bottom-calculator";
 import {
   buildFloorAtomicBoundarySegments,
   validateFloorPlanV2,
   type FloorOpening,
+  type FloorAtomicBoundarySegment,
   type FloorPlanState,
   type FloorSlab,
   type FloorSupportRule,
 } from "./floor-plan";
+import type { FloorBarPiece } from "./floor-rebar-types";
 import { countBars, theoreticalUnitWeight, type CountMode } from "./slab-calculator";
 
 function slab(id: string, x: number, y: number, width: number, height: number): FloorSlab {
@@ -144,6 +150,51 @@ describe("Bottom Domain与continuous", () => {
     expect(tCalculation.isValid).toBe(true);
     expect(tCalculation.pieces.every((piece) => piece.startSupport !== "continuous" && piece.endSupport !== "continuous")).toBe(true);
   });
+
+  it.each([
+    { name: "下段continuous、上段inner-wall", range: { startMm: 0, endMm: 2000 }, fullPositions: [500, 1500] },
+    { name: "下段inner-wall、上段continuous", range: { startMm: 2000, endMm: 4000 }, fullPositions: [2500, 3500] },
+  ])("局部支承按每根BarLine实际穿越位置合并：$name", ({ range, fullPositions }) => {
+    const state = plan(
+      [slab("a", 0, 0, 4000, 4000), slab("b", 4000, 0, 4000, 4000)],
+      [],
+      [{
+        id: "partial-continuous",
+        target: { kind: "slab-edge", slabId: "a", side: "east", range: { mode: "offset", ...range } },
+        support: "continuous",
+      }],
+    );
+    const settings = bottom({ defaults: { x: { diameter: 12, spacing: 1000 }, y: { diameter: 10, spacing: 1000 } } });
+    const calculation = calculateFloorBottomRebar(state, settings);
+    const xLines = calculation.lines.filter((line) => line.direction === "x");
+    const xPieces = calculation.pieces.filter((piece) => piece.direction === "x");
+    expect(calculation.isValid).toBe(true);
+    expect(calculation.domains).toHaveLength(1);
+    expect(xLines).toHaveLength(4);
+    expect(xPieces).toHaveLength(6);
+    const lineById = new Map(xLines.map((line) => [line.id, line]));
+    const full = xPieces.filter((piece) => piece.singleLengthMm === 8740);
+    const split = xPieces.filter((piece) => piece.singleLengthMm === 4610);
+    expect(full).toHaveLength(2);
+    expect(split).toHaveLength(4);
+    expect(full.map((piece) => lineById.get(piece.lineId)?.positionMm).sort((a, b) => Number(a) - Number(b))).toEqual(fullPositions);
+    expect(split.every((piece) => piece.startSupport === "inner-wall" || piece.endSupport === "inner-wall")).toBe(true);
+    expect(xPieces.filter((piece) => !fullPositions.includes(lineById.get(piece.lineId)?.positionMm ?? -1)).every((piece) => piece.singleLengthMm !== 8740)).toBe(true);
+  });
+
+  it("局部分段交点使用[lower, upper)归属，Y=2000属于上段inner-wall", () => {
+    const state = plan(
+      [slab("a", 0, 0, 4000, 4000), slab("b", 4000, 0, 4000, 4000)],
+      [],
+      [{ id: "lower-continuous", target: { kind: "slab-edge", slabId: "a", side: "east", range: { mode: "offset", startMm: 0, endMm: 2000 } }, support: "continuous" }],
+    );
+    const settings = bottom({ defaults: { x: { diameter: 12, spacing: 4000 }, y: { diameter: 10, spacing: 1000 } } });
+    const calculation = calculateFloorBottomRebar(state, settings);
+    const xPieces = calculation.pieces.filter((piece) => piece.direction === "x");
+    expect(calculation.lines.find((line) => line.direction === "x")?.positionMm).toBe(2000);
+    expect(xPieces).toHaveLength(2);
+    expect(xPieces.every((piece) => piece.singleLengthMm === 4610)).toBe(true);
+  });
 });
 
 describe("Opening裁断与实物Piece", () => {
@@ -227,5 +278,104 @@ describe("Geometry V2.1支承硬化", () => {
       [continuousRule("a", "east", "stale")],
     );
     expect(validateFloorPlanV2(state).map((issue) => issue.code)).toContain("support-rule-no-effect");
+  });
+});
+
+describe("Atomic端点归属与BOM稳定分组", () => {
+  it("跨板接口只匹配实际两侧板区，找不到合法共享边时安全拆分并报错", () => {
+    const unrelated: FloorAtomicBoundarySegment = {
+      id: "unrelated-continuous",
+      orientation: "vertical",
+      startX: 4000,
+      startY: 0,
+      endX: 4000,
+      endY: 4000,
+      geometryKind: "shared-slab",
+      support: "continuous",
+      thicknessMm: 0,
+      slabIds: ["c", "d"],
+      targets: [],
+    };
+    const result = mergeFloorLineIntervalsBySupport(
+      "x",
+      1000,
+      [
+        { start: 0, end: 4000, slabIds: new Set(["a"]) },
+        { start: 4000, end: 8000, slabIds: new Set(["b"]) },
+      ],
+      [unrelated],
+    );
+
+    expect(result.intervals).toHaveLength(2);
+    expect(result.errors.map((issue) => issue.code)).toContain(
+      "bottom-line-crossing-boundary-missing",
+    );
+  });
+
+  it("相邻Atomic采用半开区间，交点归后段且最大终点仍归最后一段", () => {
+    const state = plan(
+      [slab("a", 0, 0, 4000, 4000), slab("b", 4000, 0, 4000, 4000)],
+      [],
+      [{ id: "lower-continuous", target: { kind: "slab-edge", slabId: "a", side: "east", range: { mode: "offset", startMm: 0, endMm: 2000 } }, support: "continuous" }],
+    );
+    const atomic = buildFloorAtomicBoundarySegments(state).filter((segment) => segment.geometryKind === "shared-slab");
+    const lower = atomic.find((segment) => segment.startY === 0)!;
+    const upper = atomic.find((segment) => segment.startY === 2000)!;
+    expect(pointBelongsToAtomicSegment(lower, "x", 4000, 2000, atomic)).toBe(false);
+    expect(pointBelongsToAtomicSegment(upper, "x", 4000, 2000, atomic)).toBe(true);
+    expect(pointBelongsToAtomicSegment(upper, "x", 4000, 4000, atomic)).toBe(true);
+  });
+
+  it("端点同时命中不同support时返回ambiguous而不是按ID选择", () => {
+    const base: FloorAtomicBoundarySegment = {
+      id: "outer",
+      orientation: "vertical",
+      startX: 0,
+      startY: 0,
+      endX: 0,
+      endY: 4000,
+      geometryKind: "building-exterior",
+      support: "outer-wall",
+      thicknessMm: 370,
+      slabIds: ["a"],
+      targets: [],
+    };
+    const result = resolveFloorEndpointBoundary(
+      [base, { ...base, id: "inner", geometryKind: "shared-slab", support: "inner-wall", thicknessMm: 240 }],
+      "x",
+      0,
+      1000,
+      new Set(["a"]),
+    );
+    expect(result).toMatchObject({ errorCode: "bottom-endpoint-boundary-ambiguous" });
+  });
+
+  it("1e-6mm容差内的浮点长度使用同一BOM key且保留Piece真实长度", () => {
+    const piece = (id: string, singleLengthMm: number): FloorBarPiece => ({
+      id,
+      lineId: `line-${id}`,
+      domainId: "domain-a",
+      slabIds: ["a"],
+      layer: "bottom",
+      direction: "x",
+      diameter: 12,
+      spacing: 150,
+      runStartMm: 0,
+      runEndMm: 4200,
+      netLengthMm: 4200,
+      startBoundaryId: "west",
+      endBoundaryId: "east",
+      startSupport: "outer-wall",
+      endSupport: "outer-wall",
+      startAnchorMm: 370,
+      endAnchorMm: 370,
+      singleLengthMm,
+      source: "normal",
+    });
+    const pieces = [piece("a", 4940.1), piece("b", 4940.100000000001)];
+    const groups = buildFloorBottomBomGroups(pieces);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({ count: 2, singleLengthMm: 4940.1, pieceIds: ["a", "b"] });
+    expect(pieces[1].singleLengthMm).toBe(4940.100000000001);
   });
 });
