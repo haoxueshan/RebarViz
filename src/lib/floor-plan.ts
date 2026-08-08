@@ -355,10 +355,69 @@ function rangesOverlap(left: FloorEdgeRange, right: FloorEdgeRange, length: numb
   return leftStart < rightEnd - EPSILON && leftEnd > rightStart + EPSILON;
 }
 
-export function resolveSupportRuleTarget(target: FloorSupportRuleTarget, state: FloorPlanState): FloorSupportRule[] {
+export function floorSupportRuleMatchesTarget(
+  rule: FloorSupportRule,
+  target: FloorSupportRuleTarget,
+  state: FloorPlanState,
+): boolean {
   const object = targetObject(target, state);
-  if (!object) return [];
-  return state.supportRules.filter((rule) => sameTargetHost(rule.target, target) && rangesOverlap(rule.target.range, target.range, edgeLength(object, target.side)));
+  return Boolean(
+    object &&
+      sameTargetHost(rule.target, target) &&
+      rangesOverlap(rule.target.range, target.range, edgeLength(object, target.side)),
+  );
+}
+
+export function replaceFloorSupportRuleForAtomicSegment(
+  state: FloorPlanState,
+  segment: FloorAtomicBoundarySegment,
+  nextRule: FloorSupportRule,
+): FloorSupportRule[] {
+  return [
+    ...state.supportRules.filter((rule) =>
+      !segment.targets.some((target) => floorSupportRuleMatchesTarget(rule, target, state)),
+    ),
+    structuredClone(nextRule),
+  ];
+}
+
+export function resolveSupportRuleTarget(target: FloorSupportRuleTarget, state: FloorPlanState): FloorSupportRule[] {
+  return state.supportRules.filter((rule) => floorSupportRuleMatchesTarget(rule, target, state));
+}
+
+export type FloorBoundarySupportResolution = {
+  support: FloorResolvedSupport;
+  matchingRuleIds: string[];
+  conflictingSupports: FloorResolvedSupport[];
+};
+
+function defaultBoundarySupport(geometryKind: FloorBoundaryGeometryKind): FloorResolvedSupport {
+  if (geometryKind === "building-exterior") return "outer-wall";
+  return geometryKind === "shared-slab" ? "inner-wall" : "opening-cut";
+}
+
+export function resolveFloorBoundarySupportDetails(
+  geometryKind: FloorBoundaryGeometryKind,
+  targets: readonly FloorSupportRuleTarget[],
+  state: FloorPlanState,
+): FloorBoundarySupportResolution {
+  const fallback = defaultBoundarySupport(geometryKind);
+  if (geometryKind === "building-exterior") {
+    return { support: fallback, matchingRuleIds: [], conflictingSupports: [] };
+  }
+  const allowed = geometryKind === "shared-slab"
+    ? new Set<FloorSupportRule["support"]>(["inner-wall", "continuous"])
+    : new Set<FloorSupportRule["support"]>(["opening-cut", "inner-wall"]);
+  const matching = state.supportRules.filter(
+    (rule) => allowed.has(rule.support) && targets.some((target) => floorSupportRuleMatchesTarget(rule, target, state)),
+  );
+  const supports = [...new Set(matching.map((rule) => rule.support))].sort() as FloorResolvedSupport[];
+  return {
+    // 冲突时使用保守且与数组顺序无关的安全值；validation会阻止正式计算。
+    support: supports.length === 1 ? supports[0] : fallback,
+    matchingRuleIds: [...new Set(matching.map((rule) => rule.id))].sort(),
+    conflictingSupports: supports.length > 1 ? supports : [],
+  };
 }
 
 export function resolveFloorBoundarySupport(
@@ -366,14 +425,7 @@ export function resolveFloorBoundarySupport(
   targets: readonly FloorSupportRuleTarget[],
   state: FloorPlanState,
 ): FloorResolvedSupport {
-  if (geometryKind === "building-exterior") return "outer-wall";
-  const allowed = geometryKind === "shared-slab" ? new Set(["inner-wall", "continuous"]) : new Set(["opening-cut", "inner-wall"]);
-  let support: FloorResolvedSupport = geometryKind === "shared-slab" ? "inner-wall" : "opening-cut";
-  state.supportRules.forEach((rule) => {
-    if (!allowed.has(rule.support)) return;
-    if (targets.some((target) => resolveSupportRuleTarget(target, { ...state, supportRules: [rule] }).length > 0)) support = rule.support;
-  });
-  return support;
+  return resolveFloorBoundarySupportDetails(geometryKind, targets, state).support;
 }
 
 function candidateId(candidate: AtomicCandidate): string {
@@ -584,6 +636,47 @@ export function validateFloorPlanV2(state: FloorPlanState): FloorPlanIssue[] {
   if (!Number.isFinite(state.outerWallThickness) || state.outerWallThickness <= 0) issues.push({ level: "error", code: "outer-wall-invalid", message: "外墙厚度必须大于0。" });
   if (!Number.isFinite(state.snapDistanceMm) || state.snapDistanceMm < 0) issues.push({ level: "error", code: "snap-distance-invalid", message: "吸附距离不能为负数。" });
   state.supportRules.forEach((rule) => issues.push(...supportRuleIssue(rule, state)));
+  const atomic = buildFloorAtomicBoundarySegments(state);
+  atomic.forEach((segment) => {
+    const resolution = resolveFloorBoundarySupportDetails(segment.geometryKind, segment.targets, state);
+    if (resolution.conflictingSupports.length > 1) {
+      issues.push({
+        level: "error",
+        code: "support-rule-conflict",
+        message: `同一${segment.geometryKind === "shared-slab" ? "共享板边" : "洞口边"}存在相互冲突的支承规则（${resolution.conflictingSupports.join(" / ")}），请重新设置。`,
+        objectIds: resolution.matchingRuleIds,
+      });
+    }
+  });
+  state.supportRules.forEach((rule) => {
+    const affectsBoundary = atomic.some((segment) => {
+      const compatible = segment.geometryKind === "shared-slab"
+        ? rule.target.kind === "slab-edge" && (rule.support === "inner-wall" || rule.support === "continuous")
+        : segment.geometryKind === "opening-edge"
+          ? rule.target.kind === "opening-edge" && (rule.support === "opening-cut" || rule.support === "inner-wall")
+          : false;
+      return compatible && segment.targets.some((target) => floorSupportRuleMatchesTarget(rule, target, state));
+    });
+    if (targetObject(rule.target, state) && !affectsBoundary) {
+      issues.push({
+        level: "warning",
+        code: "support-rule-no-effect",
+        message: `支承规则“${rule.id}”当前已不作用于任何有效边界，请检查或重新设置。`,
+        objectIds: [rule.id],
+      });
+    }
+  });
+  const effectiveSlabIds = new Set(buildFloorTopologyCells(state).flatMap((cell) => cell.effectiveSlabId ? [cell.effectiveSlabId] : []));
+  state.slabs.forEach((slab) => {
+    if (slab.width > 0 && slab.height > 0 && !effectiveSlabIds.has(slab.id)) {
+      issues.push({
+        level: "warning",
+        code: "slab-fully-covered",
+        message: `“${slab.name}”已被洞口完全覆盖，不会产生楼板板筋。`,
+        objectIds: [slab.id],
+      });
+    }
+  });
   const components = findFloorComponents(state);
   if (components.length > 1) issues.push({ level: "warning", code: "floor-components", message: `当前楼层存在${components.length}个互不连接的楼板组合，请确认。`, objectIds: components.flat() });
   return issues;

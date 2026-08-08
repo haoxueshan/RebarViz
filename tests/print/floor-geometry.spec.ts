@@ -1,10 +1,13 @@
 import { expect, test } from "@playwright/test";
 
-test("Geometry V2支持板区、洞口、支承切换和V2草稿恢复", async ({ page }) => {
+test("Geometry V2.1支持板区、洞口、支承切换和草稿恢复", async ({ page }) => {
   await page.goto("/calculator/floor");
-  await page.evaluate(() => localStorage.removeItem("rebarviz:floor-rebar:draft:v1"));
+  await page.evaluate(() => {
+    localStorage.removeItem("rebarviz:floor-rebar:draft:v1");
+    localStorage.removeItem("rebarviz:floor-rebar:bottom:v1");
+  });
   await page.reload();
-  await expect(page.getByText("FloorRebarCalculator · 几何拓扑 V2")).toBeVisible();
+  await expect(page.getByText("FloorRebarCalculator · Geometry V2.1 + Bottom Rebar V1")).toBeVisible();
   await expect(page.getByRole("heading", { name: "整层板区平面" })).toBeVisible();
 
   await page.getByLabel("板区类型").selectOption("corridor");
@@ -52,4 +55,44 @@ test("数字空草稿明确无效且移动端没有横向溢出", async ({ page 
   await expect(page.getByText(/旧数值不会被当作当前输入提交/)).toBeVisible();
   const dimensions = await page.evaluate(() => ({ clientWidth: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth }));
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
+});
+
+test("Bottom V1合并continuous、显示地筋料单并恢复独立设置", async ({ page }) => {
+  await page.goto("/calculator/floor");
+  await page.evaluate(() => {
+    localStorage.removeItem("rebarviz:floor-rebar:draft:v1");
+    localStorage.removeItem("rebarviz:floor-rebar:bottom:v1");
+  });
+  await page.reload();
+  await page.getByRole("button", { name: "连续楼板", exact: true }).click();
+  await page.getByRole("button", { name: /2\. 地筋/ }).click();
+  await expect(page.getByRole("heading", { name: "整层地筋默认规格" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "整层地筋料单" })).toBeVisible();
+  await expect(page.getByText("8.540m").first()).toBeVisible();
+  await expect(page.getByText("正式地筋结果有效")).toBeVisible();
+
+  const selects = page.getByLabel("根数算法");
+  await selects.selectOption("floor");
+  const xDiameter = page.getByLabel("直径").first();
+  await xDiameter.fill("14");
+  await page.waitForTimeout(400);
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem("rebarviz:floor-rebar:bottom:v1") ?? "null"));
+  expect(stored).toMatchObject({ schemaVersion: 1, state: { countMode: "floor", defaults: { x: { diameter: 14 } } } });
+
+  await page.reload();
+  await page.getByRole("button", { name: /2\. 地筋/ }).click();
+  await expect(page.getByLabel("根数算法")).toHaveValue("floor");
+  await expect(page.getByLabel("直径").first()).toHaveValue("14");
+});
+
+test("Bottom数字空草稿阻止旧值生成正式结果", async ({ page }) => {
+  await page.goto("/calculator/floor");
+  await page.evaluate(() => localStorage.removeItem("rebarviz:floor-rebar:bottom:v1"));
+  await page.reload();
+  await page.getByRole("button", { name: /2\. 地筋/ }).click();
+  const spacing = page.getByLabel("间距").first();
+  await spacing.fill("");
+  await expect(spacing).toHaveAttribute("aria-invalid", "true");
+  await expect(page.getByText("地筋结果无效")).toBeVisible();
+  await expect(page.getByText(/未使用旧值计算/)).toBeVisible();
 });

@@ -11,6 +11,7 @@ import {
   floorSlabsOverlap,
   nextAvailableFloorName,
   normalizeFloorPlanState,
+  replaceFloorSupportRuleForAtomicSegment,
   snapFloorOpening,
   snapFloorSlab,
   validateFloorPlan,
@@ -138,6 +139,32 @@ describe("Geometry与Support分离", () => {
     state.supportRules = [{ id: "bad", target: { kind: "slab-edge", slabId: "missing", side: "east", range: { mode: "whole" } }, support: "continuous" }];
     expect(validateFloorPlanV2(state).map((issue) => issue.code)).toContain("support-target-missing");
     expect(() => buildFloorAtomicBoundarySegments(state)).not.toThrow();
+  });
+
+  it("冲突双边规则确定性回退inner-wall，UI替换操作同时清除两侧重叠规则", () => {
+    const state = plan([slab({ id: "a", x: 0, y: 0, width: 3000, height: 3000 }), slab({ id: "b", x: 3000, y: 0, width: 3000, height: 3000 })]);
+    state.supportRules = [
+      { id: "a-continuous", target: { kind: "slab-edge", slabId: "a", side: "east", range: { mode: "whole" } }, support: "continuous" },
+      { id: "b-inner", target: { kind: "slab-edge", slabId: "b", side: "west", range: { mode: "whole" } }, support: "inner-wall" },
+    ];
+    const segment = buildFloorAtomicBoundarySegments(state).find((item) => item.geometryKind === "shared-slab")!;
+    expect(segment.support).toBe("inner-wall");
+    expect(validateFloorPlanV2(state).map((issue) => issue.code)).toContain("support-rule-conflict");
+    const nextRules = replaceFloorSupportRuleForAtomicSegment(state, segment, {
+      id: "resolved",
+      target: segment.targets[0],
+      support: "continuous",
+    });
+    expect(nextRules).toHaveLength(1);
+    expect(nextRules[0]).toMatchObject({ id: "resolved", support: "continuous" });
+  });
+
+  it("失去邻接的旧规则产生no-effect，完全被洞口覆盖的板区产生warning", () => {
+    const stale = plan([slab({ id: "a", x: 0, y: 0, width: 3000, height: 3000 }), slab({ id: "b", x: 5000, y: 0, width: 3000, height: 3000 })]);
+    stale.supportRules = [{ id: "stale", target: { kind: "slab-edge", slabId: "a", side: "east", range: { mode: "whole" } }, support: "continuous" }];
+    expect(validateFloorPlanV2(stale).map((issue) => issue.code)).toContain("support-rule-no-effect");
+    const covered = plan([slab({ id: "a", name: "完全扣除板", x: 0, y: 0, width: 3000, height: 3000 })], [opening({ id: "o", x: 0, y: 0, width: 3000, height: 3000 })]);
+    expect(validateFloorPlanV2(covered).map((issue) => issue.code)).toContain("slab-fully-covered");
   });
 });
 

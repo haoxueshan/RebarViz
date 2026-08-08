@@ -10,6 +10,7 @@ import {
   type FloorPlanState,
   type FloorSlab,
 } from "@/lib/floor-plan";
+import type { FloorBottomCalculation } from "@/lib/floor-bottom-calculator";
 
 export type FloorSelection =
   | { kind: "slab"; id: string }
@@ -57,6 +58,7 @@ export function FloorCanvas({
   onSelect,
   onSelectBoundary,
   onMove,
+  bottomCalculation,
 }: {
   state: FloorPlanState;
   selection: FloorSelection;
@@ -64,11 +66,17 @@ export function FloorCanvas({
   onSelect: (selection: FloorSelection) => void;
   onSelectBoundary: (segment: FloorBoundarySegment) => void;
   onMove: (selection: Exclude<FloorSelection, null>, x: number, y: number, finished: boolean) => void;
+  /** 仅消费正式Bottom计算结果；Canvas不计算根数、长度或重量。 */
+  bottomCalculation?: FloorBottomCalculation;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const dragRef = useRef<DragState | null>(null);
   const bounds = useMemo(() => floorPlanObjectBounds(state), [state]);
   const boundaries = useMemo(() => buildFloorDisplayBoundarySegments(state), [state]);
+  const bottomLines = useMemo(
+    () => new Map(bottomCalculation?.lines.map((line) => [line.id, line]) ?? []),
+    [bottomCalculation],
+  );
   const worldWidth = Math.max(bounds.maxX - bounds.minX, 1);
   const worldHeight = Math.max(bounds.maxY - bounds.minY, 1);
   const padding = Math.max(state.outerWallThickness, 240) * 1.8;
@@ -117,8 +125,8 @@ export function FloorCanvas({
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-4 py-3">
         <div>
-          <h2 className="font-semibold text-slate-900">整层板区平面</h2>
-          <p className="mt-0.5 text-xs text-slate-500">板区表示存在水平楼板的区域；楼梯间等无板区域使用洞口建模。</p>
+          <h2 className="font-semibold text-slate-900">{bottomCalculation ? "整层地筋净跨路径" : "整层板区平面"}</h2>
+          <p className="mt-0.5 text-xs text-slate-500">{bottomCalculation ? "图中显示净跨钢筋路径；正式下料长度已包含端部墙厚。洞口会把同一理论线切成多个实物件。" : "板区表示存在水平楼板的区域；楼梯间等无板区域使用洞口建模。"}</p>
         </div>
         <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700"><Move size={13} /> 板区与洞口可拖动</span>
       </div>
@@ -194,6 +202,27 @@ export function FloorCanvas({
             >
               <title>{`${opening.name} VOID：${formatMm(opening.width)} × ${formatMm(opening.height)}mm${selected ? "（已选择）" : ""}`}</title>
             </rect>
+          );
+        })}
+
+        {bottomCalculation?.isValid && bottomCalculation.pieces.map((piece) => {
+          const line = bottomLines.get(piece.lineId);
+          if (!line) return null;
+          const xDirection = piece.direction === "x";
+          return (
+            <line
+              key={piece.id}
+              x1={toX(xDirection ? piece.runStartMm : line.positionMm)}
+              y1={toY(xDirection ? line.positionMm : piece.runStartMm)}
+              x2={toX(xDirection ? piece.runEndMm : line.positionMm)}
+              y2={toY(xDirection ? line.positionMm : piece.runEndMm)}
+              stroke={xDirection ? "#dc2626" : "#7c3aed"}
+              strokeWidth="2.4"
+              strokeLinecap="round"
+              pointerEvents="none"
+            >
+              <title>{`${xDirection ? "东西向" : "南北向"}地筋净跨 ${formatMm(piece.netLengthMm)}mm；下料 ${formatMm(piece.singleLengthMm)}mm`}</title>
+            </line>
           );
         })}
 
@@ -275,6 +304,12 @@ export function FloorCanvas({
           <line x1="225" y1="0" x2="260" y2="0" stroke="#64748b" strokeWidth="2.5" strokeDasharray="9 6" /><text x="267" y="4">连续</text>
           <line x1="330" y1="0" x2="365" y2="0" stroke="#94a3b8" strokeWidth="3" strokeDasharray="5 6" /><text x="372" y="4">洞口裁断</text>
         </g>
+        {bottomCalculation && (
+          <g transform="translate(560 625)" fontSize="11" fill="#475569">
+            <line x1="0" y1="0" x2="35" y2="0" stroke="#dc2626" strokeWidth="2.4" /><text x="42" y="4">东西向地筋Piece</text>
+            <line x1="150" y1="0" x2="185" y2="0" stroke="#7c3aed" strokeWidth="2.4" /><text x="192" y="4">南北向地筋Piece</text>
+          </g>
+        )}
       </svg>
     </div>
   );

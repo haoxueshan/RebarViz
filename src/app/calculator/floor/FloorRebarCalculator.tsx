@@ -3,13 +3,26 @@
 import { Copy, DoorOpen, Grid2X2, House, Info, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { CalculatorModeNav } from "@/components/calculator/CalculatorModeNav";
+import { FloorBottomResults, FloorBottomSettingsPanel } from "@/components/calculator/floor/FloorBottomPanel";
 import { FloorCanvas, type FloorSelection } from "@/components/calculator/floor/FloorCanvas";
+import {
+  calculateFloorBottomRebar,
+  DEFAULT_FLOOR_BOTTOM_STATE,
+  type FloorBottomCalculation,
+  type FloorBottomState,
+} from "@/lib/floor-bottom-calculator";
+import {
+  createFloorBottomStoredRecord,
+  FLOOR_BOTTOM_STORAGE_KEY,
+  parseFloorBottomStoredRecord,
+} from "@/lib/floor-bottom-storage";
 import {
   buildFloorAtomicBoundarySegments,
   buildFloorDisplayBoundarySegments,
   DEFAULT_FLOOR_PLAN_STATE,
   floorPlanBounds,
   nextAvailableFloorName,
+  replaceFloorSupportRuleForAtomicSegment,
   snapFloorOpening,
   snapFloorSlab,
   validateFloorPlanV2,
@@ -37,6 +50,32 @@ const OPENING_TYPE_OPTIONS: Array<{ value: FloorOpeningType; label: string }> = 
 
 function cloneDefaultState(): FloorPlanState {
   return structuredClone(DEFAULT_FLOOR_PLAN_STATE);
+}
+
+function cloneDefaultBottomState(): FloorBottomState {
+  return structuredClone(DEFAULT_FLOOR_BOTTOM_STATE);
+}
+
+function blockBottomForDrafts(
+  calculation: FloorBottomCalculation,
+  invalidCount: number,
+): FloorBottomCalculation {
+  if (invalidCount === 0) return calculation;
+  return {
+    ...calculation,
+    lines: [],
+    pieces: [],
+    groups: [],
+    totalBarLines: 0,
+    totalPieces: 0,
+    totalLengthM: 0,
+    totalWeightKg: null,
+    errors: [
+      ...calculation.errors,
+      { code: "bottom-draft-invalid", message: `有 ${invalidCount} 个地筋数字输入为空或非法。` },
+    ],
+    isValid: false,
+  };
 }
 
 function nextObjectId(kind: "slab" | "opening"): string {
@@ -130,13 +169,19 @@ function DraftNumberField({
   );
 }
 
-function WorkflowTabs() {
+function WorkflowTabs({ stage, onChange }: { stage: "plan" | "bottom"; onChange: (stage: "plan" | "bottom") => void }) {
   return (
     <div className="mb-5 grid grid-cols-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" aria-label="整层计算步骤">
       {["楼层", "地筋", "面筋", "屋檐", "料单"].map((item, index) => (
-        <div key={item} className={`min-w-0 px-1 py-3 text-center text-xs font-semibold sm:text-sm ${index === 0 ? "bg-blue-600 text-white" : "border-l border-slate-200 bg-slate-50 text-slate-400"}`} aria-current={index === 0 ? "step" : undefined}>
-          <span className="hidden sm:inline">{index + 1}. </span>{item}{index > 0 && <span className="ml-1 hidden text-[10px] font-normal lg:inline">后续阶段</span>}
-        </div>
+        index < 2 ? (
+          <button key={item} type="button" onClick={() => onChange(index === 0 ? "plan" : "bottom")} className={`min-h-12 min-w-0 px-1 py-3 text-center text-xs font-semibold sm:text-sm ${stage === (index === 0 ? "plan" : "bottom") ? "bg-blue-600 text-white" : "border-l border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`} aria-current={stage === (index === 0 ? "plan" : "bottom") ? "step" : undefined}>
+            <span className="hidden sm:inline">{index + 1}. </span>{item}
+          </button>
+        ) : (
+          <div key={item} className="min-w-0 border-l border-slate-200 bg-slate-50 px-1 py-3 text-center text-xs font-semibold text-slate-400 sm:text-sm">
+            <span className="hidden sm:inline">{index + 1}. </span>{item}<span className="ml-1 hidden text-[10px] font-normal lg:inline">后续阶段</span>
+          </div>
+        )
       ))}
     </div>
   );
@@ -198,9 +243,12 @@ function BoundaryPanel({
 
 export default function FloorRebarCalculator() {
   const [state, setState] = useState<FloorPlanState>(cloneDefaultState);
+  const [bottomState, setBottomState] = useState<FloorBottomState>(cloneDefaultBottomState);
+  const [stage, setStage] = useState<"plan" | "bottom">("plan");
   const [selection, setSelection] = useState<FloorSelection>({ kind: "slab", id: DEFAULT_FLOOR_PLAN_STATE.slabs[0].id });
   const [selectedBoundaryId, setSelectedBoundaryId] = useState<string | null>(null);
   const [invalidDrafts, setInvalidDrafts] = useState<Set<string>>(new Set());
+  const [invalidBottomDrafts, setInvalidBottomDrafts] = useState<Set<string>>(new Set());
   const [hydrated, setHydrated] = useState(false);
   const [inputRevision, setInputRevision] = useState(0);
 
@@ -211,7 +259,24 @@ export default function FloorRebarCalculator() {
         const record = parseFloorDraftRecord(JSON.parse(saved));
         if (record) {
           setState(record.state);
+          const bottomSaved = window.localStorage.getItem(FLOOR_BOTTOM_STORAGE_KEY);
+          if (bottomSaved) {
+            const bottomRecord = parseFloorBottomStoredRecord(
+              JSON.parse(bottomSaved),
+              new Set(record.state.slabs.map((slab) => slab.id)),
+            );
+            if (bottomRecord) setBottomState(bottomRecord.state);
+          }
           setSelection(record.state.slabs[0] ? { kind: "slab", id: record.state.slabs[0].id } : record.state.openings[0] ? { kind: "opening", id: record.state.openings[0].id } : null);
+        }
+      } else {
+        const bottomSaved = window.localStorage.getItem(FLOOR_BOTTOM_STORAGE_KEY);
+        if (bottomSaved) {
+          const bottomRecord = parseFloorBottomStoredRecord(
+            JSON.parse(bottomSaved),
+            new Set(DEFAULT_FLOOR_PLAN_STATE.slabs.map((slab) => slab.id)),
+          );
+          if (bottomRecord) setBottomState(bottomRecord.state);
         }
       }
     } catch {
@@ -229,17 +294,40 @@ export default function FloorRebarCalculator() {
     return () => window.clearTimeout(timer);
   }, [hydrated, state]);
 
+  useEffect(() => {
+    if (!hydrated) return;
+    const timer = window.setTimeout(() => {
+      const slabIds = new Set(state.slabs.map((slab) => slab.id));
+      const cleaned = {
+        ...bottomState,
+        slabOverrides: Object.fromEntries(
+          Object.entries(bottomState.slabOverrides).filter(([slabId]) => slabIds.has(slabId)),
+        ),
+      };
+      window.localStorage.setItem(FLOOR_BOTTOM_STORAGE_KEY, JSON.stringify(createFloorBottomStoredRecord(cleaned)));
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [bottomState, hydrated, state.slabs]);
+
   const atomic = useMemo(() => buildFloorAtomicBoundarySegments(state), [state]);
   const displays = useMemo(() => buildFloorDisplayBoundarySegments(state), [state]);
   const issues = useMemo(() => validateFloorPlanV2(state), [state]);
   const errors = issues.filter((issue) => issue.level === "error");
   const warnings = issues.filter((issue) => issue.level === "warning");
+  const rawBottomCalculation = useMemo(() => calculateFloorBottomRebar(state, bottomState), [bottomState, state]);
+  const bottomCalculation = useMemo(
+    () => blockBottomForDrafts(rawBottomCalculation, invalidDrafts.size + invalidBottomDrafts.size),
+    [invalidBottomDrafts.size, invalidDrafts.size, rawBottomCalculation],
+  );
   const selectedSlab = selection?.kind === "slab" ? state.slabs.find((slab) => slab.id === selection.id) ?? null : null;
   const selectedOpening = selection?.kind === "opening" ? state.openings.find((opening) => opening.id === selection.id) ?? null : null;
   const selectedSegments = selection ? atomic.filter((segment) => selection.kind === "slab" ? segment.slabIds.includes(selection.id) : segment.openingId === selection.id) : [];
 
   const setDraftValidity = (key: string, valid: boolean) => {
     setInvalidDrafts((current) => { const next = new Set(current); if (valid) next.delete(key); else next.add(key); return next; });
+  };
+  const setBottomDraftValidity = (key: string, valid: boolean) => {
+    setInvalidBottomDrafts((current) => { const next = new Set(current); if (valid) next.delete(key); else next.add(key); return next; });
   };
 
   const updateSlab = (patch: Partial<FloorSlab>) => {
@@ -321,13 +409,18 @@ export default function FloorRebarCalculator() {
 
   const setSegmentSupport = (segment: FloorAtomicBoundarySegment, target: FloorSupportRuleTarget, support: FloorSupportRule["support"]) => {
     const key = targetKey(target);
-    setState((current) => ({
-      ...current,
-      supportRules: [
-        ...current.supportRules.filter((rule) => targetKey(rule.target) !== key),
-        { id: `support:${key}`, target: structuredClone(target), support },
-      ],
-    }));
+    setState((current) => {
+      // 同一Atomic Segment可能同时由A东侧和B西侧稳定target描述。
+      // UI写入时清除两侧所有重叠规则，避免制造互相冲突的双边状态。
+      return {
+        ...current,
+        supportRules: replaceFloorSupportRuleForAtomicSegment(current, segment, {
+          id: `support:${key}`,
+          target: structuredClone(target),
+          support,
+        }),
+      };
+    });
     setSelectedBoundaryId(segment.id);
   };
 
@@ -352,16 +445,16 @@ export default function FloorRebarCalculator() {
   return (
     <main className="mx-auto max-w-[1500px] px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
-        <p className="text-sm font-semibold text-blue-600">FloorRebarCalculator · 几何拓扑 V2</p>
+        <p className="text-sm font-semibold text-blue-600">FloorRebarCalculator · Geometry V2.1 + Bottom Rebar V1</p>
         <h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-950">整层楼板板筋系统</h1>
-        <p className="mt-3 max-w-4xl text-sm leading-6 text-slate-600">当前阶段只负责整层有板区域、洞口及支承关系建模，为后续地筋、面筋、通墙、屋檐和钢筋料单提供几何基础。</p>
+        <p className="mt-3 max-w-4xl text-sm leading-6 text-slate-600">当前已支持整层有板区域、洞口、支承拓扑与地筋下料；面筋、通墙、屋檐和完整综合料单仍属于后续阶段。</p>
       </header>
       <CalculatorModeNav />
-      <WorkflowTabs />
+      <WorkflowTabs stage={stage} onChange={setStage} />
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.65fr)_minmax(360px,0.75fr)]">
         <section className="min-w-0 space-y-4">
-          <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+          {stage === "plan" && <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
             <button type="button" onClick={addSlab} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"><Plus size={17} />添加板区</button>
             <button type="button" onClick={addOpening} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700"><DoorOpen size={17} />添加洞口</button>
             <button type="button" onClick={duplicateSelected} disabled={!selection} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-40"><Copy size={16} />复制所选</button>
@@ -371,18 +464,21 @@ export default function FloorRebarCalculator() {
               const next = cloneDefaultState();
               setState(next); setSelection({ kind: "slab", id: next.slabs[0].id }); setSelectedBoundaryId(null); setInvalidDrafts(new Set()); setInputRevision((value) => value + 1); window.localStorage.removeItem(FLOOR_DRAFT_KEY);
             }} className="col-span-2 inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 sm:col-span-1"><RotateCcw size={16} />重置平面</button>
-          </div>
+          </div>}
 
-          <FloorCanvas state={state} selection={selection} selectedBoundaryId={selectedBoundaryId} onSelect={(next) => { setSelection(next); setSelectedBoundaryId(null); setInvalidDrafts(new Set()); }} onSelectBoundary={selectDisplayBoundary} onMove={moveObject} />
+          <FloorCanvas state={state} selection={selection} selectedBoundaryId={selectedBoundaryId} onSelect={(next) => { setSelection(next); setSelectedBoundaryId(null); }} onSelectBoundary={selectDisplayBoundary} onMove={moveObject} bottomCalculation={stage === "bottom" ? bottomCalculation : undefined} />
 
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          {stage === "plan" && <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
             {[["板区", state.slabs.length, "slate"], ["洞口", state.openings.length, "rose"], ["建筑外边", stats.exterior, "slate"], ["内墙段", stats.inner, "blue"], ["连续板边", stats.continuous, "cyan"], ["洞口边", stats.opening, "amber"]].map(([label, value, tone]) => (
               <div key={String(label)} className={`rounded-2xl border p-4 ${tone === "blue" ? "border-blue-200 bg-blue-50" : tone === "rose" ? "border-rose-200 bg-rose-50" : tone === "cyan" ? "border-cyan-200 bg-cyan-50" : tone === "amber" ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-white"}`}><span className="text-xs text-slate-600">{label}</span><strong className="mt-1 block text-2xl text-slate-950">{value}</strong></div>
             ))}
-          </div>
+          </div>}
         </section>
 
         <aside className="space-y-4 xl:sticky xl:top-20 xl:self-start">
+          {stage === "bottom" ? (
+            <FloorBottomSettingsPanel plan={state} bottom={bottomState} selectedSlab={selectedSlab} onChange={setBottomState} onValidityChange={setBottomDraftValidity} />
+          ) : <>
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-center gap-2"><House size={18} className="text-blue-600" /><h2 className="font-semibold text-slate-900">净跨拓扑设置</h2></div>
             <p className="mt-2 text-xs leading-5 text-slate-500">X/Y仅表达板区净跨拼接，不含墙厚；墙厚通过支承拓扑单独保存。</p>
@@ -436,11 +532,13 @@ export default function FloorRebarCalculator() {
           </section>
 
           <section className="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm leading-6 text-slate-700">
-            <div className="flex items-start gap-2"><Info size={18} className="mt-0.5 shrink-0 text-blue-600" /><div><strong>阶段范围</strong><p className="mt-1">Geometry V2不生成任何钢筋、长度、重量或料单。下一阶段才会基于Atomic Boundary和Resolved Support开始整层地筋。</p></div></div>
+            <div className="flex items-start gap-2"><Info size={18} className="mt-0.5 shrink-0 text-blue-600" /><div><strong>几何职责</strong><p className="mt-1">楼层页只维护Geometry与Support。地筋页基于Atomic Boundary生成Domain、理论BarLine、Opening裁断后的Piece和地筋料单。</p></div></div>
           </section>
+          </>}
         </aside>
       </div>
-      <p className="mt-5 text-xs text-slate-500">当前显示边界 {displays.length} 段；未来计算使用原子边界 {atomic.length} 段。显示段ID不会用于保存支承或屋檐业务规则。</p>
+      {stage === "bottom" && <FloorBottomResults plan={state} calculation={bottomCalculation} invalidDraftCount={invalidDrafts.size + invalidBottomDrafts.size} />}
+      <p className="mt-5 text-xs text-slate-500">当前显示边界 {displays.length} 段；正式地筋计算使用原子边界 {atomic.length} 段。显示段ID不会用于保存支承或后续屋檐业务规则。</p>
     </main>
   );
 }
