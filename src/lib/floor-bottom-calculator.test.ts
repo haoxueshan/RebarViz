@@ -60,6 +60,12 @@ describe("Floor Bottom单板与根数算法", () => {
     expect(y).toMatchObject({ count: 21, diameter: 10, spacing: 200, singleLengthMm: 4340 });
     expect(calculation.totalBarLines).toBe(45);
     expect(calculation.totalPieces).toBe(45);
+    expect(calculation.lines.every((line) => line.layer === "bottom")).toBe(true);
+    expect(calculation.pieces.every((piece) =>
+      piece.layer === "bottom" &&
+      !piece.startExtraApplied &&
+      !piece.endExtraApplied &&
+      piece.topExtraValueMm === 0)).toBe(true);
     const pieceWeight = calculation.pieces.reduce((sum, piece) => sum + piece.singleLengthMm / 1000 * theoreticalUnitWeight(piece.diameter), 0);
     expect(calculation.totalWeightKg).toBeCloseTo(pieceWeight, 10);
     expect(calculation.groups.reduce((sum, group) => sum + group.weightKg, 0)).toBeCloseTo(pieceWeight, 10);
@@ -369,6 +375,9 @@ describe("Atomic端点归属与BOM稳定分组", () => {
       endSupport: "outer-wall",
       startAnchorMm: 370,
       endAnchorMm: 370,
+      startExtraApplied: false,
+      endExtraApplied: false,
+      topExtraValueMm: 0,
       singleLengthMm,
       source: "normal",
     });

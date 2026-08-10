@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { CalculatorModeNav } from "@/components/calculator/CalculatorModeNav";
 import { FloorBottomResults, FloorBottomSettingsPanel } from "@/components/calculator/floor/FloorBottomPanel";
 import { FloorCanvas, type FloorSelection } from "@/components/calculator/floor/FloorCanvas";
+import { FloorTopResults, FloorTopSettingsPanel } from "@/components/calculator/floor/FloorTopPanel";
 import {
   calculateFloorBottomRebar,
   DEFAULT_FLOOR_BOTTOM_STATE,
@@ -16,6 +17,17 @@ import {
   FLOOR_BOTTOM_STORAGE_KEY,
   parseFloorBottomStoredRecord,
 } from "@/lib/floor-bottom-storage";
+import {
+  calculateFloorTopRebar,
+  DEFAULT_FLOOR_TOP_STATE,
+  type FloorTopCalculation,
+  type FloorTopState,
+} from "@/lib/floor-top-calculator";
+import {
+  createFloorTopStoredRecord,
+  FLOOR_TOP_STORAGE_KEY,
+  parseFloorTopStoredRecord,
+} from "@/lib/floor-top-storage";
 import {
   buildFloorAtomicBoundarySegments,
   buildFloorDisplayBoundarySegments,
@@ -56,6 +68,10 @@ function cloneDefaultBottomState(): FloorBottomState {
   return structuredClone(DEFAULT_FLOOR_BOTTOM_STATE);
 }
 
+function cloneDefaultTopState(): FloorTopState {
+  return structuredClone(DEFAULT_FLOOR_TOP_STATE);
+}
+
 function blockBottomForDrafts(
   calculation: FloorBottomCalculation,
   invalidCount: number,
@@ -73,6 +89,28 @@ function blockBottomForDrafts(
     errors: [
       ...calculation.errors,
       { code: "bottom-draft-invalid", message: `有 ${invalidCount} 个地筋数字输入为空或非法。` },
+    ],
+    isValid: false,
+  };
+}
+
+function blockTopForDrafts(
+  calculation: FloorTopCalculation,
+  invalidCount: number,
+): FloorTopCalculation {
+  if (invalidCount === 0) return calculation;
+  return {
+    ...calculation,
+    lines: [],
+    pieces: [],
+    groups: [],
+    totalBarLines: 0,
+    totalPieces: 0,
+    totalLengthM: 0,
+    totalWeightKg: null,
+    errors: [
+      ...calculation.errors,
+      { code: "top-draft-invalid", message: `有 ${invalidCount} 个面筋或几何数字输入为空或非法。` },
     ],
     isValid: false,
   };
@@ -169,12 +207,14 @@ function DraftNumberField({
   );
 }
 
-function WorkflowTabs({ stage, onChange }: { stage: "plan" | "bottom"; onChange: (stage: "plan" | "bottom") => void }) {
+type FloorWorkflowStage = "plan" | "bottom" | "top";
+
+function WorkflowTabs({ stage, onChange }: { stage: FloorWorkflowStage; onChange: (stage: FloorWorkflowStage) => void }) {
   return (
     <div className="mb-5 grid grid-cols-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" aria-label="整层计算步骤">
       {["楼层", "地筋", "面筋", "屋檐", "料单"].map((item, index) => (
-        index < 2 ? (
-          <button key={item} type="button" onClick={() => onChange(index === 0 ? "plan" : "bottom")} className={`min-h-12 min-w-0 px-1 py-3 text-center text-xs font-semibold sm:text-sm ${stage === (index === 0 ? "plan" : "bottom") ? "bg-blue-600 text-white" : "border-l border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`} aria-current={stage === (index === 0 ? "plan" : "bottom") ? "step" : undefined}>
+        index < 3 ? (
+          <button key={item} type="button" onClick={() => onChange(index === 0 ? "plan" : index === 1 ? "bottom" : "top")} className={`min-h-12 min-w-0 px-1 py-3 text-center text-xs font-semibold sm:text-sm ${stage === (index === 0 ? "plan" : index === 1 ? "bottom" : "top") ? "bg-blue-600 text-white" : "border-l border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`} aria-current={stage === (index === 0 ? "plan" : index === 1 ? "bottom" : "top") ? "step" : undefined}>
             <span className="hidden sm:inline">{index + 1}. </span>{item}
           </button>
         ) : (
@@ -244,11 +284,13 @@ function BoundaryPanel({
 export default function FloorRebarCalculator() {
   const [state, setState] = useState<FloorPlanState>(cloneDefaultState);
   const [bottomState, setBottomState] = useState<FloorBottomState>(cloneDefaultBottomState);
-  const [stage, setStage] = useState<"plan" | "bottom">("plan");
+  const [topState, setTopState] = useState<FloorTopState>(cloneDefaultTopState);
+  const [stage, setStage] = useState<FloorWorkflowStage>("plan");
   const [selection, setSelection] = useState<FloorSelection>({ kind: "slab", id: DEFAULT_FLOOR_PLAN_STATE.slabs[0].id });
   const [selectedBoundaryId, setSelectedBoundaryId] = useState<string | null>(null);
   const [invalidDrafts, setInvalidDrafts] = useState<Set<string>>(new Set());
   const [invalidBottomDrafts, setInvalidBottomDrafts] = useState<Set<string>>(new Set());
+  const [invalidTopDrafts, setInvalidTopDrafts] = useState<Set<string>>(new Set());
   const [hydrated, setHydrated] = useState(false);
   const [inputRevision, setInputRevision] = useState(0);
 
@@ -267,6 +309,14 @@ export default function FloorRebarCalculator() {
             );
             if (bottomRecord) setBottomState(bottomRecord.state);
           }
+          const topSaved = window.localStorage.getItem(FLOOR_TOP_STORAGE_KEY);
+          if (topSaved) {
+            const topRecord = parseFloorTopStoredRecord(
+              JSON.parse(topSaved),
+              new Set(record.state.slabs.map((slab) => slab.id)),
+            );
+            if (topRecord) setTopState(topRecord.state);
+          }
           setSelection(record.state.slabs[0] ? { kind: "slab", id: record.state.slabs[0].id } : record.state.openings[0] ? { kind: "opening", id: record.state.openings[0].id } : null);
         }
       } else {
@@ -277,6 +327,14 @@ export default function FloorRebarCalculator() {
             new Set(DEFAULT_FLOOR_PLAN_STATE.slabs.map((slab) => slab.id)),
           );
           if (bottomRecord) setBottomState(bottomRecord.state);
+        }
+        const topSaved = window.localStorage.getItem(FLOOR_TOP_STORAGE_KEY);
+        if (topSaved) {
+          const topRecord = parseFloorTopStoredRecord(
+            JSON.parse(topSaved),
+            new Set(DEFAULT_FLOOR_PLAN_STATE.slabs.map((slab) => slab.id)),
+          );
+          if (topRecord) setTopState(topRecord.state);
         }
       }
     } catch {
@@ -309,6 +367,24 @@ export default function FloorRebarCalculator() {
     return () => window.clearTimeout(timer);
   }, [bottomState, hydrated, state.slabs]);
 
+  useEffect(() => {
+    if (!hydrated) return;
+    const timer = window.setTimeout(() => {
+      const slabIds = new Set(state.slabs.map((slab) => slab.id));
+      const cleaned = {
+        ...topState,
+        slabOverrides: Object.fromEntries(
+          Object.entries(topState.slabOverrides).filter(([slabId]) => slabIds.has(slabId)),
+        ),
+      };
+      window.localStorage.setItem(
+        FLOOR_TOP_STORAGE_KEY,
+        JSON.stringify(createFloorTopStoredRecord(cleaned)),
+      );
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [hydrated, state.slabs, topState]);
+
   const atomic = useMemo(() => buildFloorAtomicBoundarySegments(state), [state]);
   const displays = useMemo(() => buildFloorDisplayBoundarySegments(state), [state]);
   const issues = useMemo(() => validateFloorPlanV2(state), [state]);
@@ -319,6 +395,14 @@ export default function FloorRebarCalculator() {
     () => blockBottomForDrafts(rawBottomCalculation, invalidDrafts.size + invalidBottomDrafts.size),
     [invalidBottomDrafts.size, invalidDrafts.size, rawBottomCalculation],
   );
+  const rawTopCalculation = useMemo(
+    () => calculateFloorTopRebar(state, topState),
+    [state, topState],
+  );
+  const topCalculation = useMemo(
+    () => blockTopForDrafts(rawTopCalculation, invalidDrafts.size + invalidTopDrafts.size),
+    [invalidDrafts.size, invalidTopDrafts.size, rawTopCalculation],
+  );
   const selectedSlab = selection?.kind === "slab" ? state.slabs.find((slab) => slab.id === selection.id) ?? null : null;
   const selectedOpening = selection?.kind === "opening" ? state.openings.find((opening) => opening.id === selection.id) ?? null : null;
   const selectedSegments = selection ? atomic.filter((segment) => selection.kind === "slab" ? segment.slabIds.includes(selection.id) : segment.openingId === selection.id) : [];
@@ -328,6 +412,9 @@ export default function FloorRebarCalculator() {
   };
   const setBottomDraftValidity = (key: string, valid: boolean) => {
     setInvalidBottomDrafts((current) => { const next = new Set(current); if (valid) next.delete(key); else next.add(key); return next; });
+  };
+  const setTopDraftValidity = (key: string, valid: boolean) => {
+    setInvalidTopDrafts((current) => { const next = new Set(current); if (valid) next.delete(key); else next.add(key); return next; });
   };
 
   const updateSlab = (patch: Partial<FloorSlab>) => {
@@ -445,9 +532,9 @@ export default function FloorRebarCalculator() {
   return (
     <main className="mx-auto max-w-[1500px] px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
-        <p className="text-sm font-semibold text-blue-600">FloorRebarCalculator · Geometry V2.1 + Bottom Rebar V1</p>
+        <p className="text-sm font-semibold text-blue-600">FloorRebarCalculator · Geometry V2.1 + Bottom Rebar V1.1 + Top Rebar V1</p>
         <h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-950">整层楼板板筋系统</h1>
-        <p className="mt-3 max-w-4xl text-sm leading-6 text-slate-600">当前已支持整层有板区域、洞口、支承拓扑与地筋下料；面筋、通墙、屋檐和完整综合料单仍属于后续阶段。</p>
+        <p className="mt-3 max-w-4xl text-sm leading-6 text-slate-600">当前已支持整层有板区域、洞口、支承拓扑、地筋及普通面筋下料；通墙、屋檐和完整综合料单仍属于后续阶段。</p>
       </header>
       <CalculatorModeNav />
       <WorkflowTabs stage={stage} onChange={setStage} />
@@ -466,7 +553,7 @@ export default function FloorRebarCalculator() {
             }} className="col-span-2 inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 sm:col-span-1"><RotateCcw size={16} />重置平面</button>
           </div>}
 
-          <FloorCanvas state={state} selection={selection} selectedBoundaryId={selectedBoundaryId} onSelect={(next) => { setSelection(next); setSelectedBoundaryId(null); }} onSelectBoundary={selectDisplayBoundary} onMove={moveObject} bottomCalculation={stage === "bottom" ? bottomCalculation : undefined} />
+          <FloorCanvas state={state} selection={selection} selectedBoundaryId={selectedBoundaryId} onSelect={(next) => { setSelection(next); setSelectedBoundaryId(null); }} onSelectBoundary={selectDisplayBoundary} onMove={moveObject} bottomCalculation={stage === "bottom" ? bottomCalculation : undefined} topCalculation={stage === "top" ? topCalculation : undefined} />
 
           {stage === "plan" && <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
             {[["板区", state.slabs.length, "slate"], ["洞口", state.openings.length, "rose"], ["建筑外边", stats.exterior, "slate"], ["内墙段", stats.inner, "blue"], ["连续板边", stats.continuous, "cyan"], ["洞口边", stats.opening, "amber"]].map(([label, value, tone]) => (
@@ -478,6 +565,8 @@ export default function FloorRebarCalculator() {
         <aside className="space-y-4 xl:sticky xl:top-20 xl:self-start">
           {stage === "bottom" ? (
             <FloorBottomSettingsPanel plan={state} bottom={bottomState} selectedSlab={selectedSlab} onChange={setBottomState} onValidityChange={setBottomDraftValidity} />
+          ) : stage === "top" ? (
+            <FloorTopSettingsPanel plan={state} top={topState} selectedSlab={selectedSlab} onChange={setTopState} onValidityChange={setTopDraftValidity} />
           ) : <>
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-center gap-2"><House size={18} className="text-blue-600" /><h2 className="font-semibold text-slate-900">净跨拓扑设置</h2></div>
@@ -532,13 +621,14 @@ export default function FloorRebarCalculator() {
           </section>
 
           <section className="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm leading-6 text-slate-700">
-            <div className="flex items-start gap-2"><Info size={18} className="mt-0.5 shrink-0 text-blue-600" /><div><strong>几何职责</strong><p className="mt-1">楼层页只维护Geometry与Support。地筋页基于Atomic Boundary生成Domain、理论BarLine、Opening裁断后的Piece和地筋料单。</p></div></div>
+            <div className="flex items-start gap-2"><Info size={18} className="mt-0.5 shrink-0 text-blue-600" /><div><strong>几何职责</strong><p className="mt-1">楼层页只维护Geometry与Support。地筋和普通面筋页基于同一Atomic Boundary生成Domain、理论BarLine、Opening裁断后的Piece和分层料单。</p></div></div>
           </section>
           </>}
         </aside>
       </div>
       {stage === "bottom" && <FloorBottomResults plan={state} calculation={bottomCalculation} invalidDraftCount={invalidDrafts.size + invalidBottomDrafts.size} />}
-      <p className="mt-5 text-xs text-slate-500">当前显示边界 {displays.length} 段；正式地筋计算使用原子边界 {atomic.length} 段。显示段ID不会用于保存支承或后续屋檐业务规则。</p>
+      {stage === "top" && <FloorTopResults plan={state} calculation={topCalculation} invalidDraftCount={invalidDrafts.size + invalidTopDrafts.size} />}
+      <p className="mt-5 text-xs text-slate-500">当前显示边界 {displays.length} 段；正式板筋计算使用原子边界 {atomic.length} 段。显示段ID不会用于保存支承或后续屋檐业务规则。</p>
     </main>
   );
 }

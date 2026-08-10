@@ -139,3 +139,105 @@ test("Bottom V1.1局部continuous与inner-wall同时生成完整长筋和短筋P
   await expect(rows.filter({ hasText: "8.740m" })).toContainText("2根");
   await expect(rows.filter({ hasText: "4.610m" })).toContainText("4根");
 });
+
+test("Top V1普通内墙增加、continuous贯穿并恢复独立设置", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/calculator/floor");
+  await page.evaluate(() => {
+    localStorage.removeItem("rebarviz:floor-rebar:draft:v1");
+    localStorage.removeItem("rebarviz:floor-rebar:top:v1");
+  });
+  await page.reload();
+  await page.getByRole("button", { name: /3\. 面筋/ }).click();
+  await expect(page.getByRole("heading", { name: "整层普通面筋默认规格" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "整层普通面筋料单" })).toBeVisible();
+  await expect(page.getByText("正式面筋结果有效")).toBeVisible();
+  await expect(page.getByText("5.060m")).toBeVisible();
+
+  await page.getByRole("button", { name: /1\. 楼层/ }).click();
+  await page.getByRole("button", { name: "连续楼板", exact: true }).click();
+  await page.getByRole("button", { name: /3\. 面筋/ }).click();
+  await expect(page.getByText("8.540m")).toBeVisible();
+
+  await page.getByLabel("根数算法").selectOption("floor");
+  await page.getByLabel("面筋内墙端增加值").fill("300");
+  await page.getByLabel("东西向增加端").selectOption("end");
+  await page.waitForTimeout(400);
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem("rebarviz:floor-rebar:top:v1") ?? "null"));
+  expect(stored).toMatchObject({
+    schemaVersion: 1,
+    state: {
+      countMode: "floor",
+      topAnchorExtra: 300,
+      defaults: { x: { extraMode: "end" } },
+    },
+  });
+
+  await page.reload();
+  await page.getByRole("button", { name: /3\. 面筋/ }).click();
+  await expect(page.getByLabel("根数算法")).toHaveValue("floor");
+  await expect(page.getByLabel("面筋内墙端增加值")).toHaveValue("300");
+  await expect(page.getByLabel("东西向增加端")).toHaveValue("end");
+});
+
+test("Top V1楼梯间Opening裁断Piece且洞口边改内墙后增加下料长度", async ({ page }) => {
+  await page.goto("/calculator/floor");
+  await page.evaluate(() => {
+    localStorage.setItem("rebarviz:floor-rebar:draft:v1", JSON.stringify({
+      schemaVersion: 2,
+      savedAt: new Date().toISOString(),
+      state: {
+        coordinateModel: "net-layout-v1",
+        slabs: [{ id: "a", name: "板区A", type: "room", x: 0, y: 0, width: 6000, height: 6000 }],
+        openings: [{ id: "o", name: "楼梯间", type: "stair", x: 2000, y: 2000, width: 2000, height: 2000 }],
+        supportRules: [],
+        innerWallThickness: 240,
+        outerWallThickness: 370,
+        snapDistanceMm: 150,
+      },
+    }));
+    localStorage.setItem("rebarviz:floor-rebar:top:v1", JSON.stringify({
+      schemaVersion: 1,
+      savedAt: new Date().toISOString(),
+      state: {
+        countMode: "project",
+        topAnchorExtra: 250,
+        defaults: {
+          x: { diameter: 10, spacing: 1000, extraMode: "both" },
+          y: { diameter: 10, spacing: 1000, extraMode: "both" },
+        },
+        slabOverrides: {},
+      },
+    }));
+  });
+  await page.reload();
+  await page.getByRole("button", { name: /3\. 面筋/ }).click();
+  await expect(page.getByText("正式面筋结果有效")).toBeVisible();
+  await expect(page.getByText("理论面筋线").locator("..")).toContainText("12");
+  await expect(page.getByText("实际下料件").locator("..")).toContainText("16");
+  await expect(page.getByText("2.370m").first()).toBeVisible();
+
+  await page.getByRole("button", { name: /1\. 楼层/ }).click();
+  await page.getByRole("button", { name: "选择洞口 楼梯间" }).click();
+  await page.getByRole("button", { name: "按内墙" }).first().click();
+  await page.getByRole("button", { name: /3\. 面筋/ }).click();
+  await expect(page.getByText("2.860m").first()).toBeVisible();
+});
+
+test("Top数字空草稿阻止旧值计算且390px页面不横向溢出", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/calculator/floor");
+  await page.evaluate(() => localStorage.removeItem("rebarviz:floor-rebar:top:v1"));
+  await page.reload();
+  await page.getByRole("button", { name: "面筋", exact: true }).click();
+  const extra = page.getByLabel("面筋内墙端增加值");
+  await extra.fill("");
+  await expect(extra).toHaveAttribute("aria-invalid", "true");
+  await expect(page.getByText("面筋结果无效")).toBeVisible();
+  await expect(page.getByText(/未使用旧值计算/)).toBeVisible();
+  const dimensions = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }));
+  expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
+});

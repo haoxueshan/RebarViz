@@ -648,6 +648,9 @@ export function calculateFloorBottomRebar(
             endSupport: endBoundary.support,
             startAnchorMm,
             endAnchorMm,
+            startExtraApplied: false,
+            endExtraApplied: false,
+            topExtraValueMm: 0,
             singleLengthMm: netLengthMm + startAnchorMm + endAnchorMm,
             source: "normal",
           });
