@@ -4,6 +4,7 @@ import { Copy, DoorOpen, Grid2X2, House, Info, Plus, RotateCcw, Trash2 } from "l
 import { useEffect, useMemo, useState } from "react";
 import { CalculatorModeNav } from "@/components/calculator/CalculatorModeNav";
 import { FloorBottomResults, FloorBottomSettingsPanel } from "@/components/calculator/floor/FloorBottomPanel";
+import { FloorBomPanel } from "@/components/calculator/floor/FloorBomPanel";
 import { FloorCanvas, type FloorSelection } from "@/components/calculator/floor/FloorCanvas";
 import { FloorTopResults, FloorTopSettingsPanel } from "@/components/calculator/floor/FloorTopPanel";
 import {
@@ -221,21 +222,21 @@ function DraftNumberField({
   );
 }
 
-type FloorWorkflowStage = "plan" | "bottom" | "top";
+type FloorWorkflowStage = "plan" | "bottom" | "top" | "bom";
 
 function WorkflowTabs({ stage, onChange }: { stage: FloorWorkflowStage; onChange: (stage: FloorWorkflowStage) => void }) {
+  const tabs: Array<{ stage: FloorWorkflowStage; label: string }> = [
+    { stage: "plan", label: "楼层" },
+    { stage: "bottom", label: "地筋" },
+    { stage: "top", label: "面筋" },
+    { stage: "bom", label: "料单" },
+  ];
   return (
     <div className="mb-5 grid grid-cols-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" aria-label="整层计算步骤">
-      {["楼层", "地筋", "面筋", "料单"].map((item, index) => (
-        index < 3 ? (
-          <button key={item} type="button" onClick={() => onChange(index === 0 ? "plan" : index === 1 ? "bottom" : "top")} className={`min-h-12 min-w-0 px-1 py-3 text-center text-xs font-semibold sm:text-sm ${stage === (index === 0 ? "plan" : index === 1 ? "bottom" : "top") ? "bg-blue-600 text-white" : "border-l border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`} aria-current={stage === (index === 0 ? "plan" : index === 1 ? "bottom" : "top") ? "step" : undefined}>
-            <span className="hidden sm:inline">{index + 1}. </span>{item}
-          </button>
-        ) : (
-          <div key={item} className="min-w-0 border-l border-slate-200 bg-slate-50 px-1 py-3 text-center text-xs font-semibold text-slate-400 sm:text-sm">
-            <span className="hidden sm:inline">{index + 1}. </span>{item}<span className="ml-1 hidden text-[10px] font-normal lg:inline">后续阶段</span>
-          </div>
-        )
+      {tabs.map((tab, index) => (
+        <button key={tab.stage} type="button" onClick={() => onChange(tab.stage)} className={`min-h-12 min-w-0 px-1 py-3 text-center text-xs font-semibold sm:text-sm ${stage === tab.stage ? "bg-blue-600 text-white" : "border-l border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`} aria-current={stage === tab.stage ? "step" : undefined}>
+          <span className="hidden sm:inline">{index + 1}. </span>{tab.label}
+        </button>
       ))}
     </div>
   );
@@ -598,14 +599,25 @@ export default function FloorRebarCalculator() {
   return (
     <main className="mx-auto max-w-[1500px] px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
-        <p className="text-sm font-semibold text-blue-600">FloorRebarCalculator · Geometry V2.1 + Bottom/Top Rebar + Role V1.1</p>
+        <p className="text-sm font-semibold text-blue-600">FloorRebarCalculator · Geometry V2.1 + Bottom/Top Rebar + Role V1.1 + Floor Print V1</p>
         <h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-950">整层楼板板筋系统</h1>
-        <p className="mt-3 max-w-4xl text-sm leading-6 text-slate-600">当前已支持整层有板区域、洞口、支承拓扑、地筋及普通面筋下料；通墙和完整综合料单仍属于后续阶段。</p>
+        <p className="mt-3 max-w-4xl text-sm leading-6 text-slate-600">当前已支持整层有板区域、洞口、支承拓扑、地筋、普通面筋、整层料单与冻结快照打印；通墙筋仍属于后续阶段。</p>
       </header>
       <CalculatorModeNav />
       <WorkflowTabs stage={stage} onChange={setStage} />
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.65fr)_minmax(360px,0.75fr)]">
+      {stage === "bom" ? (
+        <FloorBomPanel
+          plan={state}
+          bottom={bottomCalculation}
+          top={topCalculation}
+          bottomRoleReviewRequired={bottomRoleReviewRequired}
+          topRoleReviewRequired={topRoleReviewRequired}
+          invalidDraftCount={invalidDrafts.size + invalidBottomDrafts.size + invalidTopDrafts.size}
+        />
+      ) : (
+      <>
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,1.65fr)_minmax(360px,0.75fr)]">
         <section className="min-w-0 space-y-4">
           {stage === "plan" && <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
             <button type="button" onClick={addSlab} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"><Plus size={17} />添加板区</button>
@@ -713,9 +725,11 @@ export default function FloorRebarCalculator() {
           </section>
           </>}
         </aside>
-      </div>
-      {stage === "bottom" && <FloorBottomResults plan={state} calculation={bottomCalculation} invalidDraftCount={invalidDrafts.size + invalidBottomDrafts.size} />}
-      {stage === "top" && <FloorTopResults plan={state} calculation={topCalculation} invalidDraftCount={invalidDrafts.size + invalidTopDrafts.size} />}
+        </div>
+        {stage === "bottom" && <FloorBottomResults plan={state} calculation={bottomCalculation} invalidDraftCount={invalidDrafts.size + invalidBottomDrafts.size} />}
+        {stage === "top" && <FloorTopResults plan={state} calculation={topCalculation} invalidDraftCount={invalidDrafts.size + invalidTopDrafts.size} />}
+      </>
+      )}
       <p className="mt-5 text-xs text-slate-500">当前显示边界 {displays.length} 段；正式板筋计算使用原子边界 {atomic.length} 段。显示段ID不会用于保存支承或钢筋业务规则。</p>
     </main>
   );

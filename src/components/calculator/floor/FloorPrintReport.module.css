@@ -1,0 +1,266 @@
+.report {
+  --ink: #171717;
+  --muted: #525252;
+  position: relative;
+  margin: 0 auto;
+  max-width: 1500px;
+  background: #fff;
+  color: var(--ink);
+  font-family: Arial, "Microsoft YaHei", sans-serif;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.paperA3Landscape { page: floor-a3-landscape; }
+.paperA3Portrait { page: floor-a3-portrait; }
+.paperA4Landscape { page: floor-a4-landscape; }
+.paperA4Portrait { page: floor-a4-portrait; }
+
+.pageSection {
+  padding: 12mm;
+  background: #fff;
+}
+
+.pageBreak {
+  break-before: page;
+  page-break-before: always;
+}
+
+.planPage {
+  break-before: page;
+  break-after: page;
+  page-break-before: always;
+  page-break-after: always;
+  min-height: 175mm;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding-bottom: 10px;
+  border-bottom: 2px solid var(--ink);
+}
+
+.brand {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.title {
+  margin: 4px 0 0;
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.status {
+  border: 2px solid var(--ink);
+  padding: 5px 10px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.projectGrid,
+.summaryGrid,
+.parameterGrid {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.projectGrid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.summaryGrid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.parameterGrid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+.field,
+.summaryCard,
+.parameterCard {
+  border: 1px solid #a3a3a3;
+  padding: 10px 12px;
+  break-inside: avoid;
+}
+
+.fieldLabel,
+.summaryLabel,
+.parameterLabel {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.fieldValue,
+.summaryValue,
+.parameterValue {
+  display: block;
+  margin-top: 3px;
+  font-weight: 700;
+}
+
+.summaryValue { font-size: 20px; }
+
+.sectionTitle {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1.5px solid var(--ink);
+  font-size: 18px;
+}
+
+.sectionNote {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.planFrame {
+  max-height: 165mm;
+  overflow: hidden;
+  border: 1px solid #737373;
+}
+
+.tableWrap {
+  width: 100%;
+  overflow: visible;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 11px;
+}
+
+.table th,
+.table td {
+  border: 1px solid #737373;
+  padding: 5px 6px;
+  text-align: center;
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+}
+
+.table th {
+  background: #e5e5e5;
+  font-weight: 800;
+}
+
+.table thead {
+  display: table-header-group;
+}
+
+.table tr {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.table td.area {
+  text-align: left;
+}
+
+.mark {
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.subtotal {
+  margin-top: 8px;
+  text-align: right;
+  font-weight: 800;
+}
+
+.remark {
+  margin-top: 12px;
+  border: 1px solid #a3a3a3;
+  padding: 10px 12px;
+  white-space: pre-wrap;
+}
+
+.footer {
+  margin: 16px 12mm 0;
+  padding: 8px 0;
+  border-top: 1px solid #a3a3a3;
+  color: #525252;
+  font-size: 9px;
+  text-align: center;
+}
+
+.draftWatermark {
+  position: fixed;
+  inset: 42% auto auto 50%;
+  z-index: 30;
+  transform: translate(-50%, -50%) rotate(-24deg);
+  border: 8px solid rgba(127, 29, 29, 0.16);
+  padding: 18px 36px;
+  color: rgba(127, 29, 29, 0.16);
+  font-size: 54px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  pointer-events: none;
+}
+
+@page floor-a3-landscape { size: A3 landscape; margin: 10mm; }
+@page floor-a3-portrait { size: A3 portrait; margin: 10mm; }
+@page floor-a4-landscape { size: A4 landscape; margin: 9mm; }
+@page floor-a4-portrait { size: A4 portrait; margin: 9mm; }
+
+@media screen and (max-width: 720px) {
+  .pageSection { padding: 16px; }
+  .projectGrid,
+  .summaryGrid,
+  .parameterGrid { grid-template-columns: 1fr; }
+  .tableWrap { overflow-x: auto; }
+  .table { min-width: 860px; }
+  .footer { margin-inline: 16px; }
+}
+
+@media print {
+  :global(body) {
+    background: #fff !important;
+    color: #000 !important;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  :global(body > header) { display: none !important; }
+
+  .report {
+    max-width: none;
+    font-size: 8.5pt;
+  }
+
+  .pageSection {
+    padding: 0;
+  }
+
+  .planPage {
+    min-height: 0;
+  }
+
+  .planFrame {
+    max-height: none;
+  }
+
+  .table {
+    font-size: 8pt;
+  }
+
+  .table th,
+  .table td {
+    padding: 3.5pt 4pt;
+  }
+
+  .footer {
+    position: fixed;
+    right: 0;
+    bottom: -6mm;
+    left: 0;
+    margin: 0;
+    background: #fff;
+  }
+}
