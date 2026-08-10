@@ -14,12 +14,16 @@ describe("Floor Top设置存储", () => {
       countMode: "round",
       topAnchorExtra: 320,
       defaults: {
-        x: { diameter: 12, spacing: 180, extraMode: "end" },
-        y: { diameter: 10, spacing: 160, extraMode: "start" },
+        mainDiameter: 12,
+        secondaryDiameter: 10,
+        xSpacing: 180,
+        ySpacing: 160,
+        xExtraMode: "end",
+        yExtraMode: "start",
       },
       slabOverrides: {
-        a: { x: { diameter: 10, spacing: 120, extraMode: "both" } },
-        stale: { y: { diameter: 8, spacing: 100, extraMode: "end" } },
+        a: { mainDiameter: 10, xSpacing: 120, xExtraMode: "both" },
+        stale: { secondaryDiameter: 8, ySpacing: 100, yExtraMode: "end" },
       },
     };
     const restored = parseFloorTopStoredRecord(
@@ -32,6 +36,36 @@ describe("Floor Top设置存储", () => {
       defaults: state.defaults,
     });
     expect(restored?.state.slabOverrides).toEqual({ a: state.slabOverrides.a });
+  });
+
+  it("V1方向规格按数值迁移为主副筋规格并保留增加端", () => {
+    const restored = parseFloorTopStoredRecord({
+      schemaVersion: 1,
+      state: {
+        countMode: "floor",
+        topAnchorExtra: 300,
+        defaults: {
+          x: { diameter: 12, spacing: 180, extraMode: "end" },
+          y: { diameter: 10, spacing: 160, extraMode: "start" },
+        },
+        slabOverrides: {
+          a: { y: { diameter: 8, spacing: 100, extraMode: "both" } },
+        },
+      },
+    }, new Set(["a"]));
+    expect(restored?.state).toEqual({
+      countMode: "floor",
+      topAnchorExtra: 300,
+      defaults: {
+        mainDiameter: 12,
+        secondaryDiameter: 10,
+        xSpacing: 180,
+        ySpacing: 160,
+        xExtraMode: "end",
+        yExtraMode: "start",
+      },
+      slabOverrides: { a: { secondaryDiameter: 8, ySpacing: 100, yExtraMode: "both" } },
+    });
   });
 
   it("损坏版本被拒绝，损坏字段和extraMode恢复安全默认", () => {

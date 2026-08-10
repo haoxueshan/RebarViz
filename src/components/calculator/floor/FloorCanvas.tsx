@@ -12,6 +12,7 @@ import {
 } from "@/lib/floor-plan";
 import type { FloorBottomCalculation } from "@/lib/floor-bottom-calculator";
 import type { FloorTopCalculation } from "@/lib/floor-top-calculator";
+import { floorBarRoleLabel } from "@/lib/floor-rebar-role";
 
 export type FloorSelection =
   | { kind: "slab"; id: string }
@@ -230,7 +231,7 @@ export function FloorCanvas({
               strokeLinecap="round"
               pointerEvents="none"
             >
-              <title>{`${xDirection ? "东西向" : "南北向"}${topLayer ? "面筋" : "地筋"}净跨 ${formatMm(piece.netLengthMm)}mm；起点锚固 ${formatMm(piece.startAnchorMm)}mm；终点锚固 ${formatMm(piece.endAnchorMm)}mm${extraText}；下料 ${formatMm(piece.singleLengthMm)}mm`}</title>
+              <title>{`${xDirection ? "东西向" : "南北向"}${topLayer ? "面筋" : "地筋"} · ${floorBarRoleLabel(piece.role)} · Φ${piece.diameter}@${piece.spacing}；净跨 ${formatMm(piece.netLengthMm)}mm；起点锚固 ${formatMm(piece.startAnchorMm)}mm；终点锚固 ${formatMm(piece.endAnchorMm)}mm${extraText}；下料 ${formatMm(piece.singleLengthMm)}mm`}</title>
             </line>
           );
         })}

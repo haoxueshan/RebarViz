@@ -8,6 +8,11 @@ import {
 } from "./floor-plan";
 import type { FloorBarLine, FloorBarPiece } from "./floor-rebar-types";
 import {
+  isSquareFloorRebarDomain,
+  resolveFloorBarRole,
+  type FloorBarRole,
+} from "./floor-rebar-role";
+import {
   countBars,
   theoreticalUnitWeight,
   type CountMode,
@@ -18,16 +23,17 @@ export type FloorBarSettings = {
   spacing: number;
 };
 
+export type FloorBottomDefaults = {
+  mainDiameter: number;
+  secondaryDiameter: number;
+  xSpacing: number;
+  ySpacing: number;
+};
+
 export type FloorBottomState = {
   countMode: CountMode;
-  defaults: {
-    x: FloorBarSettings;
-    y: FloorBarSettings;
-  };
-  slabOverrides: Record<
-    string,
-    Partial<{ x: FloorBarSettings; y: FloorBarSettings }>
-  >;
+  defaults: FloorBottomDefaults;
+  slabOverrides: Record<string, Partial<FloorBottomDefaults>>;
 };
 
 export type FloorRebarDomain = {
@@ -45,6 +51,7 @@ export type FloorBottomBomGroup = {
   domainId: string;
   slabIds: string[];
   direction: "x" | "y";
+  role: FloorBarRole;
   diameter: number;
   spacing: number;
   singleLengthMm: number;
@@ -78,8 +85,10 @@ export type FloorBottomCalculation = {
 export const DEFAULT_FLOOR_BOTTOM_STATE: FloorBottomState = {
   countMode: "project",
   defaults: {
-    x: { diameter: 12, spacing: 150 },
-    y: { diameter: 10, spacing: 200 },
+    mainDiameter: 12,
+    secondaryDiameter: 10,
+    xSpacing: 150,
+    ySpacing: 200,
   },
   slabOverrides: {},
 };
@@ -96,12 +105,46 @@ function finiteNumber(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
-function normalizeSettings(value: unknown, fallback: FloorBarSettings): FloorBarSettings {
-  if (!isObject(value)) return { ...fallback };
+function normalizeDefaults(
+  value: unknown,
+  fallback: FloorBottomDefaults,
+): FloorBottomDefaults {
+  const source = isObject(value) ? value : {};
+  const legacyX = isObject(source.x) ? source.x : {};
+  const legacyY = isObject(source.y) ? source.y : {};
   return {
-    diameter: finiteNumber(value.diameter, fallback.diameter),
-    spacing: finiteNumber(value.spacing, fallback.spacing),
+    mainDiameter: finiteNumber(
+      source.mainDiameter,
+      finiteNumber(legacyX.diameter, fallback.mainDiameter),
+    ),
+    secondaryDiameter: finiteNumber(
+      source.secondaryDiameter,
+      finiteNumber(legacyY.diameter, fallback.secondaryDiameter),
+    ),
+    xSpacing: finiteNumber(
+      source.xSpacing,
+      finiteNumber(legacyX.spacing, fallback.xSpacing),
+    ),
+    ySpacing: finiteNumber(
+      source.ySpacing,
+      finiteNumber(legacyY.spacing, fallback.ySpacing),
+    ),
   };
+}
+
+function normalizeOverride(value: unknown): Partial<FloorBottomDefaults> {
+  if (!isObject(value)) return {};
+  const legacyX = isObject(value.x) ? value.x : {};
+  const legacyY = isObject(value.y) ? value.y : {};
+  const result: Partial<FloorBottomDefaults> = {};
+  const assign = (key: keyof FloorBottomDefaults, candidate: unknown) => {
+    if (typeof candidate === "number" && Number.isFinite(candidate)) result[key] = candidate;
+  };
+  assign("mainDiameter", value.mainDiameter ?? legacyX.diameter);
+  assign("secondaryDiameter", value.secondaryDiameter ?? legacyY.diameter);
+  assign("xSpacing", value.xSpacing ?? legacyX.spacing);
+  assign("ySpacing", value.ySpacing ?? legacyY.spacing);
+  return result;
 }
 
 export function normalizeFloorBottomState(
@@ -109,36 +152,43 @@ export function normalizeFloorBottomState(
   slabIds?: ReadonlySet<string>,
 ): FloorBottomState {
   if (!isObject(value)) return structuredClone(DEFAULT_FLOOR_BOTTOM_STATE);
-  const defaults = isObject(value.defaults) ? value.defaults : {};
+  const defaults = normalizeDefaults(value.defaults, DEFAULT_FLOOR_BOTTOM_STATE.defaults);
   const slabOverrides: FloorBottomState["slabOverrides"] = {};
   if (isObject(value.slabOverrides)) {
     Object.entries(value.slabOverrides).forEach(([slabId, override]) => {
       if (slabIds && !slabIds.has(slabId)) return;
-      if (!isObject(override)) return;
-      const next: Partial<{ x: FloorBarSettings; y: FloorBarSettings }> = {};
-      if (isObject(override.x)) next.x = normalizeSettings(override.x, DEFAULT_FLOOR_BOTTOM_STATE.defaults.x);
-      if (isObject(override.y)) next.y = normalizeSettings(override.y, DEFAULT_FLOOR_BOTTOM_STATE.defaults.y);
-      if (next.x || next.y) slabOverrides[slabId] = next;
+      const next = normalizeOverride(override);
+      if (Object.keys(next).length > 0) slabOverrides[slabId] = next;
     });
   }
   return {
     countMode: COUNT_MODES.includes(value.countMode as CountMode)
       ? value.countMode as CountMode
       : DEFAULT_FLOOR_BOTTOM_STATE.countMode,
-    defaults: {
-      x: normalizeSettings(defaults.x, DEFAULT_FLOOR_BOTTOM_STATE.defaults.x),
-      y: normalizeSettings(defaults.y, DEFAULT_FLOOR_BOTTOM_STATE.defaults.y),
-    },
+    defaults,
     slabOverrides,
   };
 }
 
-export function resolveFloorBottomSettings(
+export function resolveFloorBottomDefaults(
   state: FloorBottomState,
+  slabId: string,
+): FloorBottomDefaults {
+  return { ...state.defaults, ...(state.slabOverrides[slabId] ?? {}) };
+}
+
+export function resolveFloorBottomDirectionalSettings(
+  state: FloorBottomState,
+  domain: FloorRebarDomain,
   slabId: string,
   direction: "x" | "y",
 ): FloorBarSettings {
-  return state.slabOverrides[slabId]?.[direction] ?? state.defaults[direction];
+  const defaults = resolveFloorBottomDefaults(state, slabId);
+  const role = resolveFloorBarRole(domain, direction);
+  return {
+    diameter: role === "main" ? defaults.mainDiameter : defaults.secondaryDiameter,
+    spacing: direction === "x" ? defaults.xSpacing : defaults.ySpacing,
+  };
 }
 
 function segmentLength(segment: FloorAtomicBoundarySegment): number {
@@ -265,34 +315,45 @@ function validateBottomState(
   if (!COUNT_MODES.includes(bottom.countMode)) {
     errors.push({ code: "bottom-count-mode-invalid", message: "地筋根数算法无效。" });
   }
-  (["x", "y"] as const).forEach((direction) => {
-    const settings = bottom.defaults[direction];
-    if (!Number.isFinite(settings.diameter) || settings.diameter <= 0) {
-      errors.push({ code: "bottom-diameter-invalid", message: `整层${directionLabel(direction)}地筋直径必须大于0。` });
-    }
-    if (!Number.isFinite(settings.spacing) || settings.spacing <= 0) {
-      errors.push({ code: "bottom-spacing-invalid", message: `整层${directionLabel(direction)}地筋间距必须大于0。` });
-    }
-  });
-  plan.slabs.forEach((slab) => {
-    (["x", "y"] as const).forEach((direction) => {
-      const override = bottom.slabOverrides[slab.id]?.[direction];
-      if (!override) return;
-      if (!Number.isFinite(override.diameter) || override.diameter <= 0) {
-        errors.push({ code: "bottom-diameter-invalid", message: `“${slab.name}”${directionLabel(direction)}地筋直径必须大于0。`, objectIds: [slab.id] });
-      }
-      if (!Number.isFinite(override.spacing) || override.spacing <= 0) {
-        errors.push({ code: "bottom-spacing-invalid", message: `“${slab.name}”${directionLabel(direction)}地筋间距必须大于0。`, objectIds: [slab.id] });
+  const validateDefaults = (
+    values: Partial<FloorBottomDefaults>,
+    prefix: string,
+    objectIds?: string[],
+  ) => {
+    (["mainDiameter", "secondaryDiameter"] as const).forEach((key) => {
+      const value = values[key];
+      if (value !== undefined && (!Number.isFinite(value) || value <= 0)) {
+        errors.push({
+          code: "bottom-diameter-invalid",
+          message: `${prefix}${key === "mainDiameter" ? "主筋" : "副筋"}直径必须大于0。`,
+          objectIds,
+        });
       }
     });
+    (["xSpacing", "ySpacing"] as const).forEach((key) => {
+      const value = values[key];
+      if (value !== undefined && (!Number.isFinite(value) || value <= 0)) {
+        errors.push({
+          code: "bottom-spacing-invalid",
+          message: `${prefix}${key === "xSpacing" ? "东西向" : "南北向"}间距必须大于0。`,
+          objectIds,
+        });
+      }
+    });
+  };
+  validateDefaults(bottom.defaults, "整层地筋");
+  plan.slabs.forEach((slab) => {
+    const override = bottom.slabOverrides[slab.id];
+    if (override) validateDefaults(override, `“${slab.name}”地筋`, [slab.id]);
   });
   domains.forEach((domain) => {
     (["x", "y"] as const).forEach((direction) => {
-      const settings = domain.slabIds.map((slabId) => resolveFloorBottomSettings(bottom, slabId, direction));
+      const settings = domain.slabIds.map((slabId) =>
+        resolveFloorBottomDirectionalSettings(bottom, domain, slabId, direction));
       if (settings.length > 1 && settings.some((item) => !sameSettings(item, settings[0]))) {
         const details = domain.slabIds.map((slabId) => {
           const slab = plan.slabs.find((item) => item.id === slabId);
-          const item = resolveFloorBottomSettings(bottom, slabId, direction);
+          const item = resolveFloorBottomDirectionalSettings(bottom, domain, slabId, direction);
           return `${slab?.name ?? slabId} Φ${item.diameter}@${item.spacing}`;
         });
         errors.push({
@@ -515,6 +576,7 @@ export function buildFloorBottomBomGroups(
     const key = [
       piece.domainId,
       piece.direction,
+      piece.role,
       piece.diameter,
       piece.spacing,
       stableLengthKey(piece.singleLengthMm),
@@ -525,6 +587,7 @@ export function buildFloorBottomBomGroups(
       domainId: piece.domainId,
       slabIds: [...piece.slabIds],
       direction: piece.direction,
+      role: piece.role,
       diameter: piece.diameter,
       spacing: piece.spacing,
       // 保留首根Piece的真实长度；stable key只影响分组，不改写正式Piece。
@@ -565,6 +628,11 @@ export function calculateFloorBottomRebar(
     .filter((issue) => issue.level === "error")
     .map(({ code, message, objectIds }) => ({ code, message, objectIds }));
   const domains = buildFloorBottomRebarDomains(plan);
+  warnings.push(...domains.filter(isSquareFloorRebarDomain).map((domain) => ({
+    code: "square-domain-main-direction-defaulted",
+    message: "当前连续板区域东西、南北净跨相同，无法按长短自动区分主副筋，系统暂按东西向为主筋、南北向为副筋。",
+    objectIds: domain.slabIds,
+  })));
   const errors = [...geometryErrors, ...validateBottomState(plan, bottom, domains)];
   if (errors.length > 0) return emptyCalculation(domains, errors, warnings);
 
@@ -581,7 +649,13 @@ export function calculateFloorBottomRebar(
       return cell ? [cell] : [];
     });
     (["x", "y"] as const).forEach((direction) => {
-      const settings = resolveFloorBottomSettings(bottom, domain.slabIds[0], direction);
+      const role = resolveFloorBarRole(domain, direction);
+      const settings = resolveFloorBottomDirectionalSettings(
+        bottom,
+        domain,
+        domain.slabIds[0],
+        direction,
+      );
       const perpendicularStart = direction === "x" ? domain.minY : domain.minX;
       const perpendicularEnd = direction === "x" ? domain.maxY : domain.maxX;
       const count = countBars(perpendicularEnd - perpendicularStart, settings.spacing, bottom.countMode);
@@ -593,6 +667,7 @@ export function calculateFloorBottomRebar(
           slabIds: [...domain.slabIds],
           layer: "bottom",
           direction,
+          role,
           positionMm,
         };
         lines.push(line);
@@ -637,6 +712,7 @@ export function calculateFloorBottomRebar(
             slabIds: [...interval.slabIds].sort(),
             layer: "bottom",
             direction,
+            role: line.role,
             diameter: settings.diameter,
             spacing: settings.spacing,
             runStartMm: interval.start,

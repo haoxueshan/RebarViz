@@ -1,4 +1,7 @@
 import type { FloorResolvedSupport } from "./floor-plan";
+import type { FloorBarRole } from "./floor-rebar-role";
+
+export type { FloorBarRole } from "./floor-rebar-role";
 
 export type FloorBarLayer = "bottom" | "top";
 
@@ -9,6 +12,7 @@ export type FloorBarLine = {
   slabIds: string[];
   layer: FloorBarLayer;
   direction: "x" | "y";
+  role: FloorBarRole;
   /** X筋为全局Y坐标，Y筋为全局X坐标；始终使用net-layout-v1拓扑坐标。 */
   positionMm: number;
 };
@@ -21,6 +25,7 @@ export type FloorBarPiece = {
   slabIds: string[];
   layer: FloorBarLayer;
   direction: "x" | "y";
+  role: FloorBarRole;
   diameter: number;
   spacing: number;
   runStartMm: number;
@@ -44,9 +49,9 @@ export type FloorBarPiece = {
 /**
  * 整层正式流水线必须保持：
  * Floor Geometry → Support Topology → Base Bar Lines → Opening Clipping
- * → Through Path Replacement → Eave Endpoint Extension → Physical Bar Pieces
+ * → Through Path Replacement → Physical Bar Pieces
  * → BOM Grouping → Weight。
  *
  * Bottom/Top普通板筋执行到Opening Clipping后的普通Piece与分层BOM；
- * 通墙路径和屋檐仍不在本阶段生成。
+ * 通墙路径仍不在本阶段生成。
  */

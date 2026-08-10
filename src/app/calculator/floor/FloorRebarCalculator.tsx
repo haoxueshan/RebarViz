@@ -211,8 +211,8 @@ type FloorWorkflowStage = "plan" | "bottom" | "top";
 
 function WorkflowTabs({ stage, onChange }: { stage: FloorWorkflowStage; onChange: (stage: FloorWorkflowStage) => void }) {
   return (
-    <div className="mb-5 grid grid-cols-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" aria-label="整层计算步骤">
-      {["楼层", "地筋", "面筋", "屋檐", "料单"].map((item, index) => (
+    <div className="mb-5 grid grid-cols-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" aria-label="整层计算步骤">
+      {["楼层", "地筋", "面筋", "料单"].map((item, index) => (
         index < 3 ? (
           <button key={item} type="button" onClick={() => onChange(index === 0 ? "plan" : index === 1 ? "bottom" : "top")} className={`min-h-12 min-w-0 px-1 py-3 text-center text-xs font-semibold sm:text-sm ${stage === (index === 0 ? "plan" : index === 1 ? "bottom" : "top") ? "bg-blue-600 text-white" : "border-l border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`} aria-current={stage === (index === 0 ? "plan" : index === 1 ? "bottom" : "top") ? "step" : undefined}>
             <span className="hidden sm:inline">{index + 1}. </span>{item}
@@ -272,7 +272,7 @@ function BoundaryPanel({
                 </div>
               )}
               {!target && segment.geometryKind === "opening-edge" && <p className="mt-2 text-xs text-slate-500">请选中对应洞口后设置该边。</p>}
-              {segment.geometryKind === "building-exterior" && <p className="mt-2 text-xs text-slate-500">建筑真正外边固定按外墙处理，未来可作为屋檐宿主边。</p>}
+              {segment.geometryKind === "building-exterior" && <p className="mt-2 text-xs text-slate-500">建筑真正外边固定按外墙处理。</p>}
             </div>
           );
         })}
@@ -534,7 +534,7 @@ export default function FloorRebarCalculator() {
       <header className="mb-6">
         <p className="text-sm font-semibold text-blue-600">FloorRebarCalculator · Geometry V2.1 + Bottom Rebar V1.1 + Top Rebar V1</p>
         <h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-950">整层楼板板筋系统</h1>
-        <p className="mt-3 max-w-4xl text-sm leading-6 text-slate-600">当前已支持整层有板区域、洞口、支承拓扑、地筋及普通面筋下料；通墙、屋檐和完整综合料单仍属于后续阶段。</p>
+        <p className="mt-3 max-w-4xl text-sm leading-6 text-slate-600">当前已支持整层有板区域、洞口、支承拓扑、地筋及普通面筋下料；通墙和完整综合料单仍属于后续阶段。</p>
       </header>
       <CalculatorModeNav />
       <WorkflowTabs stage={stage} onChange={setStage} />
@@ -628,7 +628,7 @@ export default function FloorRebarCalculator() {
       </div>
       {stage === "bottom" && <FloorBottomResults plan={state} calculation={bottomCalculation} invalidDraftCount={invalidDrafts.size + invalidBottomDrafts.size} />}
       {stage === "top" && <FloorTopResults plan={state} calculation={topCalculation} invalidDraftCount={invalidDrafts.size + invalidTopDrafts.size} />}
-      <p className="mt-5 text-xs text-slate-500">当前显示边界 {displays.length} 段；正式板筋计算使用原子边界 {atomic.length} 段。显示段ID不会用于保存支承或后续屋檐业务规则。</p>
+      <p className="mt-5 text-xs text-slate-500">当前显示边界 {displays.length} 段；正式板筋计算使用原子边界 {atomic.length} 段。显示段ID不会用于保存支承或钢筋业务规则。</p>
     </main>
   );
 }

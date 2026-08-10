@@ -76,7 +76,7 @@ export type FloorAtomicBoundarySegment = {
   targets: FloorSupportRuleTarget[];
 };
 
-/** 显示边界可以合并相邻原子段；钢筋、通墙和屋檐等未来计算必须使用 Atomic Boundary。 */
+/** 显示边界可以合并相邻原子段；钢筋和通墙等正式计算必须使用 Atomic Boundary。 */
 export type FloorBoundarySegment = FloorAtomicBoundarySegment & {
   /** V1兼容字段。V2中它等于已解析的support，不再代表纯几何关系。 */
   type: FloorResolvedSupport;
@@ -128,7 +128,7 @@ export const DEFAULT_FLOOR_PLAN_STATE: FloorPlanState = {
 /**
  * Floor坐标是“净跨拓扑坐标”，用于拼接有板区域，而不是含墙厚的建筑物理坐标。
  * 未来任何正式钢筋长度都禁止直接使用 endX-startX；必须组合净跨、经过墙厚、
- * 端部规则、Opening裁断与屋檐延伸后计算。
+ * 端部规则与Opening裁断后计算。
  */
 
 function finiteNumber(value: unknown, fallback: number): number {
@@ -739,8 +739,3 @@ export function nextAvailableFloorName(existingNames: readonly string[], prefix:
   while (used.has(`${prefix}${number}`)) number += 1;
   return `${prefix}${number}`;
 }
-
-/**
- * Future EaveRule must bind to a stable slab/opening edge target, never a dynamic display segment ID.
- * 屋檐外伸长度定义为“外墙外侧面至檐口”的水平长度；未来端部物理长度为净跨+外墙厚度+屋檐外伸。
- */

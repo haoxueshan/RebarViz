@@ -7,7 +7,7 @@ test("Geometry V2.1支持板区、洞口、支承切换和草稿恢复", async (
     localStorage.removeItem("rebarviz:floor-rebar:bottom:v1");
   });
   await page.reload();
-  await expect(page.getByText("FloorRebarCalculator · Geometry V2.1 + Bottom Rebar V1")).toBeVisible();
+  await expect(page.getByText("FloorRebarCalculator · Geometry V2.1 + Bottom Rebar V1.1 + Top Rebar V1")).toBeVisible();
   await expect(page.getByRole("heading", { name: "整层板区平面" })).toBeVisible();
 
   await page.getByLabel("板区类型").selectOption("corridor");
@@ -73,16 +73,16 @@ test("Bottom V1合并continuous、显示地筋料单并恢复独立设置", asyn
 
   const selects = page.getByLabel("根数算法");
   await selects.selectOption("floor");
-  const xDiameter = page.getByLabel("直径").first();
-  await xDiameter.fill("14");
+  const mainDiameter = page.getByLabel("主筋直径").first();
+  await mainDiameter.fill("14");
   await page.waitForTimeout(400);
   const stored = await page.evaluate(() => JSON.parse(localStorage.getItem("rebarviz:floor-rebar:bottom:v1") ?? "null"));
-  expect(stored).toMatchObject({ schemaVersion: 1, state: { countMode: "floor", defaults: { x: { diameter: 14 } } } });
+  expect(stored).toMatchObject({ schemaVersion: 2, state: { countMode: "floor", defaults: { mainDiameter: 14 } } });
 
   await page.reload();
   await page.getByRole("button", { name: /2\. 地筋/ }).click();
   await expect(page.getByLabel("根数算法")).toHaveValue("floor");
-  await expect(page.getByLabel("直径").first()).toHaveValue("14");
+  await expect(page.getByLabel("主筋直径").first()).toHaveValue("14");
 });
 
 test("Bottom数字空草稿阻止旧值生成正式结果", async ({ page }) => {
@@ -90,7 +90,7 @@ test("Bottom数字空草稿阻止旧值生成正式结果", async ({ page }) => 
   await page.evaluate(() => localStorage.removeItem("rebarviz:floor-rebar:bottom:v1"));
   await page.reload();
   await page.getByRole("button", { name: /2\. 地筋/ }).click();
-  const spacing = page.getByLabel("间距").first();
+  const spacing = page.getByLabel("东西向间距").first();
   await spacing.fill("");
   await expect(spacing).toHaveAttribute("aria-invalid", "true");
   await expect(page.getByText("地筋结果无效")).toBeVisible();
@@ -165,11 +165,11 @@ test("Top V1普通内墙增加、continuous贯穿并恢复独立设置", async (
   await page.waitForTimeout(400);
   const stored = await page.evaluate(() => JSON.parse(localStorage.getItem("rebarviz:floor-rebar:top:v1") ?? "null"));
   expect(stored).toMatchObject({
-    schemaVersion: 1,
+    schemaVersion: 2,
     state: {
       countMode: "floor",
       topAnchorExtra: 300,
-      defaults: { x: { extraMode: "end" } },
+      defaults: { xExtraMode: "end" },
     },
   });
 

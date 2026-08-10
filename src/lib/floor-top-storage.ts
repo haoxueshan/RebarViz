@@ -4,7 +4,7 @@ import {
 } from "./floor-top-calculator";
 
 export const FLOOR_TOP_STORAGE_KEY = "rebarviz:floor-rebar:top:v1";
-export const FLOOR_TOP_STORAGE_SCHEMA_VERSION = 1 as const;
+export const FLOOR_TOP_STORAGE_SCHEMA_VERSION = 2 as const;
 
 export type FloorTopStoredRecord = {
   schemaVersion: typeof FLOOR_TOP_STORAGE_SCHEMA_VERSION;
@@ -33,7 +33,7 @@ export function parseFloorTopStoredRecord(
     savedAt?: unknown;
     state?: unknown;
   };
-  if (candidate.schemaVersion !== FLOOR_TOP_STORAGE_SCHEMA_VERSION || !candidate.state) {
+  if (![1, FLOOR_TOP_STORAGE_SCHEMA_VERSION].includes(candidate.schemaVersion as number) || !candidate.state) {
     return null;
   }
   return {

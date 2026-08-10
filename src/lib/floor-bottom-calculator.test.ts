@@ -56,8 +56,8 @@ describe("Floor Bottom单板与根数算法", () => {
     expect(calculation.domains).toHaveLength(1);
     const x = calculation.groups.find((group) => group.direction === "x");
     const y = calculation.groups.find((group) => group.direction === "y");
-    expect(x).toMatchObject({ count: 24, diameter: 12, spacing: 150, singleLengthMm: 4940 });
-    expect(y).toMatchObject({ count: 21, diameter: 10, spacing: 200, singleLengthMm: 4340 });
+    expect(x).toMatchObject({ count: 24, role: "secondary", diameter: 10, spacing: 150, singleLengthMm: 4940 });
+    expect(y).toMatchObject({ count: 21, role: "main", diameter: 12, spacing: 200, singleLengthMm: 4340 });
     expect(calculation.totalBarLines).toBe(45);
     expect(calculation.totalPieces).toBe(45);
     expect(calculation.lines.every((line) => line.layer === "bottom")).toBe(true);
@@ -72,7 +72,7 @@ describe("Floor Bottom单板与根数算法", () => {
   });
 
   it.each(["project", "round", "floor"] as const)("%s根数与快速计算器countBars完全一致", (countMode: CountMode) => {
-    const state = bottom({ countMode, defaults: { x: { diameter: 12, spacing: 220 }, y: { diameter: 10, spacing: 260 } } });
+    const state = bottom({ countMode, defaults: { mainDiameter: 12, secondaryDiameter: 10, xSpacing: 220, ySpacing: 260 } });
     const calculation = calculateFloorBottomRebar(plan([slab("a", 0, 0, 3350, 3300)]), state);
     expect(calculation.lines.filter((line) => line.direction === "x")).toHaveLength(countBars(3300, 220, countMode));
     expect(calculation.lines.filter((line) => line.direction === "y")).toHaveLength(countBars(3350, 260, countMode));
@@ -80,12 +80,55 @@ describe("Floor Bottom单板与根数算法", () => {
 
   it("非法直径或间距不会回退默认值生成正式料单", () => {
     const state = bottom();
-    state.defaults.x.spacing = Number.NaN;
+    state.defaults.xSpacing = Number.NaN;
     const calculation = calculateFloorBottomRebar(plan([slab("a", 0, 0, 4200, 3600)]), state);
     expect(calculation.isValid).toBe(false);
     expect(calculation.errors.map((issue) => issue.code)).toContain("bottom-spacing-invalid");
     expect(calculation.groups).toEqual([]);
     expect(calculation.totalWeightKg).toBeNull();
+  });
+});
+
+describe("Floor Bottom主副筋角色", () => {
+  it("按Domain短跨映射主筋直径，旋转后的独立板区分别判断", () => {
+    const state = plan([
+      slab("a", 0, 0, 4000, 6000),
+      slab("b", 5000, 0, 6000, 4000),
+    ]);
+    const calculation = calculateFloorBottomRebar(state, bottom());
+    const domainA = calculation.domains.find((domain) => domain.slabIds.includes("a"))!;
+    const domainB = calculation.domains.find((domain) => domain.slabIds.includes("b"))!;
+    const group = (domainId: string, direction: "x" | "y") => calculation.groups.find((item) => item.domainId === domainId && item.direction === direction);
+    expect(group(domainA.id, "x")).toMatchObject({ role: "main", diameter: 12 });
+    expect(group(domainA.id, "y")).toMatchObject({ role: "secondary", diameter: 10 });
+    expect(group(domainB.id, "x")).toMatchObject({ role: "secondary", diameter: 10 });
+    expect(group(domainB.id, "y")).toMatchObject({ role: "main", diameter: 12 });
+  });
+
+  it("continuous合并后统一按Domain跨度判断，Opening裁断不改变Piece角色", () => {
+    const continuous = plan(
+      [slab("a", 0, 0, 3000, 4000), slab("b", 3000, 0, 3000, 4000)],
+      [],
+      [continuousRule("a", "east")],
+    );
+    const merged = calculateFloorBottomRebar(continuous, bottom());
+    expect(merged.domains).toHaveLength(1);
+    expect(merged.lines.filter((line) => line.direction === "x").every((line) => line.role === "secondary")).toBe(true);
+    expect(merged.lines.filter((line) => line.direction === "y").every((line) => line.role === "main")).toBe(true);
+
+    const clipped = calculateFloorBottomRebar(
+      plan([slab("a", 0, 0, 6000, 4000)], [opening("o", 2000, 1000, 2000, 2000)]),
+      bottom(),
+    );
+    expect(clipped.pieces.filter((piece) => piece.direction === "x").every((piece) => piece.role === "secondary")).toBe(true);
+    expect(clipped.pieces.filter((piece) => piece.direction === "y").every((piece) => piece.role === "main")).toBe(true);
+  });
+
+  it("正方形Domain确定为X主筋、Y副筋并给出提示", () => {
+    const calculation = calculateFloorBottomRebar(plan([slab("a", 0, 0, 4000, 4000)]), bottom());
+    expect(calculation.lines.filter((line) => line.direction === "x").every((line) => line.role === "main")).toBe(true);
+    expect(calculation.lines.filter((line) => line.direction === "y").every((line) => line.role === "secondary")).toBe(true);
+    expect(calculation.warnings.map((issue) => issue.code)).toContain("square-domain-main-direction-defaulted");
   });
 });
 
@@ -124,7 +167,7 @@ describe("Bottom Domain与continuous", () => {
       [continuousRule("a", "east")],
     );
     const settings = bottom();
-    settings.slabOverrides.b = { x: { diameter: 10, spacing: 200 } };
+    settings.slabOverrides.b = { secondaryDiameter: 14 };
     const calculation = calculateFloorBottomRebar(state, settings);
     expect(calculation.isValid).toBe(false);
     expect(calculation.errors.map((issue) => issue.code)).toContain("bottom-continuous-settings-conflict");
@@ -170,7 +213,7 @@ describe("Bottom Domain与continuous", () => {
         support: "continuous",
       }],
     );
-    const settings = bottom({ defaults: { x: { diameter: 12, spacing: 1000 }, y: { diameter: 10, spacing: 1000 } } });
+    const settings = bottom({ defaults: { mainDiameter: 12, secondaryDiameter: 10, xSpacing: 1000, ySpacing: 1000 } });
     const calculation = calculateFloorBottomRebar(state, settings);
     const xLines = calculation.lines.filter((line) => line.direction === "x");
     const xPieces = calculation.pieces.filter((piece) => piece.direction === "x");
@@ -194,7 +237,7 @@ describe("Bottom Domain与continuous", () => {
       [],
       [{ id: "lower-continuous", target: { kind: "slab-edge", slabId: "a", side: "east", range: { mode: "offset", startMm: 0, endMm: 2000 } }, support: "continuous" }],
     );
-    const settings = bottom({ defaults: { x: { diameter: 12, spacing: 4000 }, y: { diameter: 10, spacing: 1000 } } });
+    const settings = bottom({ defaults: { mainDiameter: 12, secondaryDiameter: 10, xSpacing: 4000, ySpacing: 1000 } });
     const calculation = calculateFloorBottomRebar(state, settings);
     const xPieces = calculation.pieces.filter((piece) => piece.direction === "x");
     expect(calculation.lines.find((line) => line.direction === "x")?.positionMm).toBe(2000);
@@ -209,7 +252,7 @@ describe("Opening裁断与实物Piece", () => {
     [opening("o", 2000, 2000, 2000, 2000)],
   );
   const settings = () => bottom({
-    defaults: { x: { diameter: 12, spacing: 1000 }, y: { diameter: 10, spacing: 1000 } },
+    defaults: { mainDiameter: 12, secondaryDiameter: 10, xSpacing: 1000, ySpacing: 1000 },
   });
 
   it("内部洞口使6条X理论线生成8个X实物Piece并保留真实下料长度", () => {
@@ -230,7 +273,7 @@ describe("Opening裁断与实物Piece", () => {
     const state = basePlan();
     state.openings[0] = { ...state.openings[0], y: 3000, height: 1000 };
     const custom = settings();
-    custom.defaults.x.spacing = 2000;
+    custom.defaults.xSpacing = 2000;
     const calculation = calculateFloorBottomRebar(state, custom);
     const xLines = calculation.lines.filter((line) => line.direction === "x");
     const pieceLineIds = new Set(calculation.pieces.filter((piece) => piece.direction === "x").map((piece) => piece.lineId));
@@ -364,6 +407,7 @@ describe("Atomic端点归属与BOM稳定分组", () => {
       slabIds: ["a"],
       layer: "bottom",
       direction: "x",
+      role: "secondary",
       diameter: 12,
       spacing: 150,
       runStartMm: 0,

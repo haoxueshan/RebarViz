@@ -59,7 +59,7 @@ function piecesFor(
 describe("Floor Top端部增加规则", () => {
   it.each(["start", "end", "both"] as const)("单矩形外墙在%s模式下均不增加", (extraMode) => {
     const settings = top();
-    settings.defaults.x.extraMode = extraMode;
+    settings.defaults.xExtraMode = extraMode;
     const calculation = calculateFloorTopRebar(
       plan([slab("a", 0, 0, 4200, 3600)]),
       settings,
@@ -82,7 +82,7 @@ describe("Floor Top端部增加规则", () => {
       slab("b", 4200, 0, 3600, 3600),
     ]);
     const startSettings = top();
-    startSettings.defaults.x.extraMode = "start";
+    startSettings.defaults.xExtraMode = "start";
     const startPiece = piecesFor(
       calculateFloorTopRebar(state, startSettings),
       "a",
@@ -99,7 +99,7 @@ describe("Floor Top端部增加规则", () => {
     });
 
     const endSettings = top();
-    endSettings.defaults.x.extraMode = "end";
+    endSettings.defaults.xExtraMode = "end";
     const endPiece = piecesFor(
       calculateFloorTopRebar(state, endSettings),
       "a",
@@ -125,7 +125,7 @@ describe("Floor Top端部增加规则", () => {
       slab("c", 7000, 0, 3000, 3600),
     ]);
     const settings = top();
-    settings.defaults.x.extraMode = extraMode;
+    settings.defaults.xExtraMode = extraMode;
     const piece = piecesFor(calculateFloorTopRebar(state, settings), "b", "x")[0];
     expect(piece).toMatchObject({
       startSupport: "inner-wall",
@@ -142,7 +142,7 @@ describe("Floor Top端部增加规则", () => {
       slab("b", 0, 4200, 3600, 3600),
     ]);
     const settings = top();
-    settings.defaults.y.extraMode = "end";
+    settings.defaults.yExtraMode = "end";
     const piece = piecesFor(calculateFloorTopRebar(state, settings), "a", "y")[0];
     expect(piece).toMatchObject({
       startSupport: "outer-wall",
@@ -174,6 +174,39 @@ describe("Floor Top端部增加规则", () => {
       "end",
       250,
     )).toEqual({ anchorMm: 490, extraApplied: true });
+  });
+});
+
+describe("Floor Top主副筋角色", () => {
+  it("X短与Y短Domain分别把主筋直径映射到对应方向", () => {
+    const xShort = calculateFloorTopRebar(plan([slab("a", 0, 0, 4000, 6000)]), top());
+    expect(xShort.groups.find((group) => group.direction === "x")).toMatchObject({ role: "main", diameter: 10 });
+    expect(xShort.groups.find((group) => group.direction === "y")).toMatchObject({ role: "secondary", diameter: 10 });
+    const settings = top();
+    settings.defaults.mainDiameter = 12;
+    settings.defaults.secondaryDiameter = 8;
+    const yShort = calculateFloorTopRebar(plan([slab("a", 0, 0, 6000, 4000)]), settings);
+    expect(yShort.groups.find((group) => group.direction === "x")).toMatchObject({ role: "secondary", diameter: 8 });
+    expect(yShort.groups.find((group) => group.direction === "y")).toMatchObject({ role: "main", diameter: 12 });
+  });
+
+  it("continuous按合并Domain统一判断且Opening不改变角色", () => {
+    const state = plan(
+      [slab("a", 0, 0, 3000, 4000), slab("b", 3000, 0, 3000, 4000)],
+      [opening("o", 1000, 1000, 1000, 2000)],
+      [continuousRule("a", "east")],
+    );
+    const calculation = calculateFloorTopRebar(state, top());
+    expect(calculation.domains).toHaveLength(1);
+    expect(calculation.pieces.filter((piece) => piece.direction === "x").every((piece) => piece.role === "secondary")).toBe(true);
+    expect(calculation.pieces.filter((piece) => piece.direction === "y").every((piece) => piece.role === "main")).toBe(true);
+  });
+
+  it("正方形Domain使用X主筋、Y副筋并给出相同提示", () => {
+    const calculation = calculateFloorTopRebar(plan([slab("a", 0, 0, 4000, 4000)]), top());
+    expect(calculation.lines.filter((line) => line.direction === "x").every((line) => line.role === "main")).toBe(true);
+    expect(calculation.lines.filter((line) => line.direction === "y").every((line) => line.role === "secondary")).toBe(true);
+    expect(calculation.warnings.map((issue) => issue.code)).toContain("square-domain-main-direction-defaulted");
   });
 });
 
@@ -210,10 +243,7 @@ describe("Floor Top连续关系与洞口裁断", () => {
       }],
     );
     const settings = top({
-      defaults: {
-        x: { diameter: 10, spacing: 1000, extraMode: "both" },
-        y: { diameter: 10, spacing: 1000, extraMode: "both" },
-      },
+      defaults: { mainDiameter: 10, secondaryDiameter: 10, xSpacing: 1000, ySpacing: 1000, xExtraMode: "both", yExtraMode: "both" },
     });
     const calculation = calculateFloorTopRebar(state, settings);
     const xLines = calculation.lines.filter((line) => line.direction === "x");
@@ -236,16 +266,12 @@ describe("Floor Top连续关系与洞口裁断", () => {
       [continuousRule("a", "east")],
     );
     const specificationConflict = top();
-    specificationConflict.slabOverrides.b = {
-      x: { diameter: 12, spacing: 150, extraMode: "both" },
-    };
+    specificationConflict.slabOverrides.b = { secondaryDiameter: 12, xSpacing: 150 };
     expect(calculateFloorTopRebar(state, specificationConflict).errors.map((issue) => issue.code))
       .toContain("top-continuous-settings-conflict");
 
     const modeConflict = top();
-    modeConflict.slabOverrides.b = {
-      x: { ...modeConflict.defaults.x, extraMode: "start" },
-    };
+    modeConflict.slabOverrides.b = { xExtraMode: "start" };
     expect(calculateFloorTopRebar(state, modeConflict).errors.map((issue) => issue.code))
       .toContain("top-continuous-settings-conflict");
   });
@@ -256,10 +282,7 @@ describe("Floor Top连续关系与洞口裁断", () => {
       [opening("o", 2000, 2000, 2000, 2000)],
     );
     const settings = top({
-      defaults: {
-        x: { diameter: 10, spacing: 1000, extraMode: "both" },
-        y: { diameter: 10, spacing: 1000, extraMode: "both" },
-      },
+      defaults: { mainDiameter: 10, secondaryDiameter: 10, xSpacing: 1000, ySpacing: 1000, xExtraMode: "both", yExtraMode: "both" },
     });
     const calculation = calculateFloorTopRebar(state, settings);
     const xLines = calculation.lines.filter((line) => line.direction === "x");
@@ -289,10 +312,7 @@ describe("Floor Top连续关系与洞口裁断", () => {
       }],
     );
     const settings = top({
-      defaults: {
-        x: { diameter: 10, spacing: 1000, extraMode: "end" },
-        y: { diameter: 10, spacing: 1000, extraMode: "end" },
-      },
+      defaults: { mainDiameter: 10, secondaryDiameter: 10, xSpacing: 1000, ySpacing: 1000, xExtraMode: "end", yExtraMode: "end" },
     });
     const calculation = calculateFloorTopRebar(state, settings);
     const leftPieces = calculation.pieces.filter((piece) =>
@@ -308,8 +328,8 @@ describe("Floor Top连续关系与洞口裁断", () => {
 describe("Floor Top根数、BOM与重量", () => {
   it.each(["project", "round", "floor"] as const)("%s根数复用countBars", (countMode: CountMode) => {
     const settings = top({ countMode });
-    settings.defaults.x.spacing = 220;
-    settings.defaults.y.spacing = 260;
+    settings.defaults.xSpacing = 220;
+    settings.defaults.ySpacing = 260;
     const calculation = calculateFloorTopRebar(
       plan([slab("a", 0, 0, 3350, 3300)]),
       settings,
@@ -343,6 +363,7 @@ describe("Floor Top根数、BOM与重量", () => {
       slabIds: ["a"],
       layer: "top",
       direction: "x",
+      role: "secondary",
       diameter: 10,
       spacing: 200,
       runStartMm: 0,
@@ -377,8 +398,8 @@ describe("Floor Top根数、BOM与重量", () => {
     const state = plan([slab("a", 0, 0, 4200, 3600)]);
     const invalid = top();
     invalid.topAnchorExtra = -1;
-    invalid.defaults.x.spacing = Number.NaN;
-    invalid.defaults.y.extraMode = "bad" as TopExtraMode;
+    invalid.defaults.xSpacing = Number.NaN;
+    invalid.defaults.yExtraMode = "bad" as TopExtraMode;
     const calculation = calculateFloorTopRebar(state, invalid);
     expect(calculation.isValid).toBe(false);
     expect(calculation.totalWeightKg).toBeNull();
