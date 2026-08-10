@@ -603,7 +603,7 @@ function supportRuleIssue(rule: FloorSupportRule, state: FloorPlanState): FloorP
   if (rule.target.range.mode === "offset") {
     const length = edgeLength(object, rule.target.side);
     if (!Number.isFinite(rule.target.range.startMm) || !Number.isFinite(rule.target.range.endMm) || rule.target.range.startMm < 0 || rule.target.range.endMm > length || rule.target.range.startMm >= rule.target.range.endMm) {
-      issues.push({ level: "warning", code: "support-range-outside", message: `支承规则“${rule.id}”的范围超出目标边长，请检查。`, objectIds: [rule.id] });
+      issues.push({ level: "error", code: "support-range-invalid", message: `支承规则“${rule.id}”的范围无效，必须位于目标边内且起点小于终点。`, objectIds: [rule.id] });
     }
   }
   return issues;
@@ -670,7 +670,7 @@ export function validateFloorPlanV2(state: FloorPlanState): FloorPlanIssue[] {
   state.slabs.forEach((slab) => {
     if (slab.width > 0 && slab.height > 0 && !effectiveSlabIds.has(slab.id)) {
       issues.push({
-        level: "warning",
+        level: "error",
         code: "slab-fully-covered",
         message: `“${slab.name}”已被洞口完全覆盖，不会产生楼板板筋。`,
         objectIds: [slab.id],

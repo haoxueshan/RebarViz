@@ -175,12 +175,33 @@ describe("Geometry与Support分离", () => {
     expect(nextRules[0]).toMatchObject({ id: "resolved", support: "continuous" });
   });
 
-  it("失去邻接的旧规则产生no-effect，完全被洞口覆盖的板区产生warning", () => {
+  it("失去邻接的旧规则产生warning，完全被洞口覆盖的板区产生error", () => {
     const stale = plan([slab({ id: "a", x: 0, y: 0, width: 3000, height: 3000 }), slab({ id: "b", x: 5000, y: 0, width: 3000, height: 3000 })]);
     stale.supportRules = [{ id: "stale", target: { kind: "slab-edge", slabId: "a", side: "east", range: { mode: "whole" } }, support: "continuous" }];
-    expect(validateFloorPlanV2(stale).map((issue) => issue.code)).toContain("support-rule-no-effect");
+    expect(validateFloorPlanV2(stale)).toContainEqual(expect.objectContaining({
+      code: "support-rule-no-effect",
+      level: "warning",
+    }));
     const covered = plan([slab({ id: "a", name: "完全扣除板", x: 0, y: 0, width: 3000, height: 3000 })], [opening({ id: "o", x: 0, y: 0, width: 3000, height: 3000 })]);
-    expect(validateFloorPlanV2(covered).map((issue) => issue.code)).toContain("slab-fully-covered");
+    expect(validateFloorPlanV2(covered)).toContainEqual(expect.objectContaining({
+      code: "slab-fully-covered",
+      level: "error",
+    }));
+  });
+
+  it("反向、越界和零长度support offset均为阻断性错误", () => {
+    const state = plan([
+      slab({ id: "a", x: 0, y: 0, width: 3000, height: 3000 }),
+      slab({ id: "b", x: 3000, y: 0, width: 3000, height: 3000 }),
+    ]);
+    state.supportRules = [
+      { id: "reverse", target: { kind: "slab-edge", slabId: "a", side: "east", range: { mode: "offset", startMm: 2000, endMm: 1000 } }, support: "continuous" },
+      { id: "outside", target: { kind: "slab-edge", slabId: "a", side: "east", range: { mode: "offset", startMm: -1, endMm: 500 } }, support: "continuous" },
+      { id: "zero", target: { kind: "slab-edge", slabId: "a", side: "east", range: { mode: "offset", startMm: 1000, endMm: 1000 } }, support: "continuous" },
+    ];
+    const rangeIssues = validateFloorPlanV2(state).filter((issue) => issue.code === "support-range-invalid");
+    expect(rangeIssues).toHaveLength(3);
+    expect(rangeIssues.every((issue) => issue.level === "error")).toBe(true);
   });
 });
 

@@ -4,22 +4,25 @@ import {
 } from "./floor-bottom-calculator";
 
 export const FLOOR_BOTTOM_STORAGE_KEY = "rebarviz:floor-rebar:bottom:v1";
-export const FLOOR_BOTTOM_STORAGE_SCHEMA_VERSION = 2 as const;
+export const FLOOR_BOTTOM_STORAGE_SCHEMA_VERSION = 3 as const;
 
 export type FloorBottomStoredRecord = {
   schemaVersion: typeof FLOOR_BOTTOM_STORAGE_SCHEMA_VERSION;
   savedAt: string;
   state: FloorBottomState;
+  roleReviewRequired: boolean;
 };
 
 export function createFloorBottomStoredRecord(
   state: FloorBottomState,
   savedAt = new Date().toISOString(),
+  roleReviewRequired = false,
 ): FloorBottomStoredRecord {
   return {
     schemaVersion: FLOOR_BOTTOM_STORAGE_SCHEMA_VERSION,
     savedAt,
     state: structuredClone(state),
+    roleReviewRequired,
   };
 }
 
@@ -32,11 +35,16 @@ export function parseFloorBottomStoredRecord(
     schemaVersion?: unknown;
     savedAt?: unknown;
     state?: unknown;
+    roleReviewRequired?: unknown;
   };
-  if (![1, FLOOR_BOTTOM_STORAGE_SCHEMA_VERSION].includes(candidate.schemaVersion as number) || !candidate.state) return null;
+  if (![1, 2, FLOOR_BOTTOM_STORAGE_SCHEMA_VERSION].includes(candidate.schemaVersion as number) || !candidate.state) return null;
+  const currentSchema = candidate.schemaVersion === FLOOR_BOTTOM_STORAGE_SCHEMA_VERSION;
   return {
     schemaVersion: FLOOR_BOTTOM_STORAGE_SCHEMA_VERSION,
     savedAt: typeof candidate.savedAt === "string" ? candidate.savedAt : new Date(0).toISOString(),
     state: normalizeFloorBottomState(candidate.state, slabIds),
+    roleReviewRequired: currentSchema
+      ? candidate.roleReviewRequired === true
+      : true,
   };
 }

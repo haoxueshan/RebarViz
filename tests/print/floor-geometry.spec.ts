@@ -5,9 +5,11 @@ test("Geometry V2.1支持板区、洞口、支承切换和草稿恢复", async (
   await page.evaluate(() => {
     localStorage.removeItem("rebarviz:floor-rebar:draft:v1");
     localStorage.removeItem("rebarviz:floor-rebar:bottom:v1");
+    localStorage.removeItem("rebarviz:floor-rebar:top:v1");
+    localStorage.removeItem("rebarviz:floor-rebar:role:v1");
   });
   await page.reload();
-  await expect(page.getByText("FloorRebarCalculator · Geometry V2.1 + Bottom Rebar V1.1 + Top Rebar V1")).toBeVisible();
+  await expect(page.getByText("FloorRebarCalculator · Geometry V2.1 + Bottom/Top Rebar + Role V1.1")).toBeVisible();
   await expect(page.getByRole("heading", { name: "整层板区平面" })).toBeVisible();
 
   await page.getByLabel("板区类型").selectOption("corridor");
@@ -47,7 +49,10 @@ test("Geometry V2.1支持板区、洞口、支承切换和草稿恢复", async (
 test("数字空草稿明确无效且移动端没有横向溢出", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/calculator/floor");
-  await page.evaluate(() => localStorage.removeItem("rebarviz:floor-rebar:draft:v1"));
+  await page.evaluate(() => {
+    localStorage.removeItem("rebarviz:floor-rebar:draft:v1");
+    localStorage.removeItem("rebarviz:floor-rebar:role:v1");
+  });
   await page.reload();
   const widthInput = page.getByLabel("东西向净尺寸");
   await widthInput.fill("");
@@ -62,6 +67,7 @@ test("Bottom V1合并continuous、显示地筋料单并恢复独立设置", asyn
   await page.evaluate(() => {
     localStorage.removeItem("rebarviz:floor-rebar:draft:v1");
     localStorage.removeItem("rebarviz:floor-rebar:bottom:v1");
+    localStorage.removeItem("rebarviz:floor-rebar:role:v1");
   });
   await page.reload();
   await page.getByRole("button", { name: "连续楼板", exact: true }).click();
@@ -77,7 +83,7 @@ test("Bottom V1合并continuous、显示地筋料单并恢复独立设置", asyn
   await mainDiameter.fill("14");
   await page.waitForTimeout(400);
   const stored = await page.evaluate(() => JSON.parse(localStorage.getItem("rebarviz:floor-rebar:bottom:v1") ?? "null"));
-  expect(stored).toMatchObject({ schemaVersion: 2, state: { countMode: "floor", defaults: { mainDiameter: 14 } } });
+  expect(stored).toMatchObject({ schemaVersion: 3, roleReviewRequired: false, state: { countMode: "floor", defaults: { mainDiameter: 14 } } });
 
   await page.reload();
   await page.getByRole("button", { name: /2\. 地筋/ }).click();
@@ -97,7 +103,7 @@ test("Bottom数字空草稿阻止旧值生成正式结果", async ({ page }) => 
   await expect(page.getByText(/未使用旧值计算/)).toBeVisible();
 });
 
-test("Bottom V1.1局部continuous与inner-wall同时生成完整长筋和短筋Piece", async ({ page }) => {
+test("Bottom V1.1迁移复核后，局部continuous与inner-wall同时生成长短Piece", async ({ page }) => {
   await page.goto("/calculator/floor");
   await page.evaluate(() => {
     localStorage.setItem("rebarviz:floor-rebar:draft:v1", JSON.stringify({
@@ -129,9 +135,13 @@ test("Bottom V1.1局部continuous与inner-wall同时生成完整长筋和短筋P
         slabOverrides: {},
       },
     }));
+    localStorage.removeItem("rebarviz:floor-rebar:role:v1");
   });
   await page.reload();
   await page.getByRole("button", { name: /2\. 地筋/ }).click();
+  await expect(page.getByText("地筋结果无效")).toBeVisible();
+  await expect(page.getByText(/旧版本的东西\/南北向直径已迁移/).first()).toBeVisible();
+  await page.getByRole("button", { name: "确认地筋主副筋规格" }).click();
   await expect(page.getByText("正式地筋结果有效")).toBeVisible();
   await expect(page.getByText("8.740m")).toBeVisible();
   await expect(page.getByText("4.610m")).toBeVisible();
@@ -146,6 +156,11 @@ test("Top V1普通内墙增加、continuous贯穿并恢复独立设置", async (
   await page.evaluate(() => {
     localStorage.removeItem("rebarviz:floor-rebar:draft:v1");
     localStorage.removeItem("rebarviz:floor-rebar:top:v1");
+    localStorage.setItem("rebarviz:floor-rebar:role:v1", JSON.stringify({
+      schemaVersion: 1,
+      savedAt: new Date().toISOString(),
+      state: { mainDirectionOverrides: { "role:floor-slab-b": "x" } },
+    }));
   });
   await page.reload();
   await page.getByRole("button", { name: /3\. 面筋/ }).click();
@@ -165,7 +180,8 @@ test("Top V1普通内墙增加、continuous贯穿并恢复独立设置", async (
   await page.waitForTimeout(400);
   const stored = await page.evaluate(() => JSON.parse(localStorage.getItem("rebarviz:floor-rebar:top:v1") ?? "null"));
   expect(stored).toMatchObject({
-    schemaVersion: 2,
+    schemaVersion: 3,
+    roleReviewRequired: false,
     state: {
       countMode: "floor",
       topAnchorExtra: 300,
@@ -197,17 +213,27 @@ test("Top V1楼梯间Opening裁断Piece且洞口边改内墙后增加下料长�
       },
     }));
     localStorage.setItem("rebarviz:floor-rebar:top:v1", JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: 3,
       savedAt: new Date().toISOString(),
+      roleReviewRequired: false,
       state: {
         countMode: "project",
         topAnchorExtra: 250,
         defaults: {
-          x: { diameter: 10, spacing: 1000, extraMode: "both" },
-          y: { diameter: 10, spacing: 1000, extraMode: "both" },
+          mainDiameter: 10,
+          secondaryDiameter: 10,
+          xSpacing: 1000,
+          ySpacing: 1000,
+          xExtraMode: "both",
+          yExtraMode: "both",
         },
         slabOverrides: {},
       },
+    }));
+    localStorage.setItem("rebarviz:floor-rebar:role:v1", JSON.stringify({
+      schemaVersion: 1,
+      savedAt: new Date().toISOString(),
+      state: { mainDirectionOverrides: { "role:a": "x" } },
     }));
   });
   await page.reload();
@@ -227,7 +253,10 @@ test("Top V1楼梯间Opening裁断Piece且洞口边改内墙后增加下料长�
 test("Top数字空草稿阻止旧值计算且390px页面不横向溢出", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/calculator/floor");
-  await page.evaluate(() => localStorage.removeItem("rebarviz:floor-rebar:top:v1"));
+  await page.evaluate(() => {
+    localStorage.removeItem("rebarviz:floor-rebar:top:v1");
+    localStorage.removeItem("rebarviz:floor-rebar:role:v1");
+  });
   await page.reload();
   await page.getByRole("button", { name: "面筋", exact: true }).click();
   const extra = page.getByLabel("面筋内墙端增加值");
@@ -235,6 +264,44 @@ test("Top数字空草稿阻止旧值计算且390px页面不横向溢出", async 
   await expect(extra).toHaveAttribute("aria-invalid", "true");
   await expect(page.getByText("面筋结果无效")).toBeVisible();
   await expect(page.getByText(/未使用旧值计算/)).toBeVisible();
+  const dimensions = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }));
+  expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
+});
+
+test("正方形主筋方向人工选择由地筋和面筋共享，390px无页面溢出", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/calculator/floor");
+  await page.evaluate(() => {
+    localStorage.setItem("rebarviz:floor-rebar:draft:v1", JSON.stringify({
+      schemaVersion: 2,
+      savedAt: new Date().toISOString(),
+      state: {
+        coordinateModel: "net-layout-v1",
+        slabs: [{ id: "square", name: "正方形板区", type: "room", x: 0, y: 0, width: 4000, height: 4000 }],
+        openings: [],
+        supportRules: [],
+        innerWallThickness: 240,
+        outerWallThickness: 370,
+        snapDistanceMm: 150,
+      },
+    }));
+    localStorage.removeItem("rebarviz:floor-rebar:bottom:v1");
+    localStorage.removeItem("rebarviz:floor-rebar:top:v1");
+    localStorage.removeItem("rebarviz:floor-rebar:role:v1");
+  });
+  await page.reload();
+  await page.getByRole("button", { name: "地筋", exact: true }).click();
+  await expect(page.getByText("地筋结果无效")).toBeVisible();
+  await expect(page.getByText(/两个方向净跨相同/).first()).toBeVisible();
+  await page.getByLabel("东西向主筋").check();
+  await expect(page.getByText("正式地筋结果有效")).toBeVisible();
+
+  await page.getByRole("button", { name: "面筋", exact: true }).click();
+  await expect(page.getByLabel("东西向主筋")).toBeChecked();
+  await expect(page.getByText("正式面筋结果有效")).toBeVisible();
   const dimensions = await page.evaluate(() => ({
     clientWidth: document.documentElement.clientWidth,
     scrollWidth: document.documentElement.scrollWidth,

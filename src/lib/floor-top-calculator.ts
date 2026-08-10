@@ -16,9 +16,13 @@ import {
 } from "./floor-plan";
 import type { FloorBarLine, FloorBarPiece } from "./floor-rebar-types";
 import {
-  isSquareFloorRebarDomain,
+  DEFAULT_FLOOR_REBAR_ROLE_STATE,
   resolveFloorBarRole,
+  resolveFloorRebarRoleContext,
   type FloorBarRole,
+  type FloorMainDirection,
+  type FloorRebarRoleDomain,
+  type FloorRebarRoleState,
 } from "./floor-rebar-role";
 import {
   countBars,
@@ -75,6 +79,7 @@ export type FloorTopIssue = {
 
 export type FloorTopCalculation = {
   domains: FloorRebarDomain[];
+  roleDomains: FloorRebarRoleDomain[];
   lines: FloorBarLine[];
   pieces: FloorBarPiece[];
   groups: FloorTopBomGroup[];
@@ -189,12 +194,12 @@ export function resolveFloorTopDefaults(
 
 export function resolveFloorTopDirectionalSettings(
   state: FloorTopState,
-  domain: FloorRebarDomain,
   slabId: string,
   direction: "x" | "y",
+  mainDirection: FloorMainDirection,
 ): FloorTopBarSettings {
   const defaults = resolveFloorTopDefaults(state, slabId);
-  const role = resolveFloorBarRole(domain, direction);
+  const role = resolveFloorBarRole(mainDirection, direction);
   return {
     diameter: role === "main" ? defaults.mainDiameter : defaults.secondaryDiameter,
     spacing: direction === "x" ? defaults.xSpacing : defaults.ySpacing,
@@ -249,6 +254,7 @@ function validateTopState(
   plan: FloorPlanState,
   top: FloorTopState,
   domains: readonly FloorRebarDomain[],
+  mainDirectionByPhysicalDomain: ReadonlyMap<string, FloorMainDirection>,
 ): FloorTopIssue[] {
   const errors: FloorTopIssue[] = [];
   if (!COUNT_MODES.includes(top.countMode)) {
@@ -302,15 +308,17 @@ function validateTopState(
     if (override) validateDefaults(override, `“${slab.name}”面筋`, [slab.id]);
   });
   domains.forEach((domain) => {
+    const mainDirection = mainDirectionByPhysicalDomain.get(domain.id);
+    if (!mainDirection) return;
     (["x", "y"] as const).forEach((direction) => {
       const settings = domain.slabIds.map((slabId) =>
-        resolveFloorTopDirectionalSettings(top, domain, slabId, direction));
+        resolveFloorTopDirectionalSettings(top, slabId, direction, mainDirection));
       if (settings.length <= 1 || settings.every((item) => sameSettings(item, settings[0]))) {
         return;
       }
       const details = domain.slabIds.map((slabId) => {
         const slab = plan.slabs.find((item) => item.id === slabId);
-        const item = resolveFloorTopDirectionalSettings(top, domain, slabId, direction);
+        const item = resolveFloorTopDirectionalSettings(top, slabId, direction, mainDirection);
         return `${slab?.name ?? slabId} Φ${item.diameter}@${item.spacing} ${item.extraMode}`;
       });
       errors.push({
@@ -325,11 +333,13 @@ function validateTopState(
 
 function emptyCalculation(
   domains: FloorRebarDomain[],
+  roleDomains: FloorRebarRoleDomain[],
   errors: FloorTopIssue[],
   warnings: FloorTopIssue[],
 ): FloorTopCalculation {
   return {
     domains,
+    roleDomains,
     lines: [],
     pieces: [],
     groups: [],
@@ -404,6 +414,8 @@ export function buildFloorTopBomGroups(
 export function calculateFloorTopRebar(
   plan: FloorPlanState,
   input: FloorTopState,
+  roleState: FloorRebarRoleState = DEFAULT_FLOOR_REBAR_ROLE_STATE,
+  roleReviewRequired = false,
 ): FloorTopCalculation {
   // normalize仅用于存储迁移；正式计算保留NaN、非法枚举等错误并阻止料单。
   const top = input;
@@ -415,13 +427,18 @@ export function calculateFloorTopRebar(
     .filter((issue) => issue.level === "error")
     .map(({ code, message, objectIds }) => ({ code, message, objectIds }));
   const domains = buildFloorBottomRebarDomains(plan);
-  warnings.push(...domains.filter(isSquareFloorRebarDomain).map((domain) => ({
-    code: "square-domain-main-direction-defaulted",
-    message: "当前连续板区域东西、南北净跨相同，无法按长短自动区分主副筋，系统暂按东西向为主筋、南北向为副筋。",
-    objectIds: domain.slabIds,
-  })));
-  const errors = [...geometryErrors, ...validateTopState(plan, top, domains)];
-  if (errors.length > 0) return emptyCalculation(domains, errors, warnings);
+  const roleContext = resolveFloorRebarRoleContext(plan, domains, roleState);
+  const reviewErrors: FloorTopIssue[] = roleReviewRequired ? [{
+    code: "top-role-review-required",
+    message: "旧版本的东西/南北向直径已迁移为主/副筋语义，请确认当前面筋主筋、副筋直径后再生成正式料单。",
+  }] : [];
+  const errors = [
+    ...geometryErrors,
+    ...roleContext.errors,
+    ...reviewErrors,
+    ...validateTopState(plan, top, domains, roleContext.mainDirectionByPhysicalDomain),
+  ];
+  if (errors.length > 0) return emptyCalculation(domains, roleContext.roleDomains, errors, warnings);
 
   const allCells = buildFloorTopologyCells(plan);
   const cellsById = new Map(allCells.map((cell) => [cell.id, cell]));
@@ -432,17 +449,19 @@ export function calculateFloorTopRebar(
   const settingsByDomainDirection = new Map<string, FloorTopBarSettings>();
 
   domains.forEach((domain) => {
+    const mainDirection = roleContext.mainDirectionByPhysicalDomain.get(domain.id);
+    if (!mainDirection) return;
     const domainCells = domain.cellIds.flatMap((id) => {
       const cell = cellsById.get(id);
       return cell ? [cell] : [];
     });
     (["x", "y"] as const).forEach((direction) => {
-      const role = resolveFloorBarRole(domain, direction);
+      const role = resolveFloorBarRole(mainDirection, direction);
       const settings = resolveFloorTopDirectionalSettings(
         top,
-        domain,
         domain.slabIds[0],
         direction,
+        mainDirection,
       );
       settingsByDomainDirection.set(`${domain.id}:${direction}`, settings);
       const perpendicularStart = direction === "x" ? domain.minY : domain.minX;
@@ -561,7 +580,7 @@ export function calculateFloorTopRebar(
     });
   });
   if (calculationErrors.length > 0) {
-    return emptyCalculation(domains, calculationErrors, warnings);
+    return emptyCalculation(domains, roleContext.roleDomains, calculationErrors, warnings);
   }
 
   const groups = buildFloorTopBomGroups(pieces, settingsByDomainDirection);
@@ -576,6 +595,7 @@ export function calculateFloorTopRebar(
   );
   return {
     domains,
+    roleDomains: roleContext.roleDomains,
     lines,
     pieces,
     groups,

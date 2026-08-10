@@ -19,6 +19,7 @@ import {
   type FloorSupportRule,
 } from "./floor-plan";
 import type { FloorBarPiece } from "./floor-rebar-types";
+import { floorRoleDomainKey, type FloorRebarRoleState } from "./floor-rebar-role";
 import { countBars, theoreticalUnitWeight, type CountMode } from "./slab-calculator";
 
 function slab(id: string, x: number, y: number, width: number, height: number): FloorSlab {
@@ -43,6 +44,10 @@ function plan(slabs: FloorSlab[], openings: FloorOpening[] = [], supportRules: F
 
 function bottom(patch: Partial<FloorBottomState> = {}): FloorBottomState {
   return { ...structuredClone(DEFAULT_FLOOR_BOTTOM_STATE), ...patch };
+}
+
+function roleState(entries: Array<[string[], "x" | "y"]> = []): FloorRebarRoleState {
+  return { mainDirectionOverrides: Object.fromEntries(entries.map(([slabIds, direction]) => [floorRoleDomainKey(slabIds), direction])) };
 }
 
 function continuousRule(slabId: string, side: "west" | "east" | "south" | "north", id = "continuous"): FloorSupportRule {
@@ -87,6 +92,23 @@ describe("Floor Bottom单板与根数算法", () => {
     expect(calculation.groups).toEqual([]);
     expect(calculation.totalWeightKg).toBeNull();
   });
+
+  it("旧规格语义未确认时阻止正式地筋料单", () => {
+    const calculation = calculateFloorBottomRebar(
+      plan([slab("a", 0, 0, 4200, 3600)]),
+      bottom(),
+      roleState(),
+      true,
+    );
+    expect(calculation).toMatchObject({
+      isValid: false,
+      lines: [],
+      pieces: [],
+      groups: [],
+      totalWeightKg: null,
+    });
+    expect(calculation.errors.map((issue) => issue.code)).toContain("bottom-role-review-required");
+  });
 });
 
 describe("Floor Bottom主副筋角色", () => {
@@ -116,26 +138,36 @@ describe("Floor Bottom主副筋角色", () => {
     expect(merged.lines.filter((line) => line.direction === "x").every((line) => line.role === "secondary")).toBe(true);
     expect(merged.lines.filter((line) => line.direction === "y").every((line) => line.role === "main")).toBe(true);
 
-    const clipped = calculateFloorBottomRebar(
-      plan([slab("a", 0, 0, 6000, 4000)], [opening("o", 2000, 1000, 2000, 2000)]),
-      bottom(),
+    const clippedPlan = plan(
+      [slab("a", 0, 0, 6000, 4000)],
+      [opening("o", 2500, 0, 1000, 4000)],
     );
+    const clipped = calculateFloorBottomRebar(clippedPlan, bottom());
+    expect(clipped.domains).toHaveLength(2);
+    expect(clipped.roleDomains).toHaveLength(1);
     expect(clipped.pieces.filter((piece) => piece.direction === "x").every((piece) => piece.role === "secondary")).toBe(true);
     expect(clipped.pieces.filter((piece) => piece.direction === "y").every((piece) => piece.role === "main")).toBe(true);
+    expect(clipped.pieces.filter((piece) => piece.direction === "x").every((piece) => piece.diameter === 10)).toBe(true);
+    expect(clipped.pieces.filter((piece) => piece.direction === "y").every((piece) => piece.diameter === 12)).toBe(true);
   });
 
-  it("正方形Domain确定为X主筋、Y副筋并给出提示", () => {
-    const calculation = calculateFloorBottomRebar(plan([slab("a", 0, 0, 4000, 4000)]), bottom());
-    expect(calculation.lines.filter((line) => line.direction === "x").every((line) => line.role === "main")).toBe(true);
-    expect(calculation.lines.filter((line) => line.direction === "y").every((line) => line.role === "secondary")).toBe(true);
-    expect(calculation.warnings.map((issue) => issue.code)).toContain("square-domain-main-direction-defaulted");
+  it("正方形Domain未指定时阻止料单，人工选择后统一角色", () => {
+    const state = plan([slab("a", 0, 0, 4000, 4000)]);
+    const required = calculateFloorBottomRebar(state, bottom());
+    expect(required.isValid).toBe(false);
+    expect(required.errors.map((issue) => issue.code)).toContain("rebar-main-direction-required");
+    const xMain = calculateFloorBottomRebar(state, bottom(), roleState([[['a'], "x"]]));
+    expect(xMain.lines.filter((line) => line.direction === "x").every((line) => line.role === "main")).toBe(true);
+    expect(xMain.lines.filter((line) => line.direction === "y").every((line) => line.role === "secondary")).toBe(true);
+    const yMain = calculateFloorBottomRebar(state, bottom(), roleState([[['a'], "y"]]));
+    expect(yMain.lines.filter((line) => line.direction === "y").every((line) => line.role === "main")).toBe(true);
   });
 });
 
 describe("Bottom Domain与continuous", () => {
   it("默认内墙把相邻板区分成两个Domain并在各侧增加240mm", () => {
     const state = plan([slab("a", 0, 0, 4200, 3600), slab("b", 4200, 0, 3600, 3600)]);
-    const calculation = calculateFloorBottomRebar(state, bottom());
+    const calculation = calculateFloorBottomRebar(state, bottom(), roleState([[['b'], "x"]]));
     expect(calculation.domains).toHaveLength(2);
     const touching = calculation.pieces.filter((piece) =>
       piece.direction === "x" && (piece.runStartMm === 4200 || piece.runEndMm === 4200),
@@ -184,7 +216,7 @@ describe("Bottom Domain与continuous", () => {
     );
     const domains = buildFloorBottomRebarDomains(lPlan);
     expect(domains).toHaveLength(1);
-    const calculation = calculateFloorBottomRebar(lPlan, bottom());
+    const calculation = calculateFloorBottomRebar(lPlan, bottom(), roleState([[['a', 'b'], "x"]]));
     expect(calculation.isValid).toBe(true);
     expect(calculation.pieces.every((piece) => piece.startSupport !== "continuous" && piece.endSupport !== "continuous")).toBe(true);
     expect(calculation.pieces.every((piece) => Number.isFinite(piece.singleLengthMm) && piece.singleLengthMm > 0)).toBe(true);
@@ -194,7 +226,7 @@ describe("Bottom Domain与continuous", () => {
       [],
       [continuousRule("base", "north")],
     );
-    const tCalculation = calculateFloorBottomRebar(tPlan, bottom());
+    const tCalculation = calculateFloorBottomRebar(tPlan, bottom(), roleState([[['base', 'stem'], "y"]]));
     expect(tCalculation.domains).toHaveLength(1);
     expect(tCalculation.isValid).toBe(true);
     expect(tCalculation.pieces.every((piece) => piece.startSupport !== "continuous" && piece.endSupport !== "continuous")).toBe(true);
@@ -256,7 +288,7 @@ describe("Opening裁断与实物Piece", () => {
   });
 
   it("内部洞口使6条X理论线生成8个X实物Piece并保留真实下料长度", () => {
-    const calculation = calculateFloorBottomRebar(basePlan(), settings());
+    const calculation = calculateFloorBottomRebar(basePlan(), settings(), roleState([[['a'], "x"]]));
     const xLines = calculation.lines.filter((line) => line.direction === "x");
     const xPieces = calculation.pieces.filter((piece) => piece.direction === "x");
     expect(xLines).toHaveLength(6);
@@ -274,7 +306,7 @@ describe("Opening裁断与实物Piece", () => {
     state.openings[0] = { ...state.openings[0], y: 3000, height: 1000 };
     const custom = settings();
     custom.defaults.xSpacing = 2000;
-    const calculation = calculateFloorBottomRebar(state, custom);
+    const calculation = calculateFloorBottomRebar(state, custom, roleState([[['a'], "x"]]));
     const xLines = calculation.lines.filter((line) => line.direction === "x");
     const pieceLineIds = new Set(calculation.pieces.filter((piece) => piece.direction === "x").map((piece) => piece.lineId));
     expect(xLines).toHaveLength(3);
@@ -288,7 +320,7 @@ describe("Opening裁断与实物Piece", () => {
       target: { kind: "opening-edge", openingId: "o", side: "west", range: { mode: "whole" } },
       support: "inner-wall",
     }];
-    const calculation = calculateFloorBottomRebar(state, settings());
+    const calculation = calculateFloorBottomRebar(state, settings(), roleState([[['a'], "x"]]));
     const leftPieces = calculation.pieces.filter((piece) => piece.direction === "x" && piece.runEndMm === 2000);
     expect(leftPieces).toHaveLength(2);
     expect(leftPieces.every((piece) => piece.singleLengthMm === 2610 && piece.endAnchorMm === 240)).toBe(true);
@@ -298,14 +330,33 @@ describe("Opening裁断与实物Piece", () => {
     const split = plan([slab("a", 0, 0, 6000, 6000)], [opening("o", 2500, 0, 1000, 6000)]);
     expect(buildFloorBottomRebarDomains(split)).toHaveLength(2);
     const covered = plan([slab("a", 0, 0, 6000, 6000)], [opening("o", 0, 0, 6000, 6000)]);
-    expect(validateFloorPlanV2(covered).map((issue) => issue.code)).toContain("slab-fully-covered");
+    expect(validateFloorPlanV2(covered)).toContainEqual(expect.objectContaining({ code: "slab-fully-covered", level: "error" }));
     const calculation = calculateFloorBottomRebar(covered, bottom());
-    expect(calculation).toMatchObject({ isValid: true, totalBarLines: 0, totalPieces: 0, totalLengthM: 0, totalWeightKg: 0 });
+    expect(calculation).toMatchObject({ isValid: false, totalBarLines: 0, totalPieces: 0, totalLengthM: 0, totalWeightKg: null });
     expect(calculation.domains).toEqual([]);
   });
 });
 
 describe("Geometry V2.1支承硬化", () => {
+  it("非法support offset阻止正式地筋，不会交换起终点继续计算", () => {
+    const state = plan([
+      slab("a", 0, 0, 3000, 3000),
+      slab("b", 3000, 0, 3000, 3000),
+    ], [], [{
+      id: "reverse-range",
+      target: {
+        kind: "slab-edge",
+        slabId: "a",
+        side: "east",
+        range: { mode: "offset", startMm: 2500, endMm: 500 },
+      },
+      support: "continuous",
+    }]);
+    const calculation = calculateFloorBottomRebar(state, bottom());
+    expect(calculation.errors.map((issue) => issue.code)).toContain("support-range-invalid");
+    expect(calculation).toMatchObject({ isValid: false, lines: [], pieces: [], groups: [], totalWeightKg: null });
+  });
+
   it("共享边冲突与规则数组顺序无关，安全解析为inner-wall并阻止Bottom", () => {
     const rules: FloorSupportRule[] = [
       continuousRule("a", "east", "a-continuous"),

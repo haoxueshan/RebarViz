@@ -51,6 +51,16 @@ import {
   type FloorSupportRuleTarget,
 } from "@/lib/floor-plan";
 import { createFloorDraftRecord, FLOOR_DRAFT_KEY, parseFloorDraftRecord } from "@/lib/floor-plan-storage";
+import {
+  buildFloorRebarRoleDomains,
+  DEFAULT_FLOOR_REBAR_ROLE_STATE,
+  type FloorRebarRoleState,
+} from "@/lib/floor-rebar-role";
+import {
+  createFloorRebarRoleStoredRecord,
+  FLOOR_REBAR_ROLE_STORAGE_KEY,
+  parseFloorRebarRoleStoredRecord,
+} from "@/lib/floor-rebar-role-storage";
 
 const SLAB_TYPE_OPTIONS: Array<{ value: FloorSlabType; label: string }> = [
   { value: "room", label: "房间" }, { value: "corridor", label: "内走廊" }, { value: "hall", label: "客厅" },
@@ -70,6 +80,10 @@ function cloneDefaultBottomState(): FloorBottomState {
 
 function cloneDefaultTopState(): FloorTopState {
   return structuredClone(DEFAULT_FLOOR_TOP_STATE);
+}
+
+function cloneDefaultRoleState(): FloorRebarRoleState {
+  return structuredClone(DEFAULT_FLOOR_REBAR_ROLE_STATE);
 }
 
 function blockBottomForDrafts(
@@ -285,6 +299,9 @@ export default function FloorRebarCalculator() {
   const [state, setState] = useState<FloorPlanState>(cloneDefaultState);
   const [bottomState, setBottomState] = useState<FloorBottomState>(cloneDefaultBottomState);
   const [topState, setTopState] = useState<FloorTopState>(cloneDefaultTopState);
+  const [roleState, setRoleState] = useState<FloorRebarRoleState>(cloneDefaultRoleState);
+  const [bottomRoleReviewRequired, setBottomRoleReviewRequired] = useState(false);
+  const [topRoleReviewRequired, setTopRoleReviewRequired] = useState(false);
   const [stage, setStage] = useState<FloorWorkflowStage>("plan");
   const [selection, setSelection] = useState<FloorSelection>({ kind: "slab", id: DEFAULT_FLOOR_PLAN_STATE.slabs[0].id });
   const [selectedBoundaryId, setSelectedBoundaryId] = useState<string | null>(null);
@@ -296,6 +313,13 @@ export default function FloorRebarCalculator() {
 
   useEffect(() => {
     try {
+      const restoreRoleState = (plan: FloorPlanState) => {
+        const roleSaved = window.localStorage.getItem(FLOOR_REBAR_ROLE_STORAGE_KEY);
+        if (!roleSaved) return;
+        const validKeys = new Set(buildFloorRebarRoleDomains(plan).map((domain) => domain.id));
+        const roleRecord = parseFloorRebarRoleStoredRecord(JSON.parse(roleSaved), validKeys);
+        if (roleRecord) setRoleState(roleRecord.state);
+      };
       const saved = window.localStorage.getItem(FLOOR_DRAFT_KEY);
       if (saved) {
         const record = parseFloorDraftRecord(JSON.parse(saved));
@@ -307,7 +331,10 @@ export default function FloorRebarCalculator() {
               JSON.parse(bottomSaved),
               new Set(record.state.slabs.map((slab) => slab.id)),
             );
-            if (bottomRecord) setBottomState(bottomRecord.state);
+            if (bottomRecord) {
+              setBottomState(bottomRecord.state);
+              setBottomRoleReviewRequired(bottomRecord.roleReviewRequired);
+            }
           }
           const topSaved = window.localStorage.getItem(FLOOR_TOP_STORAGE_KEY);
           if (topSaved) {
@@ -315,8 +342,12 @@ export default function FloorRebarCalculator() {
               JSON.parse(topSaved),
               new Set(record.state.slabs.map((slab) => slab.id)),
             );
-            if (topRecord) setTopState(topRecord.state);
+            if (topRecord) {
+              setTopState(topRecord.state);
+              setTopRoleReviewRequired(topRecord.roleReviewRequired);
+            }
           }
+          restoreRoleState(record.state);
           setSelection(record.state.slabs[0] ? { kind: "slab", id: record.state.slabs[0].id } : record.state.openings[0] ? { kind: "opening", id: record.state.openings[0].id } : null);
         }
       } else {
@@ -326,7 +357,10 @@ export default function FloorRebarCalculator() {
             JSON.parse(bottomSaved),
             new Set(DEFAULT_FLOOR_PLAN_STATE.slabs.map((slab) => slab.id)),
           );
-          if (bottomRecord) setBottomState(bottomRecord.state);
+          if (bottomRecord) {
+            setBottomState(bottomRecord.state);
+            setBottomRoleReviewRequired(bottomRecord.roleReviewRequired);
+          }
         }
         const topSaved = window.localStorage.getItem(FLOOR_TOP_STORAGE_KEY);
         if (topSaved) {
@@ -334,8 +368,12 @@ export default function FloorRebarCalculator() {
             JSON.parse(topSaved),
             new Set(DEFAULT_FLOOR_PLAN_STATE.slabs.map((slab) => slab.id)),
           );
-          if (topRecord) setTopState(topRecord.state);
+          if (topRecord) {
+            setTopState(topRecord.state);
+            setTopRoleReviewRequired(topRecord.roleReviewRequired);
+          }
         }
+        restoreRoleState(DEFAULT_FLOOR_PLAN_STATE);
       }
     } catch {
       // 损坏草稿使用默认布局，不阻塞Geometry V2页面。
@@ -362,10 +400,13 @@ export default function FloorRebarCalculator() {
           Object.entries(bottomState.slabOverrides).filter(([slabId]) => slabIds.has(slabId)),
         ),
       };
-      window.localStorage.setItem(FLOOR_BOTTOM_STORAGE_KEY, JSON.stringify(createFloorBottomStoredRecord(cleaned)));
+      window.localStorage.setItem(
+        FLOOR_BOTTOM_STORAGE_KEY,
+        JSON.stringify(createFloorBottomStoredRecord(cleaned, new Date().toISOString(), bottomRoleReviewRequired)),
+      );
     }, 300);
     return () => window.clearTimeout(timer);
-  }, [bottomState, hydrated, state.slabs]);
+  }, [bottomRoleReviewRequired, bottomState, hydrated, state.slabs]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -379,31 +420,56 @@ export default function FloorRebarCalculator() {
       };
       window.localStorage.setItem(
         FLOOR_TOP_STORAGE_KEY,
-        JSON.stringify(createFloorTopStoredRecord(cleaned)),
+        JSON.stringify(createFloorTopStoredRecord(cleaned, new Date().toISOString(), topRoleReviewRequired)),
       );
     }, 300);
     return () => window.clearTimeout(timer);
-  }, [hydrated, state.slabs, topState]);
+  }, [hydrated, state.slabs, topRoleReviewRequired, topState]);
+
+  const roleDomains = useMemo(() => buildFloorRebarRoleDomains(state), [state]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    const timer = window.setTimeout(() => {
+      const validKeys = new Set(roleDomains.map((domain) => domain.id));
+      const cleaned: FloorRebarRoleState = {
+        mainDirectionOverrides: Object.fromEntries(
+          Object.entries(roleState.mainDirectionOverrides).filter(([key]) => validKeys.has(key)),
+        ),
+      };
+      window.localStorage.setItem(
+        FLOOR_REBAR_ROLE_STORAGE_KEY,
+        JSON.stringify(createFloorRebarRoleStoredRecord(cleaned)),
+      );
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [hydrated, roleDomains, roleState]);
 
   const atomic = useMemo(() => buildFloorAtomicBoundarySegments(state), [state]);
   const displays = useMemo(() => buildFloorDisplayBoundarySegments(state), [state]);
   const issues = useMemo(() => validateFloorPlanV2(state), [state]);
   const errors = issues.filter((issue) => issue.level === "error");
   const warnings = issues.filter((issue) => issue.level === "warning");
-  const rawBottomCalculation = useMemo(() => calculateFloorBottomRebar(state, bottomState), [bottomState, state]);
+  const rawBottomCalculation = useMemo(
+    () => calculateFloorBottomRebar(state, bottomState, roleState, bottomRoleReviewRequired),
+    [bottomRoleReviewRequired, bottomState, roleState, state],
+  );
   const bottomCalculation = useMemo(
     () => blockBottomForDrafts(rawBottomCalculation, invalidDrafts.size + invalidBottomDrafts.size),
     [invalidBottomDrafts.size, invalidDrafts.size, rawBottomCalculation],
   );
   const rawTopCalculation = useMemo(
-    () => calculateFloorTopRebar(state, topState),
-    [state, topState],
+    () => calculateFloorTopRebar(state, topState, roleState, topRoleReviewRequired),
+    [roleState, state, topRoleReviewRequired, topState],
   );
   const topCalculation = useMemo(
     () => blockTopForDrafts(rawTopCalculation, invalidDrafts.size + invalidTopDrafts.size),
     [invalidDrafts.size, invalidTopDrafts.size, rawTopCalculation],
   );
   const selectedSlab = selection?.kind === "slab" ? state.slabs.find((slab) => slab.id === selection.id) ?? null : null;
+  const selectedRoleDomain = selectedSlab
+    ? roleDomains.find((domain) => domain.slabIds.includes(selectedSlab.id)) ?? null
+    : null;
   const selectedOpening = selection?.kind === "opening" ? state.openings.find((opening) => opening.id === selection.id) ?? null : null;
   const selectedSegments = selection ? atomic.filter((segment) => selection.kind === "slab" ? segment.slabIds.includes(selection.id) : segment.openingId === selection.id) : [];
 
@@ -532,7 +598,7 @@ export default function FloorRebarCalculator() {
   return (
     <main className="mx-auto max-w-[1500px] px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
-        <p className="text-sm font-semibold text-blue-600">FloorRebarCalculator · Geometry V2.1 + Bottom Rebar V1.1 + Top Rebar V1</p>
+        <p className="text-sm font-semibold text-blue-600">FloorRebarCalculator · Geometry V2.1 + Bottom/Top Rebar + Role V1.1</p>
         <h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-950">整层楼板板筋系统</h1>
         <p className="mt-3 max-w-4xl text-sm leading-6 text-slate-600">当前已支持整层有板区域、洞口、支承拓扑、地筋及普通面筋下料；通墙和完整综合料单仍属于后续阶段。</p>
       </header>
@@ -549,7 +615,7 @@ export default function FloorRebarCalculator() {
             <button type="button" onClick={() => {
               if (!window.confirm("确定恢复Geometry V2默认数据吗？当前整层草稿将被替换。")) return;
               const next = cloneDefaultState();
-              setState(next); setSelection({ kind: "slab", id: next.slabs[0].id }); setSelectedBoundaryId(null); setInvalidDrafts(new Set()); setInputRevision((value) => value + 1); window.localStorage.removeItem(FLOOR_DRAFT_KEY);
+              setState(next); setRoleState(cloneDefaultRoleState()); setSelection({ kind: "slab", id: next.slabs[0].id }); setSelectedBoundaryId(null); setInvalidDrafts(new Set()); setInputRevision((value) => value + 1); window.localStorage.removeItem(FLOOR_DRAFT_KEY); window.localStorage.removeItem(FLOOR_REBAR_ROLE_STORAGE_KEY);
             }} className="col-span-2 inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 sm:col-span-1"><RotateCcw size={16} />重置平面</button>
           </div>}
 
@@ -564,9 +630,31 @@ export default function FloorRebarCalculator() {
 
         <aside className="space-y-4 xl:sticky xl:top-20 xl:self-start">
           {stage === "bottom" ? (
-            <FloorBottomSettingsPanel plan={state} bottom={bottomState} selectedSlab={selectedSlab} onChange={setBottomState} onValidityChange={setBottomDraftValidity} />
+            <FloorBottomSettingsPanel
+              plan={state}
+              bottom={bottomState}
+              selectedSlab={selectedSlab}
+              selectedRoleDomain={selectedRoleDomain}
+              roleState={roleState}
+              roleReviewRequired={bottomRoleReviewRequired}
+              onChange={setBottomState}
+              onRoleStateChange={setRoleState}
+              onConfirmRoleReview={() => setBottomRoleReviewRequired(false)}
+              onValidityChange={setBottomDraftValidity}
+            />
           ) : stage === "top" ? (
-            <FloorTopSettingsPanel plan={state} top={topState} selectedSlab={selectedSlab} onChange={setTopState} onValidityChange={setTopDraftValidity} />
+            <FloorTopSettingsPanel
+              plan={state}
+              top={topState}
+              selectedSlab={selectedSlab}
+              selectedRoleDomain={selectedRoleDomain}
+              roleState={roleState}
+              roleReviewRequired={topRoleReviewRequired}
+              onChange={setTopState}
+              onRoleStateChange={setRoleState}
+              onConfirmRoleReview={() => setTopRoleReviewRequired(false)}
+              onValidityChange={setTopDraftValidity}
+            />
           ) : <>
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-center gap-2"><House size={18} className="text-blue-600" /><h2 className="font-semibold text-slate-900">净跨拓扑设置</h2></div>

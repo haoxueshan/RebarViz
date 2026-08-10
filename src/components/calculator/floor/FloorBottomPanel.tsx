@@ -2,6 +2,7 @@
 
 import { AlertTriangle, Layers3 } from "lucide-react";
 import { useState } from "react";
+import { FloorRolePanel } from "@/components/calculator/floor/FloorRolePanel";
 import {
   resolveFloorBottomDefaults,
   type FloorBottomCalculation,
@@ -9,7 +10,11 @@ import {
   type FloorBottomState,
 } from "@/lib/floor-bottom-calculator";
 import type { FloorPlanState, FloorSlab } from "@/lib/floor-plan";
-import { floorBarRoleLabel } from "@/lib/floor-rebar-role";
+import {
+  floorBarRoleLabel,
+  type FloorRebarRoleDomain,
+  type FloorRebarRoleState,
+} from "@/lib/floor-rebar-role";
 import { countModeLabel, directionLabel, type CountMode } from "@/lib/slab-calculator";
 
 function BottomNumberField({
@@ -101,13 +106,23 @@ export function FloorBottomSettingsPanel({
   plan,
   bottom,
   selectedSlab,
+  selectedRoleDomain,
+  roleState,
+  roleReviewRequired,
   onChange,
+  onRoleStateChange,
+  onConfirmRoleReview,
   onValidityChange,
 }: {
   plan: FloorPlanState;
   bottom: FloorBottomState;
   selectedSlab: FloorSlab | null;
+  selectedRoleDomain: FloorRebarRoleDomain | null;
+  roleState: FloorRebarRoleState;
+  roleReviewRequired: boolean;
   onChange: (state: FloorBottomState) => void;
+  onRoleStateChange: (state: FloorRebarRoleState) => void;
+  onConfirmRoleReview: () => void;
   onValidityChange: (key: string, valid: boolean) => void;
 }) {
   const updateDefault = (patch: Partial<FloorBottomDefaults>) => {
@@ -143,6 +158,15 @@ export function FloorBottomSettingsPanel({
 
   return (
     <div className="space-y-4">
+      <FloorRolePanel
+        plan={plan}
+        domain={selectedRoleDomain}
+        roleState={roleState}
+        reviewRequired={roleReviewRequired}
+        reviewLabel="地筋"
+        onChange={onRoleStateChange}
+        onConfirmReview={onConfirmRoleReview}
+      />
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex items-center gap-2"><Layers3 size={18} className="text-blue-600" /><h2 className="font-semibold text-slate-900">整层地筋默认规格</h2></div>
         <p className="mt-2 text-xs leading-5 text-slate-500">系统按当前连续楼板区域的净跨自动判断：短跨方向为主筋，长跨方向为副筋。间距仍按东西、南北方向设置。</p>

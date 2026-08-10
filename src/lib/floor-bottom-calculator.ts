@@ -6,11 +6,19 @@ import {
   type FloorPlanState,
   type FloorTopologyCell,
 } from "./floor-plan";
+import {
+  buildFloorRebarDomains,
+  type FloorRebarDomain,
+} from "./floor-rebar-domain";
 import type { FloorBarLine, FloorBarPiece } from "./floor-rebar-types";
 import {
-  isSquareFloorRebarDomain,
+  DEFAULT_FLOOR_REBAR_ROLE_STATE,
   resolveFloorBarRole,
+  resolveFloorRebarRoleContext,
   type FloorBarRole,
+  type FloorMainDirection,
+  type FloorRebarRoleDomain,
+  type FloorRebarRoleState,
 } from "./floor-rebar-role";
 import {
   countBars,
@@ -36,15 +44,7 @@ export type FloorBottomState = {
   slabOverrides: Record<string, Partial<FloorBottomDefaults>>;
 };
 
-export type FloorRebarDomain = {
-  id: string;
-  slabIds: string[];
-  cellIds: string[];
-  minX: number;
-  minY: number;
-  maxX: number;
-  maxY: number;
-};
+export type { FloorRebarDomain } from "./floor-rebar-domain";
 
 export type FloorBottomBomGroup = {
   id: string;
@@ -70,6 +70,7 @@ export type FloorBottomIssue = {
 
 export type FloorBottomCalculation = {
   domains: FloorRebarDomain[];
+  roleDomains: FloorRebarRoleDomain[];
   lines: FloorBarLine[];
   pieces: FloorBarPiece[];
   groups: FloorBottomBomGroup[];
@@ -179,12 +180,12 @@ export function resolveFloorBottomDefaults(
 
 export function resolveFloorBottomDirectionalSettings(
   state: FloorBottomState,
-  domain: FloorRebarDomain,
   slabId: string,
   direction: "x" | "y",
+  mainDirection: FloorMainDirection,
 ): FloorBarSettings {
   const defaults = resolveFloorBottomDefaults(state, slabId);
-  const role = resolveFloorBarRole(domain, direction);
+  const role = resolveFloorBarRole(mainDirection, direction);
   return {
     diameter: role === "main" ? defaults.mainDiameter : defaults.secondaryDiameter,
     spacing: direction === "x" ? defaults.xSpacing : defaults.ySpacing,
@@ -195,107 +196,10 @@ function segmentLength(segment: FloorAtomicBoundarySegment): number {
   return Math.abs(segment.endX - segment.startX) + Math.abs(segment.endY - segment.startY);
 }
 
-function cellSharedEdge(
-  left: FloorTopologyCell,
-  right: FloorTopologyCell,
-): { orientation: "horizontal" | "vertical"; coordinate: number; start: number; end: number } | null {
-  const overlapY = Math.min(left.y + left.height, right.y + right.height) - Math.max(left.y, right.y);
-  if (overlapY > GEOMETRY_EPSILON && (Math.abs(left.x + left.width - right.x) <= GEOMETRY_EPSILON || Math.abs(right.x + right.width - left.x) <= GEOMETRY_EPSILON)) {
-    return {
-      orientation: "vertical",
-      coordinate: Math.abs(left.x + left.width - right.x) <= GEOMETRY_EPSILON ? right.x : left.x,
-      start: Math.max(left.y, right.y),
-      end: Math.min(left.y + left.height, right.y + right.height),
-    };
-  }
-  const overlapX = Math.min(left.x + left.width, right.x + right.width) - Math.max(left.x, right.x);
-  if (overlapX > GEOMETRY_EPSILON && (Math.abs(left.y + left.height - right.y) <= GEOMETRY_EPSILON || Math.abs(right.y + right.height - left.y) <= GEOMETRY_EPSILON)) {
-    return {
-      orientation: "horizontal",
-      coordinate: Math.abs(left.y + left.height - right.y) <= GEOMETRY_EPSILON ? right.y : left.y,
-      start: Math.max(left.x, right.x),
-      end: Math.min(left.x + left.width, right.x + right.width),
-    };
-  }
-  return null;
-}
-
-function atomicCoversEdge(
-  segment: FloorAtomicBoundarySegment,
-  edge: NonNullable<ReturnType<typeof cellSharedEdge>>,
-): boolean {
-  if (segment.orientation !== edge.orientation) return false;
-  if (edge.orientation === "vertical") {
-    return Math.abs(segment.startX - edge.coordinate) <= GEOMETRY_EPSILON &&
-      segment.startY < edge.end - GEOMETRY_EPSILON && segment.endY > edge.start + GEOMETRY_EPSILON;
-  }
-  return Math.abs(segment.startY - edge.coordinate) <= GEOMETRY_EPSILON &&
-    segment.startX < edge.end - GEOMETRY_EPSILON && segment.endX > edge.start + GEOMETRY_EPSILON;
-}
-
 export function buildFloorBottomRebarDomains(
   plan: FloorPlanState,
 ): FloorRebarDomain[] {
-  const cells = buildFloorTopologyCells(plan).filter(
-    (cell): cell is FloorTopologyCell & { effectiveSlabId: string } => Boolean(cell.effectiveSlabId),
-  );
-  const atomic = buildFloorAtomicBoundarySegments(plan);
-  const graph = new Map(cells.map((cell) => [cell.id, new Set<string>()]));
-  for (let leftIndex = 0; leftIndex < cells.length; leftIndex += 1) {
-    for (let rightIndex = leftIndex + 1; rightIndex < cells.length; rightIndex += 1) {
-      const left = cells[leftIndex];
-      const right = cells[rightIndex];
-      const edge = cellSharedEdge(left, right);
-      if (!edge) continue;
-      const connected = left.effectiveSlabId === right.effectiveSlabId || atomic.some(
-        (segment) => segment.geometryKind === "shared-slab" &&
-          segment.support === "continuous" &&
-          segment.slabIds.includes(left.effectiveSlabId) &&
-          segment.slabIds.includes(right.effectiveSlabId) &&
-          atomicCoversEdge(segment, edge),
-      );
-      if (!connected) continue;
-      graph.get(left.id)?.add(right.id);
-      graph.get(right.id)?.add(left.id);
-    }
-  }
-
-  const cellsById = new Map(cells.map((cell) => [cell.id, cell]));
-  const visited = new Set<string>();
-  const domains: FloorRebarDomain[] = [];
-  cells.forEach((cell) => {
-    if (visited.has(cell.id)) return;
-    const queue = [cell.id];
-    const component: FloorTopologyCell[] = [];
-    visited.add(cell.id);
-    while (queue.length > 0) {
-      const currentId = queue.shift()!;
-      const current = cellsById.get(currentId);
-      if (current) component.push(current);
-      graph.get(currentId)?.forEach((nextId) => {
-        if (!visited.has(nextId)) {
-          visited.add(nextId);
-          queue.push(nextId);
-        }
-      });
-    }
-    const cellIds = component.map((item) => item.id).sort();
-    const slabIds = [...new Set(component.flatMap((item) => item.effectiveSlabId ? [item.effectiveSlabId] : []))].sort();
-    const minX = Math.min(...component.map((item) => item.x));
-    const minY = Math.min(...component.map((item) => item.y));
-    const maxX = Math.max(...component.map((item) => item.x + item.width));
-    const maxY = Math.max(...component.map((item) => item.y + item.height));
-    domains.push({
-      id: `bottom-domain:${cellIds.join("|")}`,
-      slabIds,
-      cellIds,
-      minX,
-      minY,
-      maxX,
-      maxY,
-    });
-  });
-  return domains.sort((left, right) => left.minY - right.minY || left.minX - right.minX || left.id.localeCompare(right.id));
+  return buildFloorRebarDomains(plan, "bottom-domain");
 }
 
 function sameSettings(left: FloorBarSettings, right: FloorBarSettings): boolean {
@@ -310,6 +214,7 @@ function validateBottomState(
   plan: FloorPlanState,
   bottom: FloorBottomState,
   domains: readonly FloorRebarDomain[],
+  mainDirectionByPhysicalDomain: ReadonlyMap<string, FloorMainDirection>,
 ): FloorBottomIssue[] {
   const errors: FloorBottomIssue[] = [];
   if (!COUNT_MODES.includes(bottom.countMode)) {
@@ -347,13 +252,15 @@ function validateBottomState(
     if (override) validateDefaults(override, `“${slab.name}”地筋`, [slab.id]);
   });
   domains.forEach((domain) => {
+    const mainDirection = mainDirectionByPhysicalDomain.get(domain.id);
+    if (!mainDirection) return;
     (["x", "y"] as const).forEach((direction) => {
       const settings = domain.slabIds.map((slabId) =>
-        resolveFloorBottomDirectionalSettings(bottom, domain, slabId, direction));
+        resolveFloorBottomDirectionalSettings(bottom, slabId, direction, mainDirection));
       if (settings.length > 1 && settings.some((item) => !sameSettings(item, settings[0]))) {
         const details = domain.slabIds.map((slabId) => {
           const slab = plan.slabs.find((item) => item.id === slabId);
-          const item = resolveFloorBottomDirectionalSettings(bottom, domain, slabId, direction);
+          const item = resolveFloorBottomDirectionalSettings(bottom, slabId, direction, mainDirection);
           return `${slab?.name ?? slabId} Φ${item.diameter}@${item.spacing}`;
         });
         errors.push({
@@ -546,11 +453,13 @@ function anchorForSupport(segment: FloorAtomicBoundarySegment): number | null {
 
 function emptyCalculation(
   domains: FloorRebarDomain[],
+  roleDomains: FloorRebarRoleDomain[],
   errors: FloorBottomIssue[],
   warnings: FloorBottomIssue[],
 ): FloorBottomCalculation {
   return {
     domains,
+    roleDomains,
     lines: [],
     pieces: [],
     groups: [],
@@ -617,6 +526,8 @@ export function buildFloorBottomBomGroups(
 export function calculateFloorBottomRebar(
   plan: FloorPlanState,
   input: FloorBottomState,
+  roleState: FloorRebarRoleState = DEFAULT_FLOOR_REBAR_ROLE_STATE,
+  roleReviewRequired = false,
 ): FloorBottomCalculation {
   // 正式计算不做“坏值回退”；normalize仅用于存储迁移。否则NaN可能被默认值掩盖。
   const bottom = input;
@@ -628,13 +539,18 @@ export function calculateFloorBottomRebar(
     .filter((issue) => issue.level === "error")
     .map(({ code, message, objectIds }) => ({ code, message, objectIds }));
   const domains = buildFloorBottomRebarDomains(plan);
-  warnings.push(...domains.filter(isSquareFloorRebarDomain).map((domain) => ({
-    code: "square-domain-main-direction-defaulted",
-    message: "当前连续板区域东西、南北净跨相同，无法按长短自动区分主副筋，系统暂按东西向为主筋、南北向为副筋。",
-    objectIds: domain.slabIds,
-  })));
-  const errors = [...geometryErrors, ...validateBottomState(plan, bottom, domains)];
-  if (errors.length > 0) return emptyCalculation(domains, errors, warnings);
+  const roleContext = resolveFloorRebarRoleContext(plan, domains, roleState);
+  const reviewErrors: FloorBottomIssue[] = roleReviewRequired ? [{
+    code: "bottom-role-review-required",
+    message: "旧版本的东西/南北向直径已迁移为主/副筋语义，请确认当前地筋主筋、副筋直径后再生成正式料单。",
+  }] : [];
+  const errors = [
+    ...geometryErrors,
+    ...roleContext.errors,
+    ...reviewErrors,
+    ...validateBottomState(plan, bottom, domains, roleContext.mainDirectionByPhysicalDomain),
+  ];
+  if (errors.length > 0) return emptyCalculation(domains, roleContext.roleDomains, errors, warnings);
 
   const allCells = buildFloorTopologyCells(plan);
   const cellsById = new Map(allCells.map((cell) => [cell.id, cell]));
@@ -644,17 +560,19 @@ export function calculateFloorBottomRebar(
   const calculationErrors: FloorBottomIssue[] = [];
 
   domains.forEach((domain) => {
+    const mainDirection = roleContext.mainDirectionByPhysicalDomain.get(domain.id);
+    if (!mainDirection) return;
     const domainCells = domain.cellIds.flatMap((id) => {
       const cell = cellsById.get(id);
       return cell ? [cell] : [];
     });
     (["x", "y"] as const).forEach((direction) => {
-      const role = resolveFloorBarRole(domain, direction);
+      const role = resolveFloorBarRole(mainDirection, direction);
       const settings = resolveFloorBottomDirectionalSettings(
         bottom,
-        domain,
         domain.slabIds[0],
         direction,
+        mainDirection,
       );
       const perpendicularStart = direction === "x" ? domain.minY : domain.minX;
       const perpendicularEnd = direction === "x" ? domain.maxY : domain.maxX;
@@ -734,7 +652,7 @@ export function calculateFloorBottomRebar(
       }
     });
   });
-  if (calculationErrors.length > 0) return emptyCalculation(domains, calculationErrors, warnings);
+  if (calculationErrors.length > 0) return emptyCalculation(domains, roleContext.roleDomains, calculationErrors, warnings);
 
   const groups = buildFloorBottomBomGroups(pieces);
   const totalLengthM = pieces.reduce((sum, piece) => sum + piece.singleLengthMm / 1000, 0);
@@ -744,6 +662,7 @@ export function calculateFloorBottomRebar(
   );
   return {
     domains,
+    roleDomains: roleContext.roleDomains,
     lines,
     pieces,
     groups,

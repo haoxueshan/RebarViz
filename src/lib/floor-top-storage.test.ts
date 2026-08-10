@@ -36,6 +36,7 @@ describe("Floor Top设置存储", () => {
       defaults: state.defaults,
     });
     expect(restored?.state.slabOverrides).toEqual({ a: state.slabOverrides.a });
+    expect(restored).toMatchObject({ schemaVersion: 3, roleReviewRequired: false });
   });
 
   it("V1方向规格按数值迁移为主副筋规格并保留增加端", () => {
@@ -66,6 +67,21 @@ describe("Floor Top设置存储", () => {
       },
       slabOverrides: { a: { secondaryDiameter: 8, ySpacing: 100, yExtraMode: "both" } },
     });
+    expect(restored?.roleReviewRequired).toBe(true);
+  });
+
+  it("V2记录也必须复核，只有V3能明确保存确认状态", () => {
+    const legacy = parseFloorTopStoredRecord({
+      schemaVersion: 2,
+      state: DEFAULT_FLOOR_TOP_STATE,
+      roleReviewRequired: false,
+    });
+    expect(legacy?.roleReviewRequired).toBe(true);
+
+    const confirmed = parseFloorTopStoredRecord(
+      createFloorTopStoredRecord(DEFAULT_FLOOR_TOP_STATE, "2026-08-08T00:00:00.000Z", false),
+    );
+    expect(confirmed).toMatchObject({ schemaVersion: 3, roleReviewRequired: false });
   });
 
   it("损坏版本被拒绝，损坏字段和extraMode恢复安全默认", () => {
@@ -83,5 +99,6 @@ describe("Floor Top设置存储", () => {
       },
     });
     expect(restored?.state).toEqual(DEFAULT_FLOOR_TOP_STATE);
+    expect(restored?.roleReviewRequired).toBe(true);
   });
 });

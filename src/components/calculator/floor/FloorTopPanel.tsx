@@ -2,6 +2,7 @@
 
 import { AlertTriangle, Layers3 } from "lucide-react";
 import { useState } from "react";
+import { FloorRolePanel } from "@/components/calculator/floor/FloorRolePanel";
 import {
   resolveFloorTopDefaults,
   type FloorTopCalculation,
@@ -9,7 +10,11 @@ import {
   type FloorTopState,
 } from "@/lib/floor-top-calculator";
 import type { FloorPlanState, FloorSlab } from "@/lib/floor-plan";
-import { floorBarRoleLabel } from "@/lib/floor-rebar-role";
+import {
+  floorBarRoleLabel,
+  type FloorRebarRoleDomain,
+  type FloorRebarRoleState,
+} from "@/lib/floor-rebar-role";
 import { countModeLabel, directionLabel, type CountMode, type TopExtraMode } from "@/lib/slab-calculator";
 
 function extraModeLabel(mode: TopExtraMode): string {
@@ -91,11 +96,27 @@ function defaultsFields(prefix: string, defaults: FloorTopDefaults, update: (pat
   );
 }
 
-export function FloorTopSettingsPanel({ plan, top, selectedSlab, onChange, onValidityChange }: {
+export function FloorTopSettingsPanel({
+  plan,
+  top,
+  selectedSlab,
+  selectedRoleDomain,
+  roleState,
+  roleReviewRequired,
+  onChange,
+  onRoleStateChange,
+  onConfirmRoleReview,
+  onValidityChange,
+}: {
   plan: FloorPlanState;
   top: FloorTopState;
   selectedSlab: FloorSlab | null;
+  selectedRoleDomain: FloorRebarRoleDomain | null;
+  roleState: FloorRebarRoleState;
+  roleReviewRequired: boolean;
   onChange: (state: FloorTopState) => void;
+  onRoleStateChange: (state: FloorRebarRoleState) => void;
+  onConfirmRoleReview: () => void;
   onValidityChange: (key: string, valid: boolean) => void;
 }) {
   const updateDefault = (patch: Partial<FloorTopDefaults>) => onChange({ ...top, defaults: { ...top.defaults, ...patch } });
@@ -118,6 +139,15 @@ export function FloorTopSettingsPanel({ plan, top, selectedSlab, onChange, onVal
 
   return (
     <div className="space-y-4">
+      <FloorRolePanel
+        plan={plan}
+        domain={selectedRoleDomain}
+        roleState={roleState}
+        reviewRequired={roleReviewRequired}
+        reviewLabel="面筋"
+        onChange={onRoleStateChange}
+        onConfirmReview={onConfirmRoleReview}
+      />
       <section className="rounded-2xl border border-cyan-200 bg-white p-5 shadow-sm">
         <div className="flex items-center gap-2"><Layers3 size={18} className="text-cyan-700" /><h2 className="font-semibold text-slate-900">整层普通面筋默认规格</h2></div>
         <p className="mt-2 text-xs leading-5 text-slate-500">系统按当前连续楼板区域的净跨自动判断：短跨方向为主筋，长跨方向为副筋。增加端仍按真实东西、南北方向设置。</p>

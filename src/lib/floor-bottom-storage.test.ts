@@ -29,6 +29,7 @@ describe("Floor Bottom设置存储", () => {
     );
     expect(restored?.state).toMatchObject({ countMode: "round", defaults: state.defaults });
     expect(restored?.state.slabOverrides).toEqual({ a: state.slabOverrides.a });
+    expect(restored).toMatchObject({ schemaVersion: 3, roleReviewRequired: false });
   });
 
   it("V1方向规格按数值迁移为主副筋规格", () => {
@@ -50,6 +51,21 @@ describe("Floor Bottom设置存储", () => {
       defaults: { mainDiameter: 14, secondaryDiameter: 12, xSpacing: 180, ySpacing: 160 },
       slabOverrides: { a: { mainDiameter: 10, xSpacing: 120 } },
     });
+    expect(restored?.roleReviewRequired).toBe(true);
+  });
+
+  it("V2记录也必须复核，只有V3能明确保存确认状态", () => {
+    const legacy = parseFloorBottomStoredRecord({
+      schemaVersion: 2,
+      state: DEFAULT_FLOOR_BOTTOM_STATE,
+      roleReviewRequired: false,
+    });
+    expect(legacy?.roleReviewRequired).toBe(true);
+
+    const confirmed = parseFloorBottomStoredRecord(
+      createFloorBottomStoredRecord(DEFAULT_FLOOR_BOTTOM_STATE, "2026-08-08T00:00:00.000Z", false),
+    );
+    expect(confirmed).toMatchObject({ schemaVersion: 3, roleReviewRequired: false });
   });
 
   it("损坏版本被拒绝，损坏字段恢复安全默认", () => {
@@ -59,5 +75,6 @@ describe("Floor Bottom设置存储", () => {
       state: { countMode: "bad", defaults: { x: {}, y: {} }, slabOverrides: {} },
     });
     expect(restored?.state).toEqual(DEFAULT_FLOOR_BOTTOM_STATE);
+    expect(restored?.roleReviewRequired).toBe(true);
   });
 });
