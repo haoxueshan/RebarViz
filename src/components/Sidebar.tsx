@@ -4,7 +4,6 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Columns3, Box, LayoutGrid, GitMerge, ChevronLeft, ChevronRight, PanelLeftOpen, Settings, Wallpaper, Footprints, Landmark, Layers } from 'lucide-react';
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { ContactAuthorButton } from './ContactAuthor';
 
 const NAV = [
   { href: '/beam', label: '梁 KL', desc: '框架梁', icon: Columns3 },
@@ -186,11 +185,6 @@ export function Sidebar() {
               </div>
             )}
           </Link>
-        </div>
-
-        {/* Contact Author */}
-        <div className="px-2 pb-1">
-          <ContactAuthorButton collapsed={collapsed} />
         </div>
 
         <button

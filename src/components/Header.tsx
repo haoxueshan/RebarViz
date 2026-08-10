@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Box, Calculator, Columns3, LayoutGrid, GitMerge, Menu, X, Wallpaper, Footprints, Sparkles, Github } from 'lucide-react';
+import { Box, Calculator, Columns3, LayoutGrid, GitMerge, Menu, X, Wallpaper, Footprints, Sparkles } from 'lucide-react';
 
 const NAV = [
   { href: '/beam', label: '梁 KL', icon: Columns3 },
@@ -86,15 +86,6 @@ export function Header() {
             >
               <Sparkles className="h-4 w-4 text-blue-300" />
               AI 助手
-            </a>
-            <a
-              href="https://github.com/BruceLee1024/RebarViz"
-              target="_blank"
-              rel="noreferrer"
-              className="hidden lg:inline-flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] text-gray-300 transition-colors hover:bg-white/[0.08] hover:text-white"
-              aria-label="GitHub"
-            >
-              <Github className="h-4 w-4" />
             </a>
             <Link
               href="/beam"

@@ -7,8 +7,6 @@
 [![Three.js](https://img.shields.io/badge/Three.js-3D-black?logo=three.js)](https://threejs.org/)
 [![License](https://img.shields.io/badge/License-CC%20BY--NC%204.0-blue)](LICENSE)
 
-> [在线体验](https://rebar-viz-brucelee1024s-projects.vercel.app) · 当前部署可能需要 Vercel 访问权限。
-
 ![RebarViz 3D 配筋可视化](public/landing-rebar-hero.webp)
 
 ## 核心能力
@@ -40,9 +38,9 @@
 
 环境要求：Node.js 20 或更高版本。
 
+克隆或下载本仓库后，在项目目录运行：
+
 ```bash
-git clone https://github.com/BruceLee1024/RebarViz.git
-cd RebarViz
 npm install
 npm run dev
 ```
@@ -89,6 +87,4 @@ RebarViz 用于平法识图、构造理解和方案辅助分析，不替代现�
 
 ## 许可证
 
-Copyright © 2025–2026 BruceLee1024
-
-本项目采用 [CC BY-NC 4.0（署名—非商业性使用 4.0 国际）](LICENSE) 许可。你可以在保留署名和来源链接的前提下分享、修改本项目，但不得用于商业目的；衍生内容应以相同许可方式发布。
+本项目采用 CC BY-NC 4.0 许可，原始版权与署名信息见 LICENSE。
