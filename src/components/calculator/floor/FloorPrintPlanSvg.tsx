@@ -1,3 +1,4 @@
+import { buildFloorPrintMarkClusters } from "@/lib/floor-2d";
 import type {
   FloorPrintGeometry,
   FloorPrintOptions,
@@ -47,11 +48,21 @@ export function FloorPrintPlanSvg({
   const toX = (value: number) => originX + value * scale;
   const toY = (value: number) => originY - value * scale;
   const visiblePieces = mode === "geometry" ? [] : pieces.filter((piece) => piece.layer === mode);
-  const firstPieceByMark = new Map<string, FloorPrintPiece>();
-  visiblePieces.forEach((piece) => {
-    if (!firstPieceByMark.has(piece.mark)) firstPieceByMark.set(piece.mark, piece);
-  });
+  const normalPieces = visiblePieces.filter((piece) => piece.source === "normal");
+  const throughPieces = visiblePieces.filter((piece) => piece.source === "through");
+  const markClusters = buildFloorPrintMarkClusters(visiblePieces);
+  const pieceById = new Map(visiblePieces.map((piece) => [piece.id, piece]));
   const patternId = `floor-print-opening-${mode}`;
+
+  const pieceLine = (piece: FloorPrintPiece) => {
+    const xDirection = piece.direction === "x";
+    return {
+      x1: toX(xDirection ? piece.runStartMm : piece.positionMm),
+      y1: toY(xDirection ? piece.positionMm : piece.runStartMm),
+      x2: toX(xDirection ? piece.runEndMm : piece.positionMm),
+      y2: toY(xDirection ? piece.positionMm : piece.runEndMm),
+    };
+  };
 
   return (
     <svg
@@ -71,119 +82,67 @@ export function FloorPrintPlanSvg({
       <rect x="1" y="1" width={VIEW_WIDTH - 2} height={VIEW_HEIGHT - 2} fill="#fff" stroke="#a3a3a3" strokeWidth="2" />
 
       {geometry.slabs.map((slab) => (
-        <rect
-          key={slab.id}
-          x={toX(slab.x)}
-          y={toY(slab.y + slab.height)}
-          width={Math.max(slab.width * scale, 0.5)}
-          height={Math.max(slab.height * scale, 0.5)}
-          fill="#fafafa"
-          stroke="#d4d4d4"
-          strokeWidth="1"
-        />
+        <rect key={slab.id} x={toX(slab.x)} y={toY(slab.y + slab.height)} width={Math.max(slab.width * scale, 0.5)} height={Math.max(slab.height * scale, 0.5)} fill="#fafafa" stroke="#d4d4d4" strokeWidth="1" />
       ))}
 
-      {visiblePieces.map((piece) => {
-        const xDirection = piece.direction === "x";
-        const through = piece.source === "through";
-        return (
-          <line
-            key={piece.id}
-            x1={toX(xDirection ? piece.runStartMm : piece.positionMm)}
-            y1={toY(xDirection ? piece.positionMm : piece.runStartMm)}
-            x2={toX(xDirection ? piece.runEndMm : piece.positionMm)}
-            y2={toY(xDirection ? piece.positionMm : piece.runEndMm)}
-            stroke="#111827"
-            strokeWidth={through ? 3.6 : piece.role === "main" ? 2.3 : 1.45}
-            strokeDasharray={through ? undefined : piece.role === "secondary" ? "6 3" : undefined}
-            strokeLinecap="round"
-            data-print-piece-id={piece.id}
-            data-mark={piece.mark}
-            data-layer={piece.layer}
-            data-direction={piece.direction}
-            data-source={piece.source}
-          >
-            <title>{`${piece.mark} · ${through ? "通墙面筋" : piece.layer === "top" ? "普通面筋" : "地筋"} · ${piece.role === "main" ? "主筋" : "副筋"}（${piece.direction === "x" ? "东西向" : "南北向"}）· Φ${piece.diameter}@${piece.spacing} · ${piece.singleLengthMm.toFixed(0)}mm`}</title>
-          </line>
-        );
-      })}
+      {normalPieces.map((piece) => (
+        <line
+          key={piece.id}
+          {...pieceLine(piece)}
+          stroke="#111827"
+          strokeWidth={piece.role === "main" ? 2.3 : 1.45}
+          strokeDasharray={piece.role === "secondary" ? "6 3" : undefined}
+          strokeLinecap="round"
+          data-print-piece-id={piece.id}
+          data-mark={piece.mark}
+          data-layer={piece.layer}
+          data-direction={piece.direction}
+          data-source="normal"
+        >
+          <title>{`${piece.mark} · ${piece.layer === "top" ? "普通面筋" : "地筋"} · ${piece.role === "main" ? "主筋" : "副筋"}（${piece.direction === "x" ? "东西向" : "南北向"}）· Φ${piece.diameter}@${piece.spacing} · ${piece.singleLengthMm.toFixed(0)}mm`}</title>
+        </line>
+      ))}
 
       {geometry.openings.map((opening) => (
-        <rect
-          key={opening.id}
-          x={toX(opening.x)}
-          y={toY(opening.y + opening.height)}
-          width={Math.max(opening.width * scale, 0.5)}
-          height={Math.max(opening.height * scale, 0.5)}
-          fill={`url(#${patternId})`}
-          stroke="#404040"
-          strokeWidth="2.3"
-          strokeDasharray="7 5"
-        />
+        <rect key={opening.id} x={toX(opening.x)} y={toY(opening.y + opening.height)} width={Math.max(opening.width * scale, 0.5)} height={Math.max(opening.height * scale, 0.5)} fill={`url(#${patternId})`} stroke="#404040" strokeWidth="2.3" strokeDasharray="7 5" />
       ))}
 
       {geometry.boundaries.map((boundary, index) => {
         const style = boundaryStyle(boundary.support);
-        return (
-          <line
-            key={`${boundary.orientation}:${boundary.startX}:${boundary.startY}:${boundary.endX}:${boundary.endY}:${index}`}
-            x1={toX(boundary.startX)}
-            y1={toY(boundary.startY)}
-            x2={toX(boundary.endX)}
-            y2={toY(boundary.endY)}
-            stroke="#171717"
-            strokeWidth={style.width}
-            strokeDasharray={style.dash}
-            strokeLinecap="square"
-          />
-        );
+        return <line key={`${boundary.orientation}:${boundary.startX}:${boundary.startY}:${boundary.endX}:${boundary.endY}:${index}`} x1={toX(boundary.startX)} y1={toY(boundary.startY)} x2={toX(boundary.endX)} y2={toY(boundary.endY)} stroke="#171717" strokeWidth={style.width} strokeDasharray={style.dash} strokeLinecap="square" />;
       })}
 
-      {display.slabNames && geometry.slabs.map((slab) => (
-        <g key={`slab-label:${slab.id}`} pointerEvents="none">
-          <rect
-            x={toX(slab.x + slab.width / 2) - 60}
-            y={toY(slab.y + slab.height / 2) - 14}
-            width="120"
-            height="28"
-            rx="4"
-            fill="#fff"
-            fillOpacity="0.88"
-          />
-          <text x={toX(slab.x + slab.width / 2)} y={toY(slab.y + slab.height / 2) + 5} textAnchor="middle" fontSize="14" fontWeight="700" fill="#171717">
-            {slab.name}
-          </text>
+      {throughPieces.map((piece) => (
+        <g key={piece.id} data-print-piece-id={piece.id} data-mark={piece.mark} data-layer={piece.layer} data-direction={piece.direction} data-source="through">
+          <line {...pieceLine(piece)} stroke="#111827" strokeWidth="5" strokeLinecap="round" data-through-outer="true" />
+          <line {...pieceLine(piece)} stroke="#fff" strokeWidth="1.5" strokeLinecap="round" data-through-inner="true" />
+          <title>{`${piece.mark} · 通墙面筋 · ${piece.role === "main" ? "主筋" : "副筋"}（${piece.direction === "x" ? "东西向" : "南北向"}）· Φ${piece.diameter}@${piece.spacing} · ${piece.singleLengthMm.toFixed(0)}mm`}</title>
         </g>
+      ))}
+
+      {display.slabNames && geometry.slabs.map((slab) => (
+        <text key={`slab-label:${slab.id}`} x={toX(slab.x + slab.width / 2)} y={toY(slab.y + slab.height / 2) + 5} textAnchor="middle" fontSize="14" fontWeight="700" fill="#171717" pointerEvents="none" style={{ paintOrder: "stroke", stroke: "white", strokeWidth: 4, strokeLinejoin: "round" }}>{slab.name}</text>
       ))}
 
       {display.openingNames && geometry.openings.map((opening) => (
         <g key={`opening-label:${opening.id}`} pointerEvents="none">
-          <rect
-            x={toX(opening.x + opening.width / 2) - 55}
-            y={toY(opening.y + opening.height / 2) - 22}
-            width="110"
-            height="44"
-            rx="4"
-            fill="#fff"
-            fillOpacity="0.92"
-          />
-          <text x={toX(opening.x + opening.width / 2)} y={toY(opening.y + opening.height / 2) - 3} textAnchor="middle" fontSize="13" fontWeight="700" fill="#171717">
-            {opening.name}
-          </text>
+          <rect x={toX(opening.x + opening.width / 2) - 55} y={toY(opening.y + opening.height / 2) - 22} width="110" height="44" rx="4" fill="#fff" fillOpacity="0.92" />
+          <text x={toX(opening.x + opening.width / 2)} y={toY(opening.y + opening.height / 2) - 3} textAnchor="middle" fontSize="13" fontWeight="700" fill="#171717">{opening.name}</text>
           <text x={toX(opening.x + opening.width / 2)} y={toY(opening.y + opening.height / 2) + 14} textAnchor="middle" fontSize="11" fill="#525252">VOID</text>
         </g>
       ))}
 
-      {display.barMarks && [...firstPieceByMark.values()].map((piece) => {
-        const xDirection = piece.direction === "x";
-        const centerRun = (piece.runStartMm + piece.runEndMm) / 2;
-        const x = toX(xDirection ? centerRun : piece.positionMm);
-        const y = toY(xDirection ? piece.positionMm : centerRun);
-        const text = display.barSpecification
-          ? `${piece.mark}  Φ${piece.diameter}@${piece.spacing}`
-          : piece.mark;
+      {display.barMarks && markClusters.map((cluster) => {
+        const piece = cluster.pieceIds.flatMap((id) => {
+          const found = pieceById.get(id);
+          return found ? [found] : [];
+        })[0];
+        if (!piece) return null;
+        const x = toX(cluster.centerX);
+        const y = toY(cluster.centerY);
+        const text = display.barSpecification ? `${cluster.mark}  Φ${piece.diameter}@${piece.spacing}` : cluster.mark;
         return (
-          <g key={`mark:${piece.mark}`} data-mark-label={piece.mark} pointerEvents="none">
+          <g key={`mark:${cluster.mark}:${cluster.pieceIds.join("|")}`} data-mark-label={cluster.mark} data-mark-cluster-size={cluster.pieceIds.length} pointerEvents="none">
             <rect x={x - 55} y={y - 13} width="110" height="25" rx="4" fill="#fff" stroke="#171717" strokeWidth="1" />
             <text x={x} y={y + 5} textAnchor="middle" fontSize="13" fontWeight="800" fill="#111827">{text}</text>
           </g>
@@ -194,7 +153,7 @@ export function FloorPrintPlanSvg({
         <line x1="0" y1="0" x2="34" y2="0" stroke="#171717" strokeWidth="7" /><text x="41" y="4">外墙</text>
         <line x1="90" y1="0" x2="124" y2="0" stroke="#171717" strokeWidth="4.5" /><text x="131" y="4">内墙</text>
         <line x1="180" y1="0" x2="214" y2="0" stroke="#171717" strokeWidth="1.7" strokeDasharray="10 7" /><text x="221" y="4">连续板边</text>
-        {mode !== "geometry" && <><line x1="310" y1="0" x2="344" y2="0" stroke="#171717" strokeWidth="2.3" /><text x="351" y="4">主筋Piece</text><line x1="445" y1="0" x2="479" y2="0" stroke="#171717" strokeWidth="1.45" strokeDasharray="6 3" /><text x="486" y="4">副筋Piece</text>{mode === "top" && <><line x1="580" y1="0" x2="614" y2="0" stroke="#171717" strokeWidth="3.6" /><text x="621" y="4">通墙Piece</text></>}</>}
+        {mode !== "geometry" && <><line x1="310" y1="0" x2="344" y2="0" stroke="#171717" strokeWidth="2.3" /><text x="351" y="4">主筋Piece</text><line x1="445" y1="0" x2="479" y2="0" stroke="#171717" strokeWidth="1.45" strokeDasharray="6 3" /><text x="486" y="4">副筋Piece</text>{mode === "top" && <><g data-through-legend="true"><line x1="580" y1="0" x2="614" y2="0" stroke="#171717" strokeWidth="5" /><line x1="580" y1="0" x2="614" y2="0" stroke="#fff" strokeWidth="1.5" /></g><text x="621" y="4">通墙Piece（双轨）</text></>}</>}
       </g>
     </svg>
   );

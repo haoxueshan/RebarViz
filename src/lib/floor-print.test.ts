@@ -84,6 +84,23 @@ describe("Floor Print资格与正式数据一致性", () => {
       .toContain("floor-print-draft-invalid");
   });
 
+  it("板边Near-Miss通过Geometry错误阻止正式打印资格", () => {
+    const state = plan();
+    state.slabs.push({ ...slab("b", 3600, 3600), x: 4200.5 });
+    const bottom = calculateFloorBottomRebar(state, structuredClone(DEFAULT_FLOOR_BOTTOM_STATE));
+    const top = calculateFloorTopRebar(state, structuredClone(DEFAULT_FLOOR_TOP_STATE));
+    const eligibility = getFloorPrintEligibility({
+      plan: state,
+      bottom,
+      top,
+      bottomRoleReviewRequired: false,
+      topRoleReviewRequired: false,
+      invalidDraftCount: 0,
+    });
+    expect(eligibility.eligible).toBe(false);
+    expect(eligibility.errors.map((issue) => issue.code)).toContain("slab-edge-near-miss");
+  });
+
   it("正式分组必须完整覆盖FloorBarPiece并与长度、重量一致", () => {
     const { bottom, top } = calculations();
     expect(validateFloorPrintBomConsistency(bottom, top)).toEqual([]);
@@ -111,6 +128,14 @@ describe("Floor Print资格与正式数据一致性", () => {
     const snapshot = buildFloorPrintSnapshot(input);
     expect(snapshot.geometry.bounds).toMatchObject({ minX: -4200, minY: -3600 });
     expect(snapshot.bottom.pieces.some((piece) => piece.runStartMm < 0 || piece.positionMm < 0)).toBe(true);
+  });
+
+  it("远端未覆盖洞口保留在快照但不压缩正式楼板图范围", () => {
+    const state = plan(slab("a", 6000, 4000), [opening("far", 50000, 50000, 1000, 1000)]);
+    const input = snapshotInput(state);
+    const snapshot = buildFloorPrintSnapshot(input);
+    expect(snapshot.geometry.openings.map((item) => item.id)).toContain("far");
+    expect(snapshot.geometry.bounds).toEqual({ minX: 0, minY: 0, maxX: 6000, maxY: 4000 });
   });
 
   it("现场与完整报告模板有确定章节，自定义改动可被识别", () => {

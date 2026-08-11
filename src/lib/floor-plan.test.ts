@@ -6,6 +6,7 @@ import {
   buildFloorSlabAdjacency,
   buildFloorTopologyCells,
   findFloorComponents,
+  findFloorSlabNearMisses,
   floorOpeningCoverage,
   floorOpeningsOverlap,
   floorSlabsOverlap,
@@ -277,12 +278,59 @@ describe("编辑、校验与名称", () => {
     expect(validateFloorPlanV2(plan([a, { ...touching, x: 2900 }])).map((issue) => issue.code)).toContain("slab-overlap");
   });
 
+  it("5mm输入安全容差只阻止近错位，不放大正式几何重合精度", () => {
+    const a = slab({ id: "a", name: "板区A", x: 0, y: 0, width: 4200, height: 3600 });
+    const near = slab({ id: "b", name: "板区B", x: 4200.5, y: 0, width: 3600, height: 3600 });
+    const state = plan([a, near]);
+    expect(findFloorSlabNearMisses(state)).toEqual([
+      expect.objectContaining({
+        slabIds: ["a", "b"],
+        orientation: "vertical",
+        sideA: "east",
+        sideB: "west",
+        distanceMm: 0.5,
+        overlapStartMm: 0,
+        overlapEndMm: 3600,
+      }),
+    ]);
+    expect(validateFloorPlanV2(state)).toContainEqual(expect.objectContaining({
+      level: "error",
+      code: "slab-edge-near-miss",
+    }));
+    expect(buildFloorAtomicBoundarySegments(state).some((segment) => segment.geometryKind === "shared-slab")).toBe(false);
+
+    const exact = plan([a, { ...near, x: 4200 }]);
+    expect(findFloorSlabNearMisses(exact)).toEqual([]);
+    expect(validateFloorPlanV2(exact).map((issue) => issue.code)).not.toContain("slab-edge-near-miss");
+    expect(buildFloorAtomicBoundarySegments(exact).some((segment) => segment.geometryKind === "shared-slab")).toBe(true);
+
+    const realGap = plan([a, { ...near, x: 4250 }]);
+    expect(findFloorSlabNearMisses(realGap)).toEqual([]);
+  });
+
+  it("Near-Miss只检查正长度正交投影，远处对象不会误报", () => {
+    const a = slab({ id: "a", x: 0, y: 0, width: 4200, height: 3600 });
+    const farNorth = slab({ id: "b", x: 4200.5, y: 5000, width: 3600, height: 3600 });
+    expect(findFloorSlabNearMisses(plan([a, farNorth]))).toEqual([]);
+  });
+
   it("板区和洞口吸附到相邻边与原点", () => {
     const fixed = slab({ id: "a", x: 0, y: 0, width: 4200, height: 3600 });
     const moving = slab({ id: "b", x: 4260, y: 40, width: 3600, height: 3600 });
     expect(snapFloorSlab(moving, [fixed], 150)).toMatchObject({ x: 4200, y: 0 });
     const movingOpening = opening({ id: "o", x: 90, y: 80, width: 1000, height: 1000 });
     expect(snapFloorOpening(movingOpening, [fixed], [], 150)).toMatchObject({ x: 0, y: 0 });
+  });
+
+  it("吸附只参考正交投影相关对象并保持确定性", () => {
+    const far = slab({ id: "far", x: 4200, y: 10000, width: 3600, height: 3600 });
+    const moving = slab({ id: "moving", x: 4260, y: 0, width: 3600, height: 3600 });
+    expect(snapFloorSlab(moving, [far], 150).x).toBe(4260);
+
+    const right = slab({ id: "z", x: 4200, y: 0, width: 3600, height: 3600 });
+    const left = slab({ id: "a", x: 4080, y: 0, width: 3600, height: 3600 });
+    expect(snapFloorSlab({ ...moving, x: 4140 }, [right, left], 150).x).toBe(4080);
+    expect(snapFloorSlab({ ...moving, x: 4140 }, [left, right], 150).x).toBe(4080);
   });
 
   it("默认名称使用第一个空缺，不因删除中间项而重复", () => {

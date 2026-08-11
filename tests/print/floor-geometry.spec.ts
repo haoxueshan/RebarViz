@@ -9,7 +9,7 @@ test("Geometry V2.1支持板区、洞口、支承切换和草稿恢复", async (
     localStorage.removeItem("rebarviz:floor-rebar:role:v1");
   });
   await page.reload();
-  await expect(page.getByText(/FloorRebarCalculator · Geometry V2\.1 \+ Bottom V1\.1 \+ Top\/Through V1/)).toBeVisible();
+  await expect(page.getByText(/FloorRebarCalculator · Geometry V2\.1 \+ Floor 2D V2\.2 \+ Bottom V1\.1 \+ Top\/Through V1/)).toBeVisible();
   await expect(page.getByRole("heading", { name: "整层板区平面" })).toBeVisible();
 
   await page.getByLabel("板区类型").selectOption("corridor");

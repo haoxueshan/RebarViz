@@ -97,6 +97,30 @@ test.describe("Floor Print V1整层冻结快照打印", () => {
     await makeA3Pdf(page, testInfo);
   });
 
+  test("同一Mark在两个分离空间带各标一次但BOM仍只有一行", async ({ page }) => {
+    await openFloorBom(page, { width: 8000, height: 4000 });
+    const snapshotId = await generateSnapshot(page);
+    await page.evaluate((id) => {
+      const key = `rebarviz:floor-print:snapshot:${id}`;
+      const snapshot = JSON.parse(sessionStorage.getItem(key) ?? "null");
+      const pieces = snapshot.bottom.pieces.filter((piece: { mark: string }) => piece.mark === "D01");
+      pieces.forEach((piece: { direction: "x" | "y"; runStartMm: number; runEndMm: number }, index: number) => {
+        const firstBand = index < Math.ceil(pieces.length / 2);
+        if (piece.direction === "x") {
+          piece.runStartMm = firstBand ? 0 : 6000;
+          piece.runEndMm = firstBand ? 2000 : 8000;
+        } else {
+          piece.runStartMm = firstBand ? 0 : 3000;
+          piece.runEndMm = firstBand ? 1000 : 4000;
+        }
+      });
+      sessionStorage.setItem(key, JSON.stringify(snapshot));
+    }, snapshotId);
+    await page.reload();
+    await expect(page.locator('svg[data-floor-print-plan="bottom"] [data-mark-label="D01"]')).toHaveCount(2);
+    await expect(page.locator('tr[data-print-mark="D01"]')).toHaveCount(1);
+  });
+
   test("正方形未确认主筋方向时仅显示草稿且正式打印按钮禁用", async ({ page }) => {
     await openFloorBom(page, { width: 4000, height: 4000 });
     await expect(page.getByTestId("floor-bom-draft-warning")).toContainText("人工选择主筋方向");
@@ -208,6 +232,8 @@ test.describe("Floor Print V1整层冻结快照打印", () => {
     await expect(page.locator('tr[data-source="through"]')).toContainText("T01");
     const snapshotId = await generateSnapshot(page);
     await expect(page.locator('svg[data-floor-print-plan="top"] [data-mark="T01"][data-source="through"]')).not.toHaveCount(0);
+    await expect(page.locator('svg[data-floor-print-plan="top"] [data-mark="T01"] [data-through-outer="true"]')).not.toHaveCount(0);
+    await expect(page.locator('svg[data-floor-print-plan="top"] [data-mark="T01"] [data-through-inner="true"]')).not.toHaveCount(0);
     await expect(page.locator('tr[data-print-mark="T01"]')).toContainText("通墙面筋 · 通墙01");
     const frozen = await page.evaluate((id) => JSON.parse(sessionStorage.getItem(`rebarviz:floor-print:snapshot:${id}`) ?? "null"), snapshotId);
     expect(frozen.schemaVersion).toBe(2);

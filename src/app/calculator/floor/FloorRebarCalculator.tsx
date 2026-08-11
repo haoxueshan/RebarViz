@@ -40,7 +40,6 @@ import {
   snapFloorSlab,
   validateFloorPlanV2,
   type FloorAtomicBoundarySegment,
-  type FloorBoundarySegment,
   type FloorEdgeRange,
   type FloorOpening,
   type FloorOpeningType,
@@ -310,6 +309,7 @@ export default function FloorRebarCalculator() {
   const [invalidBottomDrafts, setInvalidBottomDrafts] = useState<Set<string>>(new Set());
   const [invalidTopDrafts, setInvalidTopDrafts] = useState<Set<string>>(new Set());
   const [hydrated, setHydrated] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
   const [inputRevision, setInputRevision] = useState(0);
 
   useEffect(() => {
@@ -384,12 +384,12 @@ export default function FloorRebarCalculator() {
   }, []);
 
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hydrated || dragActive) return;
     const timer = window.setTimeout(() => {
       window.localStorage.setItem(FLOOR_DRAFT_KEY, JSON.stringify(createFloorDraftRecord(state)));
     }, 300);
     return () => window.clearTimeout(timer);
-  }, [hydrated, state]);
+  }, [dragActive, hydrated, state]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -600,8 +600,8 @@ export default function FloorRebarCalculator() {
     setSelectedBoundaryId(segment.id);
   };
 
-  const selectDisplayBoundary = (segment: FloorBoundarySegment) => {
-    setSelectedBoundaryId(segment.atomicIds[0] ?? null);
+  const selectAtomicBoundary = (segment: FloorAtomicBoundarySegment) => {
+    setSelectedBoundaryId(segment.id);
     if (segment.openingId) setSelection({ kind: "opening", id: segment.openingId });
     else if (segment.slabIds[0]) setSelection({ kind: "slab", id: segment.slabIds[0] });
   };
@@ -621,7 +621,7 @@ export default function FloorRebarCalculator() {
   return (
     <main className="mx-auto max-w-[1500px] px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
-        <p className="text-sm font-semibold text-blue-600">FloorRebarCalculator · Geometry V2.1 + Bottom V1.1 + Top/Through V1 + Role V1.1 + BOM/Print V1</p>
+        <p className="text-sm font-semibold text-blue-600">FloorRebarCalculator · Geometry V2.1 + Floor 2D V2.2 + Bottom V1.1 + Top/Through V1 + Role V1.1 + BOM/Print V1</p>
         <h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-950">整层楼板板筋系统</h1>
         <p className="mt-3 max-w-4xl text-sm leading-6 text-slate-600">当前支持整层楼板几何、洞口、支承拓扑、主副筋、地筋、普通面筋、面筋通墙、整层下料单及冻结快照打印。</p>
       </header>
@@ -653,7 +653,7 @@ export default function FloorRebarCalculator() {
             }} className="col-span-2 inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 sm:col-span-1"><RotateCcw size={16} />重置平面</button>
           </div>}
 
-          <FloorCanvas state={state} selection={selection} selectedBoundaryId={selectedBoundaryId} onSelect={(next) => { setSelection(next); setSelectedBoundaryId(null); }} onSelectBoundary={selectDisplayBoundary} onMove={moveObject} bottomCalculation={stage === "bottom" ? bottomCalculation : undefined} topCalculation={stage === "top" ? topCalculation : undefined} />
+          <FloorCanvas state={state} selection={selection} selectedBoundaryId={selectedBoundaryId} onSelect={(next) => { setSelection(next); setSelectedBoundaryId(null); }} onSelectBoundary={selectAtomicBoundary} onMove={moveObject} onDragStateChange={setDragActive} bottomCalculation={stage === "bottom" ? bottomCalculation : undefined} topCalculation={stage === "top" ? topCalculation : undefined} roleDomains={roleDomains} roleState={roleState} />
 
           {stage === "plan" && <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
             {[["板区", state.slabs.length, "slate"], ["洞口", state.openings.length, "rose"], ["建筑外边", stats.exterior, "slate"], ["内墙段", stats.inner, "blue"], ["连续板边", stats.continuous, "cyan"], ["洞口边", stats.opening, "amber"]].map(([label, value, tone]) => (

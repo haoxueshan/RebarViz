@@ -5,11 +5,11 @@ import {
 } from "./floor-bottom-calculator";
 import {
   buildFloorAtomicBoundarySegments,
-  floorPlanObjectBounds,
   validateFloorPlanV2,
   type FloorPlanState,
   type FloorResolvedSupport,
 } from "./floor-plan";
+import { calculateFloorCanvasBounds } from "./floor-2d";
 import type { FloorBarLine, FloorBarPiece } from "./floor-rebar-types";
 import type { FloorBarRole } from "./floor-rebar-role";
 import type {
@@ -736,7 +736,8 @@ export function buildFloorPrintContent(
   const top = buildPrintLayer("top", topCalculation, plan);
   const combinedRows = [...bottom.rows, ...top.rows];
   const geometry: FloorPrintGeometry = {
-    bounds: floorPlanObjectBounds(plan),
+    // 未覆盖楼板的远端洞口仍保留在快照中供报告提示，但不能压缩正式楼板图。
+    bounds: calculateFloorCanvasBounds(plan, "floor"),
     slabs: plan.slabs.map((slab) => ({ ...slab })),
     openings: plan.openings.map((opening) => ({ ...opening })),
     boundaries: buildFloorAtomicBoundarySegments(plan).map((segment) => ({

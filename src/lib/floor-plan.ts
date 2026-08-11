@@ -104,10 +104,24 @@ export type FloorSlabAdjacency = {
   supports: FloorResolvedSupport[];
 };
 
+export type FloorNearMiss = {
+  slabIds: [string, string];
+  orientation: "vertical" | "horizontal";
+  sideA: FloorEdgeSide;
+  sideB: FloorEdgeSide;
+  distanceMm: number;
+  coordinateA: number;
+  coordinateB: number;
+  overlapStartMm: number;
+  overlapEndMm: number;
+};
+
 type FloorRect = { x: number; y: number; width: number; height: number };
 type AtomicCandidate = Omit<FloorAtomicBoundarySegment, "id" | "support" | "thicknessMm">;
 
-const EPSILON = 1e-7;
+export const FLOOR_GEOMETRY_EPSILON_MM = 1e-7;
+export const FLOOR_TOPOLOGY_NEAR_MISS_TOLERANCE_MM = 5;
+const EPSILON = FLOOR_GEOMETRY_EPSILON_MM;
 const SLAB_TYPES: readonly FloorSlabType[] = ["room", "corridor", "hall", "balcony", "other"];
 const OPENING_TYPES: readonly FloorOpeningType[] = ["stair", "shaft", "void", "other"];
 const SIDES: readonly FloorEdgeSide[] = ["west", "east", "south", "north"];
@@ -229,6 +243,86 @@ export function floorOpeningsOverlap(left: FloorOpening, right: FloorOpening): b
 
 export function floorOpeningIntersectsSlab(opening: FloorOpening, slab: FloorSlab): boolean {
   return rectsOverlap(opening, slab);
+}
+
+function positiveRangeOverlap(
+  leftStart: number,
+  leftEnd: number,
+  rightStart: number,
+  rightEnd: number,
+): [number, number] | null {
+  const start = Math.max(leftStart, rightStart);
+  const end = Math.min(leftEnd, rightEnd);
+  return end - start > EPSILON ? [start, end] : null;
+}
+
+/**
+ * 检测视觉上近似相接、但尚未达到正式几何重合精度的板边。
+ * 该函数只报告问题，不修改FloorPlan坐标，也不放大正式Geometry EPSILON。
+ */
+export function findFloorSlabNearMisses(
+  state: Pick<FloorPlanState, "slabs">,
+  toleranceMm = FLOOR_TOPOLOGY_NEAR_MISS_TOLERANCE_MM,
+): FloorNearMiss[] {
+  const tolerance = Number.isFinite(toleranceMm) ? Math.max(toleranceMm, 0) : FLOOR_TOPOLOGY_NEAR_MISS_TOLERANCE_MM;
+  const nearMisses: FloorNearMiss[] = [];
+  for (let leftIndex = 0; leftIndex < state.slabs.length; leftIndex += 1) {
+    const left = state.slabs[leftIndex];
+    if (![left.x, left.y, left.width, left.height].every(Number.isFinite) || left.width <= 0 || left.height <= 0) continue;
+    for (let rightIndex = leftIndex + 1; rightIndex < state.slabs.length; rightIndex += 1) {
+      const right = state.slabs[rightIndex];
+      if (![right.x, right.y, right.width, right.height].every(Number.isFinite) || right.width <= 0 || right.height <= 0) continue;
+      const yOverlap = positiveRangeOverlap(left.y, left.y + left.height, right.y, right.y + right.height);
+      if (yOverlap) {
+        const verticalCandidates: Array<[number, number, FloorEdgeSide, FloorEdgeSide]> = [
+          [left.x + left.width, right.x, "east", "west"],
+          [left.x, right.x + right.width, "west", "east"],
+        ];
+        verticalCandidates.forEach(([coordinateA, coordinateB, sideA, sideB]) => {
+          const distanceMm = sideA === "east" ? coordinateB - coordinateA : coordinateA - coordinateB;
+          if (distanceMm <= EPSILON || distanceMm > tolerance) return;
+          nearMisses.push({
+            slabIds: [left.id, right.id],
+            orientation: "vertical",
+            sideA,
+            sideB,
+            distanceMm,
+            coordinateA,
+            coordinateB,
+            overlapStartMm: yOverlap[0],
+            overlapEndMm: yOverlap[1],
+          });
+        });
+      }
+      const xOverlap = positiveRangeOverlap(left.x, left.x + left.width, right.x, right.x + right.width);
+      if (xOverlap) {
+        const horizontalCandidates: Array<[number, number, FloorEdgeSide, FloorEdgeSide]> = [
+          [left.y + left.height, right.y, "north", "south"],
+          [left.y, right.y + right.height, "south", "north"],
+        ];
+        horizontalCandidates.forEach(([coordinateA, coordinateB, sideA, sideB]) => {
+          const distanceMm = sideA === "north" ? coordinateB - coordinateA : coordinateA - coordinateB;
+          if (distanceMm <= EPSILON || distanceMm > tolerance) return;
+          nearMisses.push({
+            slabIds: [left.id, right.id],
+            orientation: "horizontal",
+            sideA,
+            sideB,
+            distanceMm,
+            coordinateA,
+            coordinateB,
+            overlapStartMm: xOverlap[0],
+            overlapEndMm: xOverlap[1],
+          });
+        });
+      }
+    }
+  }
+  return nearMisses.sort((left, right) =>
+    left.slabIds.join("|").localeCompare(right.slabIds.join("|"))
+    || left.orientation.localeCompare(right.orientation)
+    || left.overlapStartMm - right.overlapStartMm
+    || left.coordinateA - right.coordinateA);
 }
 
 function intersectionArea(left: FloorRect, right: FloorRect): number {
@@ -626,6 +720,17 @@ export function validateFloorPlanV2(state: FloorPlanState): FloorPlanIssue[] {
   state.slabs.forEach((slab, index) => validateObject(slab, slab.name.trim() || `第${index + 1}个板区`, isSlabType(slab.type)));
   state.openings.forEach((opening, index) => validateObject(opening, opening.name.trim() || `第${index + 1}个洞口`, isOpeningType(opening.type)));
   for (let left = 0; left < state.slabs.length; left += 1) for (let right = left + 1; right < state.slabs.length; right += 1) if (floorSlabsOverlap(state.slabs[left], state.slabs[right])) issues.push({ level: "error", code: "slab-overlap", message: `${state.slabs[left].name}与${state.slabs[right].name}发生面积重叠。`, objectIds: [state.slabs[left].id, state.slabs[right].id] });
+  const sideText: Record<FloorEdgeSide, string> = { west: "西边", east: "东边", south: "南边", north: "北边" };
+  findFloorSlabNearMisses(state).forEach((nearMiss) => {
+    const left = state.slabs.find((slab) => slab.id === nearMiss.slabIds[0]);
+    const right = state.slabs.find((slab) => slab.id === nearMiss.slabIds[1]);
+    issues.push({
+      level: "error",
+      code: "slab-edge-near-miss",
+      message: `${left?.name ?? nearMiss.slabIds[0]}${sideText[nearMiss.sideA]}与${right?.name ?? nearMiss.slabIds[1]}${sideText[nearMiss.sideB]}相差${Number(nearMiss.distanceMm.toFixed(3))}mm，二维图上看似相接，但尚未形成真实共享板边。请将坐标调整为完全重合。`,
+      objectIds: [...nearMiss.slabIds],
+    });
+  });
   for (let left = 0; left < state.openings.length; left += 1) for (let right = left + 1; right < state.openings.length; right += 1) if (floorOpeningsOverlap(state.openings[left], state.openings[right])) issues.push({ level: "error", code: "opening-overlap", message: `${state.openings[left].name}与${state.openings[right].name}发生面积重叠。`, objectIds: [state.openings[left].id, state.openings[right].id] });
   state.openings.forEach((opening) => {
     const coverage = floorOpeningCoverage(opening, state.slabs);
@@ -687,21 +792,56 @@ export function validateFloorPlan(state: FloorPlanState): string[] {
   return validateFloorPlanV2(state).filter((issue) => issue.level === "error").map((issue) => issue.message);
 }
 
-function closestSnap(value: number, candidates: number[], threshold: number): number {
-  let best = value;
-  let distance = threshold + EPSILON;
-  candidates.forEach((candidate) => { const next = Math.abs(candidate - value); if (next < distance) { best = candidate; distance = next; } });
-  return best;
+type SnapCandidate = { coordinate: number; objectId: string };
+
+function closestSnap(value: number, candidates: SnapCandidate[], threshold: number): number {
+  const eligible = candidates
+    .filter((candidate) => Number.isFinite(candidate.coordinate) && Math.abs(candidate.coordinate - value) <= threshold + EPSILON)
+    .sort((left, right) =>
+      Math.abs(left.coordinate - value) - Math.abs(right.coordinate - value)
+      || left.coordinate - right.coordinate
+      || left.objectId.localeCompare(right.objectId));
+  return eligible[0]?.coordinate ?? value;
 }
 
-function snapRect<T extends FloorRect>(object: T, others: readonly FloorRect[], thresholdMm: number): T {
-  const xCandidates = [0];
-  const yCandidates = [0];
+function intervalGap(leftStart: number, leftEnd: number, rightStart: number, rightEnd: number): number {
+  if (leftStart <= rightEnd + EPSILON && rightStart <= leftEnd + EPSILON) return 0;
+  return Math.max(leftStart, rightStart) - Math.min(leftEnd, rightEnd);
+}
+
+function snapRect<T extends FloorRect & { id: string }>(
+  object: T,
+  others: readonly (FloorRect & { id: string })[],
+  thresholdMm: number,
+): T {
+  const threshold = Math.max(thresholdMm, 0);
+  const xCandidates: SnapCandidate[] = [{ coordinate: 0, objectId: "origin" }];
+  const yCandidates: SnapCandidate[] = [{ coordinate: 0, objectId: "origin" }];
   others.forEach((other) => {
-    xCandidates.push(other.x, other.x + other.width, other.x - object.width, other.x + other.width - object.width);
-    yCandidates.push(other.y, other.y + other.height, other.y - object.height, other.y + other.height - object.height);
+    const yRelevant = intervalGap(object.y, object.y + object.height, other.y, other.y + other.height) <= threshold + EPSILON;
+    const xRelevant = intervalGap(object.x, object.x + object.width, other.x, other.x + other.width) <= threshold + EPSILON;
+    if (yRelevant) {
+      xCandidates.push(
+        { coordinate: other.x, objectId: other.id },
+        { coordinate: other.x + other.width, objectId: other.id },
+        { coordinate: other.x - object.width, objectId: other.id },
+        { coordinate: other.x + other.width - object.width, objectId: other.id },
+      );
+    }
+    if (xRelevant) {
+      yCandidates.push(
+        { coordinate: other.y, objectId: other.id },
+        { coordinate: other.y + other.height, objectId: other.id },
+        { coordinate: other.y - object.height, objectId: other.id },
+        { coordinate: other.y + other.height - object.height, objectId: other.id },
+      );
+    }
   });
-  return { ...object, x: closestSnap(object.x, xCandidates, Math.max(thresholdMm, 0)), y: closestSnap(object.y, yCandidates, Math.max(thresholdMm, 0)) };
+  return {
+    ...object,
+    x: closestSnap(object.x, xCandidates, threshold),
+    y: closestSnap(object.y, yCandidates, threshold),
+  };
 }
 
 export function snapFloorSlab(slab: FloorSlab, otherSlabs: readonly FloorSlab[], thresholdMm: number): FloorSlab {

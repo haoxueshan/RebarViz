@@ -4,6 +4,7 @@ import type {
   FloorPrintPiece,
   FloorPrintSnapshot,
 } from "@/lib/floor-print";
+import { floorOpeningTouchesFloor } from "@/lib/floor-2d";
 import { FloorPrintPlanSvg } from "./FloorPrintPlanSvg";
 import styles from "./FloorPrintReport.module.css";
 
@@ -148,7 +149,7 @@ function PlanPage({
     <section className={`${styles.pageSection} ${styles.planPage}`} data-print-section={`${mode}-plan`}>
       <h2 className={styles.sectionTitle}>
         <span>{title}</span>
-        <span className={styles.sectionNote}>平铺图按净跨拓扑绘制；正式单根下料已包含端部支承长度</span>
+        <span className={styles.sectionNote}>本图为净跨布置示意；实际钢筋下料长度以D/M/T编号料单为准</span>
       </h2>
       <div className={styles.planFrame}>
         <FloorPrintPlanSvg geometry={snapshot.geometry} mode={mode} pieces={pieces} display={snapshot.options.display} />
@@ -159,6 +160,8 @@ function PlanPage({
 
 export function FloorPrintReport({ snapshot }: { snapshot: FloorPrintSnapshot }) {
   const sections = snapshot.options.sections;
+  const uncoveredOpenings = snapshot.geometry.openings.filter((opening) =>
+    !floorOpeningTouchesFloor(opening, snapshot.geometry));
   return (
     <article className={`${styles.report} ${paperClass(snapshot)}`} data-floor-print-status={snapshot.status} data-testid="floor-print-report">
       {snapshot.status === "draft" && <div className={styles.draftWatermark}>草稿 · 不可用于正式下料</div>}
@@ -182,6 +185,7 @@ export function FloorPrintReport({ snapshot }: { snapshot: FloorPrintSnapshot })
             <div className={styles.parameterCard}><span className={styles.parameterLabel}>快照Schema</span><strong className={styles.parameterValue}>{snapshot.schemaVersion}</strong></div>
           </div>
           {snapshot.project.remark && <div className={styles.remark}><strong>备注：</strong>{snapshot.project.remark}</div>}
+          {uncoveredOpenings.length > 0 && <div className={styles.remark}><strong>几何提示：</strong>存在 {uncoveredOpenings.length} 个未覆盖楼板的洞口；平铺图已优先按真实楼板主体取景，请返回计算器复核洞口位置。</div>}
         </section>
       )}
 
