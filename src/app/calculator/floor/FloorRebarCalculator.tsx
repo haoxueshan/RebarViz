@@ -418,6 +418,8 @@ export default function FloorRebarCalculator() {
         slabOverrides: Object.fromEntries(
           Object.entries(topState.slabOverrides).filter(([slabId]) => slabIds.has(slabId)),
         ),
+        throughPaths: topState.throughPaths.filter((path) =>
+          path.slabIds.every((slabId) => slabIds.has(slabId))),
       };
       window.localStorage.setItem(
         FLOOR_TOP_STORAGE_KEY,
@@ -532,12 +534,32 @@ export default function FloorRebarCalculator() {
     const object = selectedSlab ?? selectedOpening;
     if (!object || (selection.kind === "slab" && state.slabs.length <= 1)) return;
     if (!window.confirm(`确定删除“${object.name}”吗？`)) return;
+    const removedThroughPathIds = selection.kind === "slab"
+      ? new Set(topState.throughPaths.filter((path) => path.slabIds.includes(selection.id)).map((path) => path.id))
+      : new Set<string>();
     setState((current) => ({
       ...current,
       slabs: selection.kind === "slab" ? current.slabs.filter((slab) => slab.id !== selection.id) : current.slabs,
       openings: selection.kind === "opening" ? current.openings.filter((opening) => opening.id !== selection.id) : current.openings,
       supportRules: current.supportRules.filter((rule) => rule.target.kind === "slab-edge" ? rule.target.slabId !== selection.id : rule.target.openingId !== selection.id),
     }));
+    if (selection.kind === "slab") {
+      setTopState((current) => ({
+        ...current,
+        slabOverrides: Object.fromEntries(
+          Object.entries(current.slabOverrides).filter(([slabId]) => slabId !== selection.id),
+        ),
+        throughPaths: current.throughPaths.filter((path) => !path.slabIds.includes(selection.id)),
+      }));
+      setInvalidBottomDrafts((current) => new Set(
+        [...current].filter((key) => !key.startsWith(`bottom:${selection.id}:`)),
+      ));
+      setInvalidTopDrafts((current) => new Set(
+        [...current].filter((key) =>
+          !key.startsWith(`top:${selection.id}:`)
+          && ![...removedThroughPathIds].some((pathId) => key.startsWith(`through:${pathId}:`))),
+      ));
+    }
     const fallback = selection.kind === "slab" ? state.slabs.find((slab) => slab.id !== selection.id) : state.slabs[0];
     setSelection(fallback ? { kind: "slab", id: fallback.id } : null);
     setSelectedBoundaryId(null);
@@ -599,9 +621,9 @@ export default function FloorRebarCalculator() {
   return (
     <main className="mx-auto max-w-[1500px] px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
-        <p className="text-sm font-semibold text-blue-600">FloorRebarCalculator · Geometry V2.1 + Bottom/Top Rebar + Role V1.1 + Floor Print V1</p>
+        <p className="text-sm font-semibold text-blue-600">FloorRebarCalculator · Geometry V2.1 + Bottom V1.1 + Top/Through V1 + Role V1.1 + BOM/Print V1</p>
         <h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-950">整层楼板板筋系统</h1>
-        <p className="mt-3 max-w-4xl text-sm leading-6 text-slate-600">当前已支持整层有板区域、洞口、支承拓扑、地筋、普通面筋、整层料单与冻结快照打印；通墙筋仍属于后续阶段。</p>
+        <p className="mt-3 max-w-4xl text-sm leading-6 text-slate-600">当前支持整层楼板几何、洞口、支承拓扑、主副筋、地筋、普通面筋、面筋通墙、整层下料单及冻结快照打印。</p>
       </header>
       <CalculatorModeNav />
       <WorkflowTabs stage={stage} onChange={setStage} />
@@ -662,6 +684,7 @@ export default function FloorRebarCalculator() {
               selectedRoleDomain={selectedRoleDomain}
               roleState={roleState}
               roleReviewRequired={topRoleReviewRequired}
+              calculation={topCalculation}
               onChange={setTopState}
               onRoleStateChange={setRoleState}
               onConfirmRoleReview={() => setTopRoleReviewRequired(false)}

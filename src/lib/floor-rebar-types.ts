@@ -4,6 +4,7 @@ import type { FloorBarRole } from "./floor-rebar-role";
 export type { FloorBarRole } from "./floor-rebar-role";
 
 export type FloorBarLayer = "bottom" | "top";
+export type FloorBarSource = "normal" | "through";
 
 /** 同一连续楼板Domain内、尚未经过洞口裁断的理论钢筋空间位置线。 */
 export type FloorBarLine = {
@@ -13,6 +14,8 @@ export type FloorBarLine = {
   layer: FloorBarLayer;
   direction: "x" | "y";
   role: FloorBarRole;
+  source: FloorBarSource;
+  throughPathId?: string;
   /** X筋为全局Y坐标，Y筋为全局X坐标；始终使用net-layout-v1拓扑坐标。 */
   positionMm: number;
 };
@@ -42,8 +45,13 @@ export type FloorBarPiece = {
   endExtraApplied: boolean;
   /** 当前Piece使用的整层面筋增加值；地筋固定为0。 */
   topExtraValueMm: number;
+  /** 通墙面筋在真正起终点之间穿过的内墙厚度合计；普通筋固定为0。 */
+  intermediateWallMm: number;
+  /** 通墙面筋实际穿过的中间Atomic Boundary；普通筋固定为空数组。 */
+  intermediateBoundaryIds: string[];
   singleLengthMm: number;
-  source: "normal";
+  source: FloorBarSource;
+  throughPathId?: string;
 };
 
 /**
@@ -52,6 +60,6 @@ export type FloorBarPiece = {
  * → Through Path Replacement → Physical Bar Pieces
  * → BOM Grouping → Weight。
  *
- * Bottom/Top普通板筋执行到Opening Clipping后的普通Piece与分层BOM；
- * 通墙路径仍不在本阶段生成。
+ * Bottom/Top普通板筋先执行到Opening Clipping；Top Through随后认领并替换
+ * 对应普通Piece，最终BOM只能消费替换后的Physical Bar Pieces。
  */

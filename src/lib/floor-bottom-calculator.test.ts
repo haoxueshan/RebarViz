@@ -473,6 +473,8 @@ describe("Atomic端点归属与BOM稳定分组", () => {
       startExtraApplied: false,
       endExtraApplied: false,
       topExtraValueMm: 0,
+      intermediateWallMm: 0,
+      intermediateBoundaryIds: [],
       singleLengthMm,
       source: "normal",
     });

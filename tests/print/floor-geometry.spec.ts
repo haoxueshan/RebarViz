@@ -9,7 +9,7 @@ test("Geometry V2.1支持板区、洞口、支承切换和草稿恢复", async (
     localStorage.removeItem("rebarviz:floor-rebar:role:v1");
   });
   await page.reload();
-  await expect(page.getByText("FloorRebarCalculator · Geometry V2.1 + Bottom/Top Rebar + Role V1.1")).toBeVisible();
+  await expect(page.getByText(/FloorRebarCalculator · Geometry V2\.1 \+ Bottom V1\.1 \+ Top\/Through V1/)).toBeVisible();
   await expect(page.getByRole("heading", { name: "整层板区平面" })).toBeVisible();
 
   await page.getByLabel("板区类型").selectOption("corridor");
@@ -165,7 +165,7 @@ test("Top V1普通内墙增加、continuous贯穿并恢复独立设置", async (
   await page.reload();
   await page.getByRole("button", { name: /3\. 面筋/ }).click();
   await expect(page.getByRole("heading", { name: "整层普通面筋默认规格" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "整层普通面筋料单" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "整层面筋料单" })).toBeVisible();
   await expect(page.getByText("正式面筋结果有效")).toBeVisible();
   await expect(page.getByText("5.060m")).toBeVisible();
 
@@ -180,7 +180,7 @@ test("Top V1普通内墙增加、continuous贯穿并恢复独立设置", async (
   await page.waitForTimeout(400);
   const stored = await page.evaluate(() => JSON.parse(localStorage.getItem("rebarviz:floor-rebar:top:v1") ?? "null"));
   expect(stored).toMatchObject({
-    schemaVersion: 3,
+    schemaVersion: 4,
     roleReviewRequired: false,
     state: {
       countMode: "floor",
@@ -213,7 +213,7 @@ test("Top V1楼梯间Opening裁断Piece且洞口边改内墙后增加下料长�
       },
     }));
     localStorage.setItem("rebarviz:floor-rebar:top:v1", JSON.stringify({
-      schemaVersion: 3,
+      schemaVersion: 4,
       savedAt: new Date().toISOString(),
       roleReviewRequired: false,
       state: {
@@ -228,6 +228,7 @@ test("Top V1楼梯间Opening裁断Piece且洞口边改内墙后增加下料长�
           yExtraMode: "both",
         },
         slabOverrides: {},
+        throughPaths: [],
       },
     }));
     localStorage.setItem("rebarviz:floor-rebar:role:v1", JSON.stringify({
@@ -302,6 +303,58 @@ test("正方形主筋方向人工选择由地筋和面筋共享，390px无页面
   await page.getByRole("button", { name: "面筋", exact: true }).click();
   await expect(page.getByLabel("东西向主筋")).toBeChecked();
   await expect(page.getByText("正式面筋结果有效")).toBeVisible();
+  const dimensions = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }));
+  expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
+});
+
+test("390px通墙Path被Opening阻断，缩小Band后恢复并持久化Schema 4", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/calculator/floor");
+  await page.evaluate(() => {
+    localStorage.setItem("rebarviz:floor-rebar:draft:v1", JSON.stringify({
+      schemaVersion: 2,
+      savedAt: new Date().toISOString(),
+      state: {
+        coordinateModel: "net-layout-v1",
+        slabs: [
+          { id: "a", name: "房间A", type: "room", x: 0, y: 0, width: 4000, height: 3600 },
+          { id: "b", name: "房间B", type: "room", x: 4000, y: 0, width: 4000, height: 3600 },
+        ],
+        openings: [{ id: "o", name: "楼梯间", type: "stair", x: 3500, y: 1800, width: 1000, height: 1000 }],
+        supportRules: [],
+        innerWallThickness: 240,
+        outerWallThickness: 370,
+        snapDistanceMm: 150,
+      },
+    }));
+    localStorage.setItem("rebarviz:floor-rebar:top:v1", JSON.stringify({
+      schemaVersion: 4,
+      savedAt: new Date().toISOString(),
+      roleReviewRequired: false,
+      state: {
+        countMode: "project",
+        topAnchorExtra: 250,
+        defaults: { mainDiameter: 10, secondaryDiameter: 10, xSpacing: 200, ySpacing: 200, xExtraMode: "both", yExtraMode: "both" },
+        slabOverrides: {},
+        throughPaths: [{ id: "p", name: "通墙01", direction: "x", slabIds: ["a", "b"], bandStartMm: 0, bandEndMm: 3600, enabled: true }],
+      },
+    }));
+    localStorage.removeItem("rebarviz:floor-rebar:role:v1");
+  });
+  await page.reload();
+  await page.getByRole("button", { name: "面筋", exact: true }).click();
+  await expect(page.getByText("面筋结果无效")).toBeVisible();
+  await expect(page.getByText(/与洞口发生正面积相交/).first()).toBeVisible();
+  const pathCard = page.locator('[data-through-path-id="p"]');
+  await pathCard.getByLabel("Y范围终点").fill("1700");
+  await expect(page.getByText("正式面筋结果有效")).toBeVisible();
+  await expect(pathCard.getByText(/有效通墙筋/)).toBeVisible();
+  await page.waitForTimeout(450);
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem("rebarviz:floor-rebar:top:v1") ?? "null"));
+  expect(stored).toMatchObject({ schemaVersion: 4, state: { throughPaths: [{ bandEndMm: 1700, enabled: true }] } });
   const dimensions = await page.evaluate(() => ({
     clientWidth: document.documentElement.clientWidth,
     scrollWidth: document.documentElement.scrollWidth,

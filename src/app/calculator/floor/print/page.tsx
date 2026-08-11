@@ -4,7 +4,7 @@ import FloorPrintClient from "./FloorPrintClient";
 
 export const metadata: Metadata = {
   title: "整层楼板钢筋打印预览 | RebarViz",
-  description: "读取冻结的整层地筋与普通面筋结果快照，生成现场下料图表。",
+  description: "读取冻结的整层地筋、普通面筋与通墙面筋结果快照，生成现场下料图表。",
 };
 
 export default function FloorPrintPage() {

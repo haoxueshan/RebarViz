@@ -59,7 +59,10 @@ export function isFloorPrintOptions(value: unknown): value is FloorPrintOptions 
 function validBomRow(value: unknown): boolean {
   if (!isObject(value)) return false;
   return typeof value.id === "string" && typeof value.mark === "string" &&
-    ["bottom", "top"].includes(String(value.layer)) && value.source === "normal" &&
+    ["bottom", "top"].includes(String(value.layer)) && ["normal", "through"].includes(String(value.source)) &&
+    (value.throughPathId === undefined || typeof value.throughPathId === "string") &&
+    (value.throughPathName === undefined || typeof value.throughPathName === "string") &&
+    (value.source !== "through" || typeof value.throughPathId === "string") &&
     ["main", "secondary"].includes(String(value.role)) && ["x", "y"].includes(String(value.direction)) &&
     isFiniteNonNegative(value.diameter) && isFiniteNonNegative(value.spacing) &&
     isFiniteNonNegative(value.singleLengthMm) && Number.isSafeInteger(value.count) && Number(value.count) > 0 &&
@@ -72,7 +75,10 @@ function validBomRow(value: unknown): boolean {
 function validPrintPiece(value: unknown): boolean {
   if (!isObject(value)) return false;
   return typeof value.id === "string" && typeof value.mark === "string" &&
-    ["bottom", "top"].includes(String(value.layer)) && ["main", "secondary"].includes(String(value.role)) &&
+    ["bottom", "top"].includes(String(value.layer)) && ["normal", "through"].includes(String(value.source)) &&
+    (value.throughPathId === undefined || typeof value.throughPathId === "string") &&
+    (value.source !== "through" || typeof value.throughPathId === "string") &&
+    ["main", "secondary"].includes(String(value.role)) &&
     ["x", "y"].includes(String(value.direction)) &&
     ["outer-wall", "inner-wall", "continuous", "opening-cut"].includes(String(value.startSupport)) &&
     ["outer-wall", "inner-wall", "continuous", "opening-cut"].includes(String(value.endSupport)) &&
@@ -105,7 +111,11 @@ function validGeometry(value: unknown): boolean {
 }
 
 export function parseFloorPrintSnapshot(value: unknown): FloorPrintSnapshot | null {
-  if (!isObject(value) || value.schemaVersion !== FLOOR_PRINT_SNAPSHOT_SCHEMA_VERSION) return null;
+  if (!isObject(value) || ![1, FLOOR_PRINT_SNAPSHOT_SCHEMA_VERSION].includes(Number(value.schemaVersion))) return null;
+  const migrated = value.schemaVersion === 1 ? migrateFloorPrintSnapshotV1(value) : structuredClone(value);
+  if (!isObject(migrated) || migrated.schemaVersion !== FLOOR_PRINT_SNAPSHOT_SCHEMA_VERSION) return null;
+  value = migrated;
+  if (!isObject(value)) return null;
   if (typeof value.id !== "string" || !value.id || typeof value.createdAt !== "string") return null;
   if (!["draft", "official"].includes(String(value.status))) return null;
   if (!isObject(value.project) || ![value.project.projectName, value.project.floorName, value.project.remark].every((item) => typeof item === "string")) return null;
@@ -119,6 +129,8 @@ export function parseFloorPrintSnapshot(value: unknown): FloorPrintSnapshot | nu
     value.summary.openingCount,
     value.summary.bottomPieceCount,
     value.summary.topPieceCount,
+    value.summary.topNormalPieceCount,
+    value.summary.topThroughPieceCount,
     value.summary.bottomLengthM,
     value.summary.topLengthM,
     value.summary.bottomWeightKg,
@@ -137,6 +149,33 @@ export function parseFloorPrintSnapshot(value: unknown): FloorPrintSnapshot | nu
   if (!isFloorPrintOptions(value.options)) return null;
   if (!isObject(value.source) || value.source.calculator !== "floor-rebar" || value.source.coordinateModel !== "net-layout-v1") return null;
   return structuredClone(value as FloorPrintSnapshot);
+}
+
+function migrateFloorPrintSnapshotV1(value: Record<string, unknown>): Record<string, unknown> {
+  const migrated = structuredClone(value);
+  migrated.schemaVersion = FLOOR_PRINT_SNAPSHOT_SCHEMA_VERSION;
+  (["bottom", "top"] as const).forEach((layerName) => {
+    const layer = migrated[layerName];
+    if (!isObject(layer)) return;
+    if (Array.isArray(layer.rows)) {
+      layer.rows = layer.rows.map((row) => isObject(row) ? { ...row, source: "normal" } : row);
+    }
+    if (Array.isArray(layer.pieces)) {
+      layer.pieces = layer.pieces.map((piece) => isObject(piece) ? { ...piece, source: "normal" } : piece);
+    }
+  });
+  if (Array.isArray(migrated.combinedRows)) {
+    migrated.combinedRows = migrated.combinedRows.map((row) =>
+      isObject(row) ? { ...row, source: "normal" } : row);
+  }
+  if (isObject(migrated.summary)) {
+    migrated.summary = {
+      ...migrated.summary,
+      topNormalPieceCount: migrated.summary.topPieceCount,
+      topThroughPieceCount: 0,
+    };
+  }
+  return migrated;
 }
 
 export function floorPrintSnapshotStorageKey(id: string): string {

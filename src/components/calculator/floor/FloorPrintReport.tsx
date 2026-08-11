@@ -27,6 +27,13 @@ function directionLabel(direction: FloorPrintBomRow["direction"]): string {
   return direction === "x" ? "东西向" : "南北向";
 }
 
+function sourceLabel(row: FloorPrintBomRow): string {
+  if (row.layer === "bottom") return "地筋";
+  return row.source === "through"
+    ? `通墙面筋${row.throughPathName ? ` · ${row.throughPathName}` : ""}`
+    : "普通面筋";
+}
+
 function supportLabel(support: FloorPrintPiece["startSupport"]): string {
   if (support === "outer-wall") return "外墙";
   if (support === "inner-wall") return "内墙";
@@ -84,6 +91,7 @@ function LayerBomTable({
             <tr>
               <th style={{ width: "7%" }}>编号</th>
               <th style={{ width: "19%" }}>板区/区域</th>
+              <th style={{ width: "12%" }}>类型</th>
               <th style={{ width: "9%" }}>主副筋</th>
               <th style={{ width: "9%" }}>方向</th>
               <th style={{ width: "11%" }}>规格</th>
@@ -106,6 +114,7 @@ function LayerBomTable({
                 <tr key={`${row.layer}:${row.mark}`} data-print-mark={row.mark}>
                   <td className={styles.mark}>{row.mark}</td>
                   <td className={styles.area}>{row.slabNames.join(" + ")}</td>
+                  <td>{sourceLabel(row)}</td>
                   <td>{roleLabel(row.role)}</td>
                   <td>{directionLabel(row.direction)}</td>
                   <td>Φ{row.diameter}@{row.spacing}</td>
@@ -164,7 +173,7 @@ export function FloorPrintReport({ snapshot }: { snapshot: FloorPrintSnapshot })
           </div>
           <div className={styles.summaryGrid}>
             <div className={styles.summaryCard}><span className={styles.summaryLabel}>地筋实际下料</span><strong className={styles.summaryValue}>{snapshot.summary.bottomPieceCount} 件</strong><span>{formatNumber(snapshot.summary.bottomLengthM)} m · {formatNumber(snapshot.summary.bottomWeightKg)} kg</span></div>
-            <div className={styles.summaryCard}><span className={styles.summaryLabel}>普通面筋实际下料</span><strong className={styles.summaryValue}>{snapshot.summary.topPieceCount} 件</strong><span>{formatNumber(snapshot.summary.topLengthM)} m · {formatNumber(snapshot.summary.topWeightKg)} kg</span></div>
+            <div className={styles.summaryCard}><span className={styles.summaryLabel}>面筋实际下料</span><strong className={styles.summaryValue}>{snapshot.summary.topPieceCount} 件</strong><span>普通 {snapshot.summary.topNormalPieceCount} · 通墙 {snapshot.summary.topThroughPieceCount} 件</span><span>{formatNumber(snapshot.summary.topLengthM)} m · {formatNumber(snapshot.summary.topWeightKg)} kg</span></div>
             <div className={styles.summaryCard}><span className={styles.summaryLabel}>整层理论汇总</span><strong className={styles.summaryValue}>{snapshot.summary.totalPieceCount} 件</strong><span>{formatNumber(snapshot.summary.totalLengthM)} m · {formatNumber(snapshot.summary.totalWeightKg)} kg</span></div>
           </div>
           <div className={styles.parameterGrid}>
@@ -179,9 +188,9 @@ export function FloorPrintReport({ snapshot }: { snapshot: FloorPrintSnapshot })
       {sections.floorPlan && <PlanPage snapshot={snapshot} mode="geometry" title="整层楼板平面" />}
       {sections.bottomPlan && <PlanPage snapshot={snapshot} mode="bottom" title="地筋平铺图" />}
       {sections.bottomBom && <LayerBomTable title="地筋下料单" rows={snapshot.bottom.rows} layer={snapshot.bottom} snapshot={snapshot} />}
-      {sections.topPlan && <PlanPage snapshot={snapshot} mode="top" title="普通面筋平铺图" />}
-      {sections.topBom && <LayerBomTable title="普通面筋下料单" rows={snapshot.top.rows} layer={snapshot.top} snapshot={snapshot} />}
-      {sections.combinedBom && <LayerBomTable title="地筋 + 普通面筋综合明细" rows={snapshot.combinedRows} layer={{
+      {sections.topPlan && <PlanPage snapshot={snapshot} mode="top" title="面筋平铺图（普通 + 通墙）" />}
+      {sections.topBom && <LayerBomTable title="面筋下料单（普通 + 通墙）" rows={snapshot.top.rows} layer={snapshot.top} snapshot={snapshot} />}
+      {sections.combinedBom && <LayerBomTable title="地筋 + 面筋综合明细" rows={snapshot.combinedRows} layer={{
         rows: snapshot.combinedRows,
         pieces: [...snapshot.bottom.pieces, ...snapshot.top.pieces],
         totalPieceCount: snapshot.summary.totalPieceCount,
@@ -207,7 +216,7 @@ export function FloorPrintReport({ snapshot }: { snapshot: FloorPrintSnapshot })
             <div className={styles.parameterCard}><span className={styles.parameterLabel}>地筋 / 面筋Physical Domain</span><strong className={styles.parameterValue}>{snapshot.parameters.bottomPhysicalDomainCount} / {snapshot.parameters.topPhysicalDomainCount}</strong></div>
             <div className={styles.parameterCard}><span className={styles.parameterLabel}>Role Domain</span><strong className={styles.parameterValue}>{snapshot.parameters.roleDomainCount}</strong></div>
           </div>
-          <p className={styles.remark}>计算模块：Geometry V2.1 · Bottom Rebar V1.1 · Top Rebar V1 · Floor Rebar Role V1.1。当前料单仅含地筋与普通面筋，不含通墙筋、原材套料、采购根数和施工损耗。</p>
+          <p className={styles.remark}>计算模块：Geometry V2.1 · Bottom Rebar V1.1 · Top Rebar V1 · Floor Rebar Role V1.1 · Top Through V1。当前料单包含地筋、普通面筋与通墙面筋；不含原材套料、采购根数和施工损耗。</p>
         </section>
       )}
 

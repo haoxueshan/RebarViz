@@ -71,7 +71,7 @@ async function makeA3Pdf(page: Page, testInfo: TestInfo): Promise<void> {
 test.describe("Floor Print V1整层冻结快照打印", () => {
   test("料单Tab生成正式快照，D/M图表关联、刷新不重算并输出A3横向PDF", async ({ page }, testInfo) => {
     await openFloorBom(page, { width: 4200, height: 3600 });
-    await expect(page.getByText("整层地筋 + 普通面筋料单")).toBeVisible();
+    await expect(page.getByText("整层地筋 + 面筋料单")).toBeVisible();
     const snapshotId = await generateSnapshot(page);
 
     await expect(page.getByTestId("floor-print-preview")).toBeVisible();
@@ -157,5 +157,69 @@ test.describe("Floor Print V1整层冻结快照打印", () => {
     await page.goto("/calculator/floor/print?id=missing-snapshot");
     await expect(page.getByRole("heading", { name: "打印快照不存在或已损坏" })).toBeVisible();
     await expect(page.getByTestId("floor-print-preview")).toHaveCount(0);
+  });
+
+  test("A-B-C创建通墙路径后以T编号替换普通筋，并冻结到SVG与料单", async ({ page }) => {
+    await page.goto("/calculator/floor");
+    await page.evaluate(() => {
+      localStorage.setItem("rebarviz:floor-rebar:draft:v1", JSON.stringify({
+        schemaVersion: 2,
+        savedAt: new Date().toISOString(),
+        state: {
+          coordinateModel: "net-layout-v1",
+          slabs: [
+            { id: "a", name: "房间A", type: "room", x: 0, y: 0, width: 4000, height: 3600 },
+            { id: "b", name: "内走廊", type: "corridor", x: 4000, y: 0, width: 4000, height: 3600 },
+            { id: "c", name: "房间C", type: "room", x: 8000, y: 0, width: 4000, height: 3600 },
+          ],
+          openings: [],
+          supportRules: [],
+          innerWallThickness: 240,
+          outerWallThickness: 370,
+          snapDistanceMm: 150,
+        },
+      }));
+      localStorage.removeItem("rebarviz:floor-rebar:bottom:v1");
+      localStorage.removeItem("rebarviz:floor-rebar:top:v1");
+      localStorage.removeItem("rebarviz:floor-rebar:role:v1");
+      sessionStorage.clear();
+    });
+    await page.reload();
+    await page.getByRole("button", { name: /3\. 面筋/ }).click();
+    await page.getByRole("button", { name: "新建通墙路径" }).click();
+    const pathCard = page.locator("[data-through-path-id]").first();
+    await pathCard.getByLabel("房间C", { exact: true }).check();
+    await pathCard.getByRole("button", { name: "使用最大共同范围" }).click();
+    await pathCard.getByLabel("启用", { exact: true }).check();
+    await expect(page.getByText("正式面筋结果有效")).toBeVisible();
+    await expect(page.getByText("13.220m").first()).toBeVisible();
+    await expect(page.getByText("T01", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("通墙面筋 · 通墙01", { exact: true }).first()).toBeVisible();
+
+    await page.waitForTimeout(450);
+    const storedTop = await page.evaluate(() => JSON.parse(localStorage.getItem("rebarviz:floor-rebar:top:v1") ?? "null"));
+    expect(storedTop).toMatchObject({
+      schemaVersion: 4,
+      roleReviewRequired: false,
+      state: { throughPaths: [{ name: "通墙01", direction: "x", slabIds: ["a", "b", "c"], bandStartMm: 0, bandEndMm: 3600, enabled: true }] },
+    });
+
+    await page.getByRole("button", { name: /4\. 料单/ }).click();
+    await expect(page.locator('tr[data-source="through"]')).toContainText("T01");
+    const snapshotId = await generateSnapshot(page);
+    await expect(page.locator('svg[data-floor-print-plan="top"] [data-mark="T01"][data-source="through"]')).not.toHaveCount(0);
+    await expect(page.locator('tr[data-print-mark="T01"]')).toContainText("通墙面筋 · 通墙01");
+    const frozen = await page.evaluate((id) => JSON.parse(sessionStorage.getItem(`rebarviz:floor-print:snapshot:${id}`) ?? "null"), snapshotId);
+    expect(frozen.schemaVersion).toBe(2);
+    expect(frozen.summary.topThroughPieceCount).toBeGreaterThan(0);
+
+    await page.evaluate(() => {
+      const record = JSON.parse(localStorage.getItem("rebarviz:floor-rebar:top:v1") ?? "null");
+      record.state.throughPaths[0].bandEndMm = 1600;
+      localStorage.setItem("rebarviz:floor-rebar:top:v1", JSON.stringify(record));
+    });
+    await page.reload();
+    const after = await page.evaluate((id) => JSON.parse(sessionStorage.getItem(`rebarviz:floor-print:snapshot:${id}`) ?? "null"), snapshotId);
+    expect(after).toEqual(frozen);
   });
 });

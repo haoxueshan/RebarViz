@@ -17,7 +17,7 @@ import type {
   FloorTopCalculation,
 } from "./floor-top-calculator";
 
-export const FLOOR_PRINT_SNAPSHOT_SCHEMA_VERSION = 1 as const;
+export const FLOOR_PRINT_SNAPSHOT_SCHEMA_VERSION = 2 as const;
 export const FLOOR_PRINT_SUM_EPSILON = 1e-6;
 
 export type FloorPrintStatus = "draft" | "official";
@@ -178,7 +178,9 @@ export type FloorPrintBomRow = {
   id: string;
   mark: string;
   layer: FloorPrintLayerName;
-  source: "normal";
+  source: "normal" | "through";
+  throughPathId?: string;
+  throughPathName?: string;
   role: FloorBarRole;
   direction: FloorPrintDirection;
   diameter: number;
@@ -197,6 +199,8 @@ export type FloorPrintPiece = {
   id: string;
   mark: string;
   layer: FloorPrintLayerName;
+  source: "normal" | "through";
+  throughPathId?: string;
   role: FloorBarRole;
   direction: FloorPrintDirection;
   diameter: number;
@@ -230,6 +234,8 @@ export type FloorPrintSummary = {
   openingCount: number;
   bottomPieceCount: number;
   topPieceCount: number;
+  topNormalPieceCount: number;
+  topThroughPieceCount: number;
   bottomLengthM: number;
   topLengthM: number;
   bottomWeightKg: number;
@@ -287,6 +293,14 @@ export type FloorPrintSnapshotInput = FloorPrintEligibilityInput & {
 type LayerCalculation = FloorBottomCalculation | FloorTopCalculation;
 type LayerGroup = FloorBottomBomGroup | FloorTopBomGroup;
 
+function groupSource(group: LayerGroup): "normal" | "through" {
+  return "source" in group ? group.source : "normal";
+}
+
+function groupThroughPathId(group: LayerGroup): string | undefined {
+  return "throughPathId" in group ? group.throughPathId : undefined;
+}
+
 function closeEnough(left: number, right: number, epsilon = FLOOR_PRINT_SUM_EPSILON): boolean {
   return Math.abs(left - right) <= epsilon;
 }
@@ -313,6 +327,12 @@ function validateLayerBomConsistency(
   const prefix = layer === "bottom" ? "地筋" : "面筋";
 
   calculation.groups.forEach((group) => {
+    if (groupSource(group) === "through" && !groupThroughPathId(group)) {
+      errors.push({
+        code: "floor-print-bom-consistency-error",
+        message: `${prefix}通墙分组“${group.id}”缺少稳定的通墙路径引用。`,
+      });
+    }
     const pieces = group.pieceIds.flatMap((pieceId) => {
       const piece = pieceById.get(pieceId);
       if (!piece) {
@@ -351,6 +371,8 @@ function validateLayerBomConsistency(
     pieces.forEach((piece) => {
       if (
         piece.layer !== layer ||
+        piece.source !== groupSource(group) ||
+        piece.throughPathId !== groupThroughPathId(group) ||
         piece.direction !== group.direction ||
         piece.role !== group.role ||
         piece.diameter !== group.diameter ||
@@ -360,6 +382,12 @@ function validateLayerBomConsistency(
         errors.push({
           code: "floor-print-bom-consistency-error",
           message: `${prefix}分组“${group.id}”与其钢筋件的规格或长度不一致。`,
+        });
+      }
+      if (piece.source === "through" && !piece.throughPathId) {
+        errors.push({
+          code: "floor-print-bom-consistency-error",
+          message: `${prefix}通墙钢筋件“${piece.id}”缺少通墙路径引用。`,
         });
       }
     });
@@ -458,6 +486,15 @@ const ROLE_ORDER: Record<FloorBarRole, number> = { main: 0, secondary: 1 };
 const DIRECTION_ORDER: Record<FloorPrintDirection, number> = { x: 0, y: 1 };
 
 function compareCandidateRows(left: FloorPrintBomCandidate, right: FloorPrintBomCandidate): number {
+  const sourceOrder = (left.source === "normal" ? 0 : 1) - (right.source === "normal" ? 0 : 1);
+  if (sourceOrder !== 0) return sourceOrder;
+  if (left.source === "through" && right.source === "through") {
+    const pathOrder = (left.throughPathName ?? "").localeCompare(
+      right.throughPathName ?? "",
+      "zh-CN",
+    );
+    if (pathOrder !== 0) return pathOrder;
+  }
   return ROLE_ORDER[left.role] - ROLE_ORDER[right.role] ||
     DIRECTION_ORDER[left.direction] - DIRECTION_ORDER[right.direction] ||
     right.diameter - left.diameter ||
@@ -473,14 +510,24 @@ export function assignFloorPrintMarks(
   rows: readonly FloorPrintBomCandidate[],
   layer: FloorPrintLayerName,
 ): FloorPrintBomRow[] {
-  const prefix = layer === "bottom" ? "D" : "M";
-  return [...rows].sort(compareCandidateRows).map((row, index) => {
-    const mark = `${prefix}${String(index + 1).padStart(2, "0")}`;
+  let bottomIndex = 0;
+  let normalTopIndex = 0;
+  let throughTopIndex = 0;
+  return [...rows].sort(compareCandidateRows).map((row) => {
+    const prefix = layer === "bottom" ? "D" : row.source === "through" ? "T" : "M";
+    const index = layer === "bottom"
+      ? ++bottomIndex
+      : row.source === "through"
+        ? ++throughTopIndex
+        : ++normalTopIndex;
+    const mark = `${prefix}${String(index).padStart(2, "0")}`;
     return {
       id: `${layer}:${mark}`,
       mark,
       layer: row.layer,
       source: row.source,
+      throughPathId: row.throughPathId,
+      throughPathName: row.throughPathName,
       role: row.role,
       direction: row.direction,
       diameter: row.diameter,
@@ -508,6 +555,7 @@ function groupToCandidate(
   plan: FloorPlanState,
   pieceById: ReadonlyMap<string, FloorBarPiece>,
   lineById: ReadonlyMap<string, FloorBarLine>,
+  throughPathNames: ReadonlyMap<string, string>,
 ): FloorPrintBomCandidate {
   const pieces = group.pieceIds.flatMap((id) => {
     const piece = pieceById.get(id);
@@ -520,7 +568,11 @@ function groupToCandidate(
   return {
     id: group.id,
     layer,
-    source: "normal",
+    source: groupSource(group),
+    throughPathId: groupThroughPathId(group),
+    throughPathName: groupThroughPathId(group)
+      ? throughPathNames.get(groupThroughPathId(group)!)
+      : undefined,
     role: group.role,
     direction: group.direction,
     diameter: group.diameter,
@@ -545,8 +597,20 @@ function buildPrintLayer(
 ): FloorPrintLayer {
   const pieceById = new Map(calculation.pieces.map((piece) => [piece.id, piece]));
   const lineById = new Map(calculation.lines.map((line) => [line.id, line]));
+  const throughPathNames = new Map(
+    "resolvedThroughPaths" in calculation
+      ? calculation.resolvedThroughPaths.map((path) => [path.id, path.name] as const)
+      : [],
+  );
   const rows = assignFloorPrintMarks(
-    calculation.groups.map((group) => groupToCandidate(layer, group, plan, pieceById, lineById)),
+    calculation.groups.map((group) => groupToCandidate(
+      layer,
+      group,
+      plan,
+      pieceById,
+      lineById,
+      throughPathNames,
+    )),
     layer,
   );
   const markByPiece = new Map<string, string>();
@@ -561,6 +625,8 @@ function buildPrintLayer(
       id: piece.id,
       mark,
       layer,
+      source: piece.source,
+      throughPathId: piece.throughPathId,
       role: piece.role,
       direction: piece.direction,
       diameter: piece.diameter,
@@ -614,6 +680,8 @@ function validateSnapshotNumbers(content: FloorPrintContent): void {
   const nonNegativeValues = [
     content.summary.bottomPieceCount,
     content.summary.topPieceCount,
+    content.summary.topNormalPieceCount,
+    content.summary.topThroughPieceCount,
     content.summary.bottomLengthM,
     content.summary.topLengthM,
     content.summary.bottomWeightKg,
@@ -685,6 +753,8 @@ export function buildFloorPrintContent(
     openingCount: plan.openings.length,
     bottomPieceCount: bottom.totalPieceCount,
     topPieceCount: top.totalPieceCount,
+    topNormalPieceCount: topCalculation.normalPieceCount,
+    topThroughPieceCount: topCalculation.throughPieceCount,
     bottomLengthM: bottom.totalLengthM,
     topLengthM: top.totalLengthM,
     bottomWeightKg: bottom.totalWeightKg,

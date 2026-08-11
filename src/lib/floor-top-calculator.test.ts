@@ -468,6 +468,8 @@ describe("Floor Top根数、BOM与重量", () => {
       startExtraApplied: false,
       endExtraApplied: false,
       topExtraValueMm: 250,
+      intermediateWallMm: 0,
+      intermediateBoundaryIds: [],
       singleLengthMm: length,
       source: "normal",
     });

@@ -16,6 +16,10 @@ import {
 } from "./floor-plan";
 import type { FloorBarLine, FloorBarPiece } from "./floor-rebar-types";
 import {
+  applyFloorTopThroughPaths,
+  type ResolvedFloorTopThroughPath,
+} from "./floor-top-through";
+import {
   DEFAULT_FLOOR_REBAR_ROLE_STATE,
   resolveFloorBarRole,
   resolveFloorRebarRoleContext,
@@ -38,6 +42,16 @@ export type FloorTopBarSettings = {
   extraMode: TopExtraMode;
 };
 
+export type FloorTopThroughPath = {
+  id: string;
+  name: string;
+  direction: "x" | "y";
+  slabIds: string[];
+  bandStartMm: number;
+  bandEndMm: number;
+  enabled: boolean;
+};
+
 export type FloorTopDefaults = {
   mainDiameter: number;
   secondaryDiameter: number;
@@ -52,6 +66,7 @@ export type FloorTopState = {
   topAnchorExtra: number;
   defaults: FloorTopDefaults;
   slabOverrides: Record<string, Partial<FloorTopDefaults>>;
+  throughPaths: FloorTopThroughPath[];
 };
 
 export type FloorTopBomGroup = {
@@ -63,6 +78,8 @@ export type FloorTopBomGroup = {
   diameter: number;
   spacing: number;
   extraMode: TopExtraMode;
+  source: "normal" | "through";
+  throughPathId?: string;
   singleLengthMm: number;
   count: number;
   totalLengthM: number;
@@ -83,6 +100,9 @@ export type FloorTopCalculation = {
   lines: FloorBarLine[];
   pieces: FloorBarPiece[];
   groups: FloorTopBomGroup[];
+  resolvedThroughPaths: ResolvedFloorTopThroughPath[];
+  normalPieceCount: number;
+  throughPieceCount: number;
   totalBarLines: number;
   totalPieces: number;
   totalLengthM: number;
@@ -104,6 +124,7 @@ export const DEFAULT_FLOOR_TOP_STATE: FloorTopState = {
     yExtraMode: "both",
   },
   slabOverrides: {},
+  throughPaths: [],
 };
 
 const COUNT_MODES: readonly CountMode[] = ["project", "round", "floor"];
@@ -172,6 +193,30 @@ export function normalizeFloorTopState(
       if (Object.keys(next).length > 0) slabOverrides[slabId] = next;
     });
   }
+  const throughPaths: FloorTopThroughPath[] = Array.isArray(value.throughPaths)
+    ? value.throughPaths.flatMap((candidate, index) => {
+        if (!isObject(candidate)) return [];
+        const pathSlabIds = Array.isArray(candidate.slabIds)
+          ? [...new Set(candidate.slabIds.filter((id): id is string =>
+              typeof id === "string" && (!slabIds || slabIds.has(id))))]
+          : [];
+        // 路径引用的板区一旦被删除，整条路径不再保留为半残状态。
+        if (Array.isArray(candidate.slabIds) && pathSlabIds.length !== candidate.slabIds.length) return [];
+        return [{
+          id: typeof candidate.id === "string" && candidate.id
+            ? candidate.id
+            : `through-path-${index + 1}`,
+          name: typeof candidate.name === "string" && candidate.name.trim()
+            ? candidate.name
+            : `通墙${String(index + 1).padStart(2, "0")}`,
+          direction: candidate.direction === "y" ? "y" : "x",
+          slabIds: pathSlabIds,
+          bandStartMm: finiteNumber(candidate.bandStartMm, 0),
+          bandEndMm: finiteNumber(candidate.bandEndMm, 0),
+          enabled: candidate.enabled === true,
+        }];
+      })
+    : [];
   return {
     countMode: COUNT_MODES.includes(value.countMode as CountMode)
       ? value.countMode as CountMode
@@ -182,6 +227,7 @@ export function normalizeFloorTopState(
     ),
     defaults,
     slabOverrides,
+    throughPaths,
   };
 }
 
@@ -343,6 +389,9 @@ function emptyCalculation(
     lines: [],
     pieces: [],
     groups: [],
+    resolvedThroughPaths: [],
+    normalPieceCount: 0,
+    throughPieceCount: 0,
     totalBarLines: 0,
     totalPieces: 0,
     totalLengthM: 0,
@@ -369,7 +418,7 @@ export function buildFloorTopBomGroups(
   pieces.forEach((piece) => {
     const settings = settingsByDomainDirection.get(`${piece.domainId}:${piece.direction}`);
     if (!settings) return;
-    const key = [
+    const baseKey = [
       piece.domainId,
       piece.direction,
       piece.role,
@@ -378,6 +427,9 @@ export function buildFloorTopBomGroups(
       settings.extraMode,
       stableLengthKey(piece.singleLengthMm),
     ].join(":");
+    const key = piece.source === "normal"
+      ? baseKey
+      : `through:${piece.throughPathId ?? "missing"}:${baseKey}`;
     const unitWeightKgM = theoreticalUnitWeight(piece.diameter);
     const current = grouped.get(key) ?? {
       id: `top-bom:${key}`,
@@ -388,6 +440,8 @@ export function buildFloorTopBomGroups(
       diameter: piece.diameter,
       spacing: piece.spacing,
       extraMode: settings.extraMode,
+      source: piece.source,
+      throughPathId: piece.throughPathId,
       singleLengthMm: piece.singleLengthMm,
       count: 0,
       totalLengthM: 0,
@@ -411,7 +465,7 @@ export function buildFloorTopBomGroups(
     left.singleLengthMm - right.singleLengthMm);
 }
 
-export function calculateFloorTopRebar(
+export function calculateFloorTopNormalRebar(
   plan: FloorPlanState,
   input: FloorTopState,
   roleState: FloorRebarRoleState = DEFAULT_FLOOR_REBAR_ROLE_STATE,
@@ -481,6 +535,7 @@ export function calculateFloorTopRebar(
           layer: "top",
           direction,
           role,
+          source: "normal",
           positionMm,
         };
         lines.push(line);
@@ -572,6 +627,8 @@ export function calculateFloorTopRebar(
             startExtraApplied: startAnchor.extraApplied,
             endExtraApplied: endAnchor.extraApplied,
             topExtraValueMm: top.topAnchorExtra,
+            intermediateWallMm: 0,
+            intermediateBoundaryIds: [],
             singleLengthMm: netLengthMm + startAnchor.anchorMm + endAnchor.anchorMm,
             source: "normal",
           });
@@ -599,12 +656,110 @@ export function calculateFloorTopRebar(
     lines,
     pieces,
     groups,
+    resolvedThroughPaths: [],
+    normalPieceCount: pieces.length,
+    throughPieceCount: 0,
     totalBarLines: lines.length,
     totalPieces: pieces.length,
     totalLengthM,
     totalWeightKg,
     errors: [],
     warnings,
+    isValid: true,
+  };
+}
+
+/**
+ * 普通面筋是唯一相位与根数来源；通墙层只做路径校验、普通Piece认领与替换。
+ * throughPaths为空或全部禁用时直接返回普通结果，确保冻结结果不发生重排或重算。
+ */
+export function calculateFloorTopRebar(
+  plan: FloorPlanState,
+  input: FloorTopState,
+  roleState: FloorRebarRoleState = DEFAULT_FLOOR_REBAR_ROLE_STATE,
+  roleReviewRequired = false,
+): FloorTopCalculation {
+  const normal = calculateFloorTopNormalRebar(
+    plan,
+    input,
+    roleState,
+    roleReviewRequired,
+  );
+  if (!normal.isValid || !input.throughPaths.some((path) => path.enabled)) return normal;
+
+  const applied = applyFloorTopThroughPaths({
+    plan,
+    paths: input.throughPaths,
+    normalLines: normal.lines,
+    normalPieces: normal.pieces,
+    topAnchorExtraMm: input.topAnchorExtra,
+    resolveSettings: (slabId, direction, role) => {
+      const defaults = resolveFloorTopDefaults(input, slabId);
+      return {
+        diameter: role === "main" ? defaults.mainDiameter : defaults.secondaryDiameter,
+        spacing: direction === "x" ? defaults.xSpacing : defaults.ySpacing,
+        extraMode: direction === "x" ? defaults.xExtraMode : defaults.yExtraMode,
+      };
+    },
+    resolveEndpointAnchor: (segment, endpoint, extraMode) =>
+      resolveFloorTopEndpointAnchor(
+        segment,
+        endpoint,
+        extraMode,
+        input.topAnchorExtra,
+      ),
+  });
+  if (applied.errors.length > 0) {
+    return emptyCalculation(
+      normal.domains,
+      normal.roleDomains,
+      applied.errors,
+      normal.warnings,
+    );
+  }
+
+  const settingsByDomainDirection = new Map<string, FloorTopBarSettings>();
+  normal.groups.forEach((group) => {
+    settingsByDomainDirection.set(`${group.domainId}:${group.direction}`, {
+      diameter: group.diameter,
+      spacing: group.spacing,
+      extraMode: group.extraMode,
+    });
+  });
+  applied.resolvedPaths.forEach((path) => {
+    settingsByDomainDirection.set(`through:${path.id}:${path.direction}`, {
+      diameter: path.diameter,
+      spacing: path.spacing,
+      extraMode: path.extraMode,
+    });
+  });
+  const groups = buildFloorTopBomGroups(applied.pieces, settingsByDomainDirection);
+  const totalLengthM = applied.pieces.reduce(
+    (sum, piece) => sum + piece.singleLengthMm / 1000,
+    0,
+  );
+  const totalWeightKg = applied.pieces.reduce(
+    (sum, piece) => sum +
+      piece.singleLengthMm / 1000 * theoreticalUnitWeight(piece.diameter),
+    0,
+  );
+  const normalPieceCount = applied.pieces.filter((piece) => piece.source === "normal").length;
+  const throughPieceCount = applied.pieces.length - normalPieceCount;
+  return {
+    domains: normal.domains,
+    roleDomains: normal.roleDomains,
+    lines: applied.lines,
+    pieces: applied.pieces,
+    groups,
+    resolvedThroughPaths: applied.resolvedPaths,
+    normalPieceCount,
+    throughPieceCount,
+    totalBarLines: applied.lines.length,
+    totalPieces: applied.pieces.length,
+    totalLengthM,
+    totalWeightKg,
+    errors: [],
+    warnings: normal.warnings,
     isValid: true,
   };
 }

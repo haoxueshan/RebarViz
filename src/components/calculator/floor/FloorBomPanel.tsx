@@ -28,14 +28,21 @@ function roleDirection(row: FloorPrintBomRow): string {
   return `${row.role === "main" ? "主筋" : "副筋"}（${row.direction === "x" ? "东西向" : "南北向"}）`;
 }
 
+function sourceLabel(row: FloorPrintBomRow): string {
+  if (row.layer === "bottom") return "地筋";
+  return row.source === "through"
+    ? `通墙面筋${row.throughPathName ? ` · ${row.throughPathName}` : ""}`
+    : "普通面筋";
+}
+
 function PreviewTable({ title, rows }: { title: string; rows: readonly FloorPrintBomRow[] }) {
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
       <h3 className="font-bold text-slate-950">{title}</h3>
       <div className="mt-4 overflow-x-auto">
         <table className="min-w-[820px] w-full border-collapse text-sm">
-          <thead><tr className="bg-slate-100 text-slate-700"><th className="border border-slate-300 px-3 py-2">编号</th><th className="border border-slate-300 px-3 py-2 text-left">板区/区域</th><th className="border border-slate-300 px-3 py-2">类型</th><th className="border border-slate-300 px-3 py-2">规格</th><th className="border border-slate-300 px-3 py-2">单根下料</th><th className="border border-slate-300 px-3 py-2">根数</th><th className="border border-slate-300 px-3 py-2">总长度</th><th className="border border-slate-300 px-3 py-2">重量</th></tr></thead>
-          <tbody>{rows.map((row) => <tr key={`${row.layer}:${row.mark}`} data-bom-mark={row.mark}><td className="border border-slate-300 px-3 py-2 text-center font-bold">{row.mark}</td><td className="border border-slate-300 px-3 py-2">{row.slabNames.join(" + ")}</td><td className="border border-slate-300 px-3 py-2 text-center">{roleDirection(row)}</td><td className="border border-slate-300 px-3 py-2 text-center">Φ{row.diameter}@{row.spacing}</td><td className="border border-slate-300 px-3 py-2 text-center">{Number(row.singleLengthMm.toFixed(1)).toLocaleString("zh-CN")} mm</td><td className="border border-slate-300 px-3 py-2 text-center">{row.count}</td><td className="border border-slate-300 px-3 py-2 text-center">{formatNumber(row.totalLengthM)} m</td><td className="border border-slate-300 px-3 py-2 text-center">{formatNumber(row.weightKg)} kg</td></tr>)}</tbody>
+          <thead><tr className="bg-slate-100 text-slate-700"><th className="border border-slate-300 px-3 py-2">编号</th><th className="border border-slate-300 px-3 py-2 text-left">板区/区域</th><th className="border border-slate-300 px-3 py-2">来源</th><th className="border border-slate-300 px-3 py-2">主副/方向</th><th className="border border-slate-300 px-3 py-2">规格</th><th className="border border-slate-300 px-3 py-2">单根下料</th><th className="border border-slate-300 px-3 py-2">根数</th><th className="border border-slate-300 px-3 py-2">总长度</th><th className="border border-slate-300 px-3 py-2">重量</th></tr></thead>
+          <tbody>{rows.map((row) => <tr key={`${row.layer}:${row.mark}`} data-bom-mark={row.mark} data-source={row.source}><td className="border border-slate-300 px-3 py-2 text-center font-bold">{row.mark}</td><td className="border border-slate-300 px-3 py-2">{row.slabNames.join(" + ")}</td><td className="border border-slate-300 px-3 py-2 text-center">{sourceLabel(row)}</td><td className="border border-slate-300 px-3 py-2 text-center">{roleDirection(row)}</td><td className="border border-slate-300 px-3 py-2 text-center">Φ{row.diameter}@{row.spacing}</td><td className="border border-slate-300 px-3 py-2 text-center">{Number(row.singleLengthMm.toFixed(1)).toLocaleString("zh-CN")} mm</td><td className="border border-slate-300 px-3 py-2 text-center">{row.count}</td><td className="border border-slate-300 px-3 py-2 text-center">{formatNumber(row.totalLengthM)} m</td><td className="border border-slate-300 px-3 py-2 text-center">{formatNumber(row.weightKg)} kg</td></tr>)}</tbody>
         </table>
       </div>
     </section>
@@ -102,7 +109,7 @@ export function FloorBomPanel({
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <div className="flex items-center gap-2"><FileText size={20} className="text-blue-600" /><h2 className="text-xl font-bold text-slate-950">整层地筋 + 普通面筋料单</h2></div>
+            <div className="flex items-center gap-2"><FileText size={20} className="text-blue-600" /><h2 className="text-xl font-bold text-slate-950">整层地筋 + 面筋料单</h2></div>
             <p className="mt-2 text-sm leading-6 text-slate-600">料单只消费当前正式 FloorBarPiece 与分层 BOM；不会重新计算根数、锚固、主副筋或洞口裁断。</p>
           </div>
           <button
@@ -128,13 +135,14 @@ export function FloorBomPanel({
 
       {content && (
         <>
-          <section className="grid gap-3 sm:grid-cols-3" aria-label="整层料单汇总">
+          <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="整层料单汇总">
             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><span className="text-xs text-slate-500">地筋</span><strong className="mt-1 block text-2xl text-slate-950">{content.summary.bottomPieceCount} 件</strong><span className="mt-2 block text-sm text-slate-600">{formatNumber(content.summary.bottomLengthM)} m · {formatNumber(content.summary.bottomWeightKg)} kg</span></div>
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><span className="text-xs text-slate-500">普通面筋</span><strong className="mt-1 block text-2xl text-slate-950">{content.summary.topPieceCount} 件</strong><span className="mt-2 block text-sm text-slate-600">{formatNumber(content.summary.topLengthM)} m · {formatNumber(content.summary.topWeightKg)} kg</span></div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><span className="text-xs text-slate-500">普通面筋</span><strong className="mt-1 block text-2xl text-slate-950">{content.summary.topNormalPieceCount} 件</strong><span className="mt-2 block text-sm text-slate-600">最终保留的普通Piece</span></div>
+            <div className="rounded-2xl border border-blue-200 bg-white p-5 shadow-sm"><span className="text-xs text-blue-700">通墙面筋</span><strong className="mt-1 block text-2xl text-slate-950">{content.summary.topThroughPieceCount} 件</strong><span className="mt-2 block text-sm text-slate-600">已替换对应普通Piece</span></div>
             <div className="rounded-2xl border border-blue-200 bg-blue-50 p-5 shadow-sm"><span className="text-xs text-blue-700">整层合计</span><strong className="mt-1 block text-2xl text-slate-950">{content.summary.totalPieceCount} 件</strong><span className="mt-2 block text-sm text-slate-700">{formatNumber(content.summary.totalLengthM)} m · {formatNumber(content.summary.totalWeightKg)} kg</span></div>
           </section>
           <PreviewTable title="地筋料单" rows={content.bottom.rows} />
-          <PreviewTable title="普通面筋料单" rows={content.top.rows} />
+          <PreviewTable title="面筋料单（普通 + 通墙）" rows={content.top.rows} />
           <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
             <h3 className="font-bold text-slate-950">按直径汇总</h3>
             <div className="mt-4 overflow-x-auto"><table className="min-w-[560px] w-full border-collapse text-sm"><thead><tr className="bg-slate-100"><th className="border border-slate-300 px-3 py-2">直径</th><th className="border border-slate-300 px-3 py-2">实际件数</th><th className="border border-slate-300 px-3 py-2">总长度</th><th className="border border-slate-300 px-3 py-2">理论重量</th></tr></thead><tbody>{content.diameterSummary.map((row) => <tr key={row.diameter}><td className="border border-slate-300 px-3 py-2 text-center font-bold">Φ{row.diameter}</td><td className="border border-slate-300 px-3 py-2 text-center">{row.pieceCount}</td><td className="border border-slate-300 px-3 py-2 text-center">{formatNumber(row.totalLengthM)} m</td><td className="border border-slate-300 px-3 py-2 text-center">{formatNumber(row.weightKg)} kg</td></tr>)}</tbody></table></div>

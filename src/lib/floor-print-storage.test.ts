@@ -82,6 +82,29 @@ describe("Floor Print Snapshot Storage", () => {
     expect(parseFloorPrintSnapshot({ ...snapshot, bottom: { ...snapshot.bottom, rows: null } })).toBeNull();
     expect(parseFloorPrintSnapshot({ ...snapshot, summary: { ...snapshot.summary, totalWeightKg: Number.NaN } })).toBeNull();
   });
+
+  it("Schema 1快照迁移为Schema 2并把旧Top/Bottom统一标记为normal", () => {
+    const current = fixture();
+    const legacy = structuredClone(current) as unknown as Record<string, unknown>;
+    legacy.schemaVersion = 1;
+    const bottom = legacy.bottom as { rows: Array<Record<string, unknown>>; pieces: Array<Record<string, unknown>> };
+    const top = legacy.top as { rows: Array<Record<string, unknown>>; pieces: Array<Record<string, unknown>> };
+    [...bottom.rows, ...top.rows].forEach((row) => { delete row.source; });
+    [...bottom.pieces, ...top.pieces].forEach((piece) => { delete piece.source; });
+    (legacy.combinedRows as Array<Record<string, unknown>>).forEach((row) => { delete row.source; });
+    const summary = legacy.summary as Record<string, unknown>;
+    delete summary.topNormalPieceCount;
+    delete summary.topThroughPieceCount;
+
+    const migrated = parseFloorPrintSnapshot(legacy);
+    expect(migrated?.schemaVersion).toBe(2);
+    expect(migrated?.bottom.rows.every((row) => row.source === "normal")).toBe(true);
+    expect(migrated?.top.pieces.every((piece) => piece.source === "normal")).toBe(true);
+    expect(migrated?.summary).toMatchObject({
+      topNormalPieceCount: current.summary.topPieceCount,
+      topThroughPieceCount: 0,
+    });
+  });
 });
 
 describe("Floor Print Settings Storage", () => {

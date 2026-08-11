@@ -586,6 +586,7 @@ export function calculateFloorBottomRebar(
           layer: "bottom",
           direction,
           role,
+          source: "normal",
           positionMm,
         };
         lines.push(line);
@@ -645,6 +646,8 @@ export function calculateFloorBottomRebar(
             startExtraApplied: false,
             endExtraApplied: false,
             topExtraValueMm: 0,
+            intermediateWallMm: 0,
+            intermediateBoundaryIds: [],
             singleLengthMm: netLengthMm + startAnchorMm + endAnchorMm,
             source: "normal",
           });

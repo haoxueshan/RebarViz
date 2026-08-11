@@ -194,6 +194,54 @@ describe("Floor Print BOM与编号", () => {
     expect(new Set(content.combinedRows.map((row) => `${row.layer}:${row.direction}:${row.singleLengthMm}`)).size)
       .toBe(content.combinedRows.length);
   });
+
+  it("最终Top按普通M与通墙T分别编号，图表共享同一Mark且汇总不重复", () => {
+    const state: FloorPlanState = {
+      coordinateModel: "net-layout-v1",
+      slabs: [
+        { ...slab("a", 4000, 3600), x: 0 },
+        { ...slab("b", 4000, 3600), x: 4000 },
+      ],
+      openings: [],
+      supportRules: [],
+      innerWallThickness: 240,
+      outerWallThickness: 370,
+      snapDistanceMm: 150,
+    };
+    const bottom = calculateFloorBottomRebar(state, structuredClone(DEFAULT_FLOOR_BOTTOM_STATE));
+    const topState = structuredClone(DEFAULT_FLOOR_TOP_STATE);
+    topState.defaults.xSpacing = 900;
+    topState.throughPaths = [{
+      id: "path-a-b",
+      name: "通墙01",
+      direction: "x",
+      slabIds: ["b", "a"],
+      bandStartMm: 0,
+      bandEndMm: 3600,
+      enabled: true,
+    }];
+    const top = calculateFloorTopRebar(state, topState);
+    const content = buildFloorPrintContent(state, bottom, top);
+    const normalRows = content.top.rows.filter((row) => row.source === "normal");
+    const throughRows = content.top.rows.filter((row) => row.source === "through");
+    expect(normalRows.length).toBeGreaterThan(0);
+    expect(normalRows.every((row) => row.mark.startsWith("M"))).toBe(true);
+    expect(throughRows.length).toBeGreaterThan(0);
+    expect(throughRows.every((row) =>
+      row.mark.startsWith("T") &&
+      row.throughPathId === "path-a-b" &&
+      row.throughPathName === "通墙01")).toBe(true);
+    expect(content.top.pieces.filter((piece) => piece.source === "through").map((piece) => piece.mark).sort())
+      .toEqual(throughRows.flatMap((row) => Array(row.count).fill(row.mark)).sort());
+    expect(content.summary).toMatchObject({
+      topNormalPieceCount: top.normalPieceCount,
+      topThroughPieceCount: top.throughPieceCount,
+      topPieceCount: top.totalPieces,
+    });
+    expect(content.diameterSummary.reduce((sum, row) => sum + row.pieceCount, 0))
+      .toBe(bottom.totalPieces + top.totalPieces);
+    expect(validateFloorPrintBomConsistency(bottom, top)).toEqual([]);
+  });
 });
 
 describe("Floor Print平铺Piece", () => {

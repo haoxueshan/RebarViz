@@ -24,7 +24,7 @@ function boundaryStyle(support: FloorPrintGeometry["boundaries"][number]["suppor
 
 function labelForMode(mode: FloorPrintPlanSvgProps["mode"]): string {
   if (mode === "bottom") return "地筋平铺图";
-  if (mode === "top") return "普通面筋平铺图";
+  if (mode === "top") return "面筋平铺图";
   return "整层楼板平面";
 }
 
@@ -85,6 +85,7 @@ export function FloorPrintPlanSvg({
 
       {visiblePieces.map((piece) => {
         const xDirection = piece.direction === "x";
+        const through = piece.source === "through";
         return (
           <line
             key={piece.id}
@@ -93,15 +94,16 @@ export function FloorPrintPlanSvg({
             x2={toX(xDirection ? piece.runEndMm : piece.positionMm)}
             y2={toY(xDirection ? piece.positionMm : piece.runEndMm)}
             stroke="#111827"
-            strokeWidth={piece.role === "main" ? 2.3 : 1.45}
-            strokeDasharray={piece.role === "secondary" ? "6 3" : undefined}
+            strokeWidth={through ? 3.6 : piece.role === "main" ? 2.3 : 1.45}
+            strokeDasharray={through ? undefined : piece.role === "secondary" ? "6 3" : undefined}
             strokeLinecap="round"
             data-print-piece-id={piece.id}
             data-mark={piece.mark}
             data-layer={piece.layer}
             data-direction={piece.direction}
+            data-source={piece.source}
           >
-            <title>{`${piece.mark} · ${piece.role === "main" ? "主筋" : "副筋"}（${piece.direction === "x" ? "东西向" : "南北向"}）· Φ${piece.diameter}@${piece.spacing} · ${piece.singleLengthMm.toFixed(0)}mm`}</title>
+            <title>{`${piece.mark} · ${through ? "通墙面筋" : piece.layer === "top" ? "普通面筋" : "地筋"} · ${piece.role === "main" ? "主筋" : "副筋"}（${piece.direction === "x" ? "东西向" : "南北向"}）· Φ${piece.diameter}@${piece.spacing} · ${piece.singleLengthMm.toFixed(0)}mm`}</title>
           </line>
         );
       })}
@@ -192,7 +194,7 @@ export function FloorPrintPlanSvg({
         <line x1="0" y1="0" x2="34" y2="0" stroke="#171717" strokeWidth="7" /><text x="41" y="4">外墙</text>
         <line x1="90" y1="0" x2="124" y2="0" stroke="#171717" strokeWidth="4.5" /><text x="131" y="4">内墙</text>
         <line x1="180" y1="0" x2="214" y2="0" stroke="#171717" strokeWidth="1.7" strokeDasharray="10 7" /><text x="221" y="4">连续板边</text>
-        {mode !== "geometry" && <><line x1="310" y1="0" x2="344" y2="0" stroke="#171717" strokeWidth="2.3" /><text x="351" y="4">主筋Piece</text><line x1="445" y1="0" x2="479" y2="0" stroke="#171717" strokeWidth="1.45" strokeDasharray="6 3" /><text x="486" y="4">副筋Piece</text></>}
+        {mode !== "geometry" && <><line x1="310" y1="0" x2="344" y2="0" stroke="#171717" strokeWidth="2.3" /><text x="351" y="4">主筋Piece</text><line x1="445" y1="0" x2="479" y2="0" stroke="#171717" strokeWidth="1.45" strokeDasharray="6 3" /><text x="486" y="4">副筋Piece</text>{mode === "top" && <><line x1="580" y1="0" x2="614" y2="0" stroke="#171717" strokeWidth="3.6" /><text x="621" y="4">通墙Piece</text></>}</>}
       </g>
     </svg>
   );

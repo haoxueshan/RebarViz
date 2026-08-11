@@ -25,6 +25,15 @@ describe("Floor Top设置存储", () => {
         a: { mainDiameter: 10, xSpacing: 120, xExtraMode: "both" },
         stale: { secondaryDiameter: 8, ySpacing: 100, yExtraMode: "end" },
       },
+      throughPaths: [{
+        id: "path-a-b",
+        name: "通墙01",
+        direction: "x",
+        slabIds: ["a"],
+        bandStartMm: 100,
+        bandEndMm: 1000,
+        enabled: true,
+      }],
     };
     const restored = parseFloorTopStoredRecord(
       createFloorTopStoredRecord(state, "2026-08-08T00:00:00.000Z"),
@@ -36,7 +45,8 @@ describe("Floor Top设置存储", () => {
       defaults: state.defaults,
     });
     expect(restored?.state.slabOverrides).toEqual({ a: state.slabOverrides.a });
-    expect(restored).toMatchObject({ schemaVersion: 3, roleReviewRequired: false });
+    expect(restored?.state.throughPaths).toEqual(state.throughPaths);
+    expect(restored).toMatchObject({ schemaVersion: 4, roleReviewRequired: false });
   });
 
   it("V1方向规格按数值迁移为主副筋规格并保留增加端", () => {
@@ -66,11 +76,12 @@ describe("Floor Top设置存储", () => {
         yExtraMode: "start",
       },
       slabOverrides: { a: { secondaryDiameter: 8, ySpacing: 100, yExtraMode: "both" } },
+      throughPaths: [],
     });
     expect(restored?.roleReviewRequired).toBe(true);
   });
 
-  it("V2记录也必须复核，只有V3能明确保存确认状态", () => {
+  it("V1/V2必须复核，V3迁移到V4时保留确认状态并补空Through", () => {
     const legacy = parseFloorTopStoredRecord({
       schemaVersion: 2,
       state: DEFAULT_FLOOR_TOP_STATE,
@@ -78,10 +89,38 @@ describe("Floor Top设置存储", () => {
     });
     expect(legacy?.roleReviewRequired).toBe(true);
 
-    const confirmed = parseFloorTopStoredRecord(
-      createFloorTopStoredRecord(DEFAULT_FLOOR_TOP_STATE, "2026-08-08T00:00:00.000Z", false),
-    );
-    expect(confirmed).toMatchObject({ schemaVersion: 3, roleReviewRequired: false });
+    const confirmed = parseFloorTopStoredRecord({
+      schemaVersion: 3,
+      savedAt: "2026-08-08T00:00:00.000Z",
+      state: { ...DEFAULT_FLOOR_TOP_STATE, throughPaths: undefined },
+      roleReviewRequired: false,
+    });
+    expect(confirmed).toMatchObject({ schemaVersion: 4, roleReviewRequired: false });
+    expect(confirmed?.state.throughPaths).toEqual([]);
+
+    const stillRequired = parseFloorTopStoredRecord({
+      schemaVersion: 3,
+      state: DEFAULT_FLOOR_TOP_STATE,
+      roleReviewRequired: true,
+    });
+    expect(stillRequired?.roleReviewRequired).toBe(true);
+  });
+
+  it("V4恢复Through并删除引用已不存在板区的整条Path", () => {
+    const restored = parseFloorTopStoredRecord({
+      schemaVersion: 4,
+      savedAt: "2026-08-10T00:00:00.000Z",
+      roleReviewRequired: false,
+      state: {
+        ...DEFAULT_FLOOR_TOP_STATE,
+        throughPaths: [
+          { id: "valid", name: "通墙01", direction: "x", slabIds: ["a", "b"], bandStartMm: 0, bandEndMm: 3000, enabled: true },
+          { id: "stale", name: "通墙02", direction: "y", slabIds: ["a", "missing"], bandStartMm: 0, bandEndMm: 2000, enabled: true },
+        ],
+      },
+    }, new Set(["a", "b"]));
+    expect(restored?.state.throughPaths.map((item) => item.id)).toEqual(["valid"]);
+    expect(restored?.roleReviewRequired).toBe(false);
   });
 
   it("损坏版本被拒绝，损坏字段和extraMode恢复安全默认", () => {

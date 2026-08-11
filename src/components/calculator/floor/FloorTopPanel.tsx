@@ -3,6 +3,7 @@
 import { AlertTriangle, Layers3 } from "lucide-react";
 import { useState } from "react";
 import { FloorRolePanel } from "@/components/calculator/floor/FloorRolePanel";
+import { FloorTopThroughPanel } from "@/components/calculator/floor/FloorTopThroughPanel";
 import {
   resolveFloorTopDefaults,
   type FloorTopCalculation,
@@ -103,6 +104,7 @@ export function FloorTopSettingsPanel({
   selectedRoleDomain,
   roleState,
   roleReviewRequired,
+  calculation,
   onChange,
   onRoleStateChange,
   onConfirmRoleReview,
@@ -114,6 +116,7 @@ export function FloorTopSettingsPanel({
   selectedRoleDomain: FloorRebarRoleDomain | null;
   roleState: FloorRebarRoleState;
   roleReviewRequired: boolean;
+  calculation: FloorTopCalculation;
   onChange: (state: FloorTopState) => void;
   onRoleStateChange: (state: FloorRebarRoleState) => void;
   onConfirmRoleReview: () => void;
@@ -174,6 +177,13 @@ export function FloorTopSettingsPanel({
         )}
         <p className="mt-3 text-xs leading-5 text-slate-500">当前楼层共 {plan.slabs.length} 个板区；同一连续 Domain 内同方向的直径、间距和增加位置必须一致。</p>
       </section>
+      <FloorTopThroughPanel
+        plan={plan}
+        top={top}
+        calculation={calculation}
+        onChange={onChange}
+        onValidityChange={onValidityChange}
+      />
     </div>
   );
 }
@@ -184,14 +194,20 @@ function domainLabel(plan: FloorPlanState, slabIds: readonly string[]): string {
 
 export function FloorTopResults({ plan, calculation, invalidDraftCount }: { plan: FloorPlanState; calculation: FloorTopCalculation; invalidDraftCount: number }) {
   const valid = calculation.isValid && invalidDraftCount === 0;
+  let normalIndex = 0;
+  let throughIndex = 0;
+  const marks = new Map(calculation.groups.map((group) => {
+    const index = group.source === "through" ? ++throughIndex : ++normalIndex;
+    return [group.id, `${group.source === "through" ? "T" : "M"}${String(index).padStart(2, "0")}`];
+  }));
   return (
     <section className="mt-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
-      <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-xl font-bold text-slate-950">整层普通面筋料单</h2><p className="mt-1 text-xs text-slate-500">按连续 Domain、方向、角色、规格、增加位置和真实下料长度聚合。</p></div><span className={`rounded-full px-3 py-1 text-xs font-semibold ${valid ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"}`}>{valid ? "正式面筋结果有效" : "面筋结果无效"}</span></div>
+      <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-xl font-bold text-slate-950">整层面筋料单</h2><p className="mt-1 text-xs text-slate-500">普通面筋与通墙替换后的最终 FloorBarPiece，按来源、路径、方向、角色、规格和真实下料长度聚合。</p></div><span className={`rounded-full px-3 py-1 text-xs font-semibold ${valid ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"}`}>{valid ? "正式面筋结果有效" : "面筋结果无效"}</span></div>
       {(calculation.errors.length > 0 || invalidDraftCount > 0) && <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800"><div className="flex items-center gap-2 font-semibold"><AlertTriangle size={17} />请先修正以下问题</div><ul className="mt-2 space-y-1">{invalidDraftCount > 0 && <li>• 有 {invalidDraftCount} 个面筋或几何数字输入为空或非法，未使用旧值计算。</li>}{calculation.errors.map((issue) => <li key={`${issue.code}:${issue.message}`}>• {issue.message}</li>)}</ul></div>}
       {calculation.warnings.length > 0 && <ul className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{calculation.warnings.map((issue) => <li key={`${issue.code}:${issue.message}`}>• {issue.message}</li>)}</ul>}
-      <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">{[["理论面筋线", calculation.isValid ? calculation.totalBarLines : "--", "条"], ["实际下料件", calculation.isValid ? calculation.totalPieces : "--", "件"], ["总长度", calculation.isValid ? calculation.totalLengthM.toFixed(3) : "--", "m"], ["总重量", calculation.isValid && calculation.totalWeightKg !== null ? calculation.totalWeightKg.toFixed(2) : "--", "kg"]].map(([label, value, unit]) => <div key={label} className="rounded-xl bg-slate-50 p-4"><span className="text-xs text-slate-500">{label}</span><strong className="mt-1 block text-xl text-slate-950">{value}<small className="ml-1 text-xs font-normal text-slate-500">{unit}</small></strong></div>)}</div>
-      {calculation.isValid && calculation.groups.length === 0 && <p className="mt-5 rounded-xl bg-amber-50 p-4 text-sm text-amber-900">当前没有有效楼板区域，因此没有普通面筋下料件。</p>}
-      {calculation.isValid && calculation.groups.length > 0 && <div className="mt-5 overflow-x-auto"><table className="w-full min-w-[820px] border-collapse text-left text-sm"><thead><tr className="border-b border-slate-300 bg-slate-50 text-xs text-slate-600"><th className="p-3">编号</th><th className="p-3">板区/连续区域</th><th className="p-3">类型</th><th className="p-3">规格</th><th className="p-3">增加位置</th><th className="p-3">根数</th><th className="p-3">单根长度</th><th className="p-3">总长度</th><th className="p-3">重量</th></tr></thead><tbody>{calculation.groups.map((group, index) => <tr key={group.id} className="border-b border-slate-200 align-top"><td className="p-3 font-semibold text-cyan-700">M{String(index + 1).padStart(2, "0")}</td><td className="p-3"><span className="font-medium text-slate-900">{domainLabel(plan, group.slabIds)}</span><span className="mt-1 block text-xs text-slate-500">连续区域 {calculation.domains.findIndex((domain) => domain.id === group.domainId) + 1}</span></td><td className="p-3">{floorBarRoleLabel(group.role)}（{directionLabel(group.direction)}）</td><td className="p-3">Φ{group.diameter}@{group.spacing}</td><td className="p-3">{extraModeLabel(group.extraMode)}</td><td className="p-3">{group.count}根</td><td className="p-3">{(group.singleLengthMm / 1000).toFixed(3)}m</td><td className="p-3">{group.totalLengthM.toFixed(3)}m</td><td className="p-3 font-semibold">{group.weightKg.toFixed(2)}kg</td></tr>)}</tbody></table></div>}
+      <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-6">{[["理论面筋线", calculation.isValid ? calculation.totalBarLines : "--", "条"], ["普通面筋件", calculation.isValid ? calculation.normalPieceCount : "--", "件"], ["通墙面筋件", calculation.isValid ? calculation.throughPieceCount : "--", "件"], ["实际下料件", calculation.isValid ? calculation.totalPieces : "--", "件"], ["总长度", calculation.isValid ? calculation.totalLengthM.toFixed(3) : "--", "m"], ["总重量", calculation.isValid && calculation.totalWeightKg !== null ? calculation.totalWeightKg.toFixed(2) : "--", "kg"]].map(([label, value, unit]) => <div key={label} className="rounded-xl bg-slate-50 p-4"><span className="text-xs text-slate-500">{label}</span><strong className="mt-1 block text-xl text-slate-950">{value}<small className="ml-1 text-xs font-normal text-slate-500">{unit}</small></strong></div>)}</div>
+      {calculation.isValid && calculation.groups.length === 0 && <p className="mt-5 rounded-xl bg-amber-50 p-4 text-sm text-amber-900">当前没有有效楼板区域，因此没有面筋下料件。</p>}
+      {calculation.isValid && calculation.groups.length > 0 && <div className="mt-5 overflow-x-auto"><table className="w-full min-w-[880px] border-collapse text-left text-sm"><thead><tr className="border-b border-slate-300 bg-slate-50 text-xs text-slate-600"><th className="p-3">编号</th><th className="p-3">板区/连续区域</th><th className="p-3">来源</th><th className="p-3">类型</th><th className="p-3">规格</th><th className="p-3">增加位置</th><th className="p-3">根数</th><th className="p-3">单根长度</th><th className="p-3">总长度</th><th className="p-3">重量</th></tr></thead><tbody>{calculation.groups.map((group) => { const through = calculation.resolvedThroughPaths.find((path) => path.id === group.throughPathId); return <tr key={group.id} className="border-b border-slate-200 align-top"><td className="p-3 font-semibold text-cyan-700">{marks.get(group.id)}</td><td className="p-3"><span className="font-medium text-slate-900">{domainLabel(plan, group.slabIds)}</span><span className="mt-1 block text-xs text-slate-500">{group.source === "through" ? through?.name ?? "通墙路径" : `连续区域 ${calculation.domains.findIndex((domain) => domain.id === group.domainId) + 1}`}</span></td><td className="p-3">{group.source === "through" ? `通墙面筋 · ${through?.name ?? ""}` : "普通面筋"}</td><td className="p-3">{floorBarRoleLabel(group.role)}（{directionLabel(group.direction)}）</td><td className="p-3">Φ{group.diameter}@{group.spacing}</td><td className="p-3">{extraModeLabel(group.extraMode)}</td><td className="p-3">{group.count}根</td><td className="p-3">{(group.singleLengthMm / 1000).toFixed(3)}m</td><td className="p-3">{group.totalLengthM.toFixed(3)}m</td><td className="p-3 font-semibold">{group.weightKg.toFixed(2)}kg</td></tr>; })}</tbody></table></div>}
     </section>
   );
 }

@@ -130,8 +130,8 @@ export function FloorCanvas({
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-4 py-3">
         <div>
-          <h2 className="font-semibold text-slate-900">{topCalculation ? "整层普通面筋净跨路径" : bottomCalculation ? "整层地筋净跨路径" : "整层板区平面"}</h2>
-          <p className="mt-0.5 text-xs text-slate-500">{topCalculation ? "图中显示普通面筋净跨路径；正式下料长度已包含端部墙厚及实际内墙端增加值。洞口会把同一理论线切成多个实物件。" : bottomCalculation ? "图中显示地筋净跨路径；正式下料长度已包含端部墙厚。洞口会把同一理论线切成多个实物件。" : "板区表示存在水平楼板的区域；楼梯间等无板区域使用洞口建模。"}</p>
+          <h2 className="font-semibold text-slate-900">{topCalculation ? "整层面筋净跨路径" : bottomCalculation ? "整层地筋净跨路径" : "整层板区平面"}</h2>
+          <p className="mt-0.5 text-xs text-slate-500">{topCalculation ? "图中只显示替换后的最终面筋Piece；粗实线为通墙面筋，虚线为普通面筋。正式下料长度已包含真实端部及中间穿墙厚度。" : bottomCalculation ? "图中显示地筋净跨路径；正式下料长度已包含端部墙厚。洞口会把同一理论线切成多个实物件。" : "板区表示存在水平楼板的区域；楼梯间等无板区域使用洞口建模。"}</p>
         </div>
         <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700"><Move size={13} /> 板区与洞口可拖动</span>
       </div>
@@ -215,6 +215,7 @@ export function FloorCanvas({
           if (!line) return null;
           const xDirection = piece.direction === "x";
           const topLayer = piece.layer === "top";
+          const through = piece.source === "through";
           const extraText = topLayer
             ? `；增加端：${piece.startExtraApplied && piece.endExtraApplied ? "两端" : piece.startExtraApplied ? (xDirection ? "西端" : "南端") : piece.endExtraApplied ? (xDirection ? "东端" : "北端") : "无"}`
             : "";
@@ -225,13 +226,13 @@ export function FloorCanvas({
               y1={toY(xDirection ? line.positionMm : piece.runStartMm)}
               x2={toX(xDirection ? piece.runEndMm : line.positionMm)}
               y2={toY(xDirection ? line.positionMm : piece.runEndMm)}
-              stroke={topLayer ? (xDirection ? "#0891b2" : "#047857") : (xDirection ? "#dc2626" : "#7c3aed")}
-              strokeWidth={topLayer ? "2.8" : "2.4"}
-              strokeDasharray={topLayer ? "8 5" : undefined}
+              stroke={topLayer ? (through ? "#1d4ed8" : xDirection ? "#0891b2" : "#047857") : (xDirection ? "#dc2626" : "#7c3aed")}
+              strokeWidth={through ? "4.6" : topLayer ? "2.8" : "2.4"}
+              strokeDasharray={topLayer && !through ? "8 5" : undefined}
               strokeLinecap="round"
               pointerEvents="none"
             >
-              <title>{`${xDirection ? "东西向" : "南北向"}${topLayer ? "面筋" : "地筋"} · ${floorBarRoleLabel(piece.role)} · Φ${piece.diameter}@${piece.spacing}；净跨 ${formatMm(piece.netLengthMm)}mm；起点锚固 ${formatMm(piece.startAnchorMm)}mm；终点锚固 ${formatMm(piece.endAnchorMm)}mm${extraText}；下料 ${formatMm(piece.singleLengthMm)}mm`}</title>
+              <title>{`${piece.source === "through" ? "通墙面筋" : `${xDirection ? "东西向" : "南北向"}${topLayer ? "面筋" : "地筋"}`} · ${floorBarRoleLabel(piece.role)} · Φ${piece.diameter}@${piece.spacing}；净跨 ${formatMm(piece.netLengthMm)}mm${piece.intermediateWallMm > 0 ? `；中间穿墙 ${formatMm(piece.intermediateWallMm)}mm` : ""}；起点锚固 ${formatMm(piece.startAnchorMm)}mm；终点锚固 ${formatMm(piece.endAnchorMm)}mm${extraText}；下料 ${formatMm(piece.singleLengthMm)}mm`}</title>
             </line>
           );
         })}
@@ -318,6 +319,7 @@ export function FloorCanvas({
           <g transform="translate(560 625)" fontSize="11" fill="#475569">
             <line x1="0" y1="0" x2="35" y2="0" stroke={topCalculation ? "#0891b2" : "#dc2626"} strokeWidth={topCalculation ? "2.8" : "2.4"} strokeDasharray={topCalculation ? "8 5" : undefined} /><text x="42" y="4">东西向{topCalculation ? "面筋" : "地筋"}Piece</text>
             <line x1="150" y1="0" x2="185" y2="0" stroke={topCalculation ? "#047857" : "#7c3aed"} strokeWidth={topCalculation ? "2.8" : "2.4"} strokeDasharray={topCalculation ? "8 5" : undefined} /><text x="192" y="4">南北向{topCalculation ? "面筋" : "地筋"}Piece</text>
+            {topCalculation && <><line x1="315" y1="0" x2="350" y2="0" stroke="#1d4ed8" strokeWidth="4.6" /><text x="357" y="4">通墙面筋Piece</text></>}
           </g>
         )}
       </svg>
