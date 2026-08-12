@@ -1,12 +1,22 @@
 "use client";
 
-import { Copy, DoorOpen, Grid2X2, House, Info, Plus, RotateCcw, Trash2 } from "lucide-react";
+import { AlertTriangle, Check, ChevronLeft, ChevronRight, Circle, DoorOpen, Grid2X2, Menu, RotateCcw, Settings2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { CalculatorModeNav } from "@/components/calculator/CalculatorModeNav";
 import { FloorBottomResults, FloorBottomSettingsPanel } from "@/components/calculator/floor/FloorBottomPanel";
 import { FloorBomPanel } from "@/components/calculator/floor/FloorBomPanel";
 import { FloorCanvas, type FloorSelection } from "@/components/calculator/floor/FloorCanvas";
 import { FloorTopResults, FloorTopSettingsPanel } from "@/components/calculator/floor/FloorTopPanel";
+import { FloorWorkspaceDrawer } from "@/components/calculator/floor/FloorWorkspaceDrawer";
+import { FloorWorkspaceInspector, type FloorWorkspaceInspectorTab } from "@/components/calculator/floor/FloorWorkspaceInspector";
+import { FloorWorkspaceNavigator } from "@/components/calculator/floor/FloorWorkspaceNavigator";
+import { FloorWorkspaceSummary } from "@/components/calculator/floor/FloorWorkspaceSummary";
+import type {
+  FloorInspectorTab,
+  FloorWorkflowStage,
+  FloorWorkflowStatus,
+  FloorWorkspaceRoleItem,
+  FloorWorkspaceThroughItem,
+} from "@/components/calculator/floor/floor-workspace-types";
 import {
   calculateFloorBottomRebar,
   DEFAULT_FLOOR_BOTTOM_STATE,
@@ -54,6 +64,7 @@ import { createFloorDraftRecord, FLOOR_DRAFT_KEY, parseFloorDraftRecord } from "
 import {
   buildFloorRebarRoleDomains,
   DEFAULT_FLOOR_REBAR_ROLE_STATE,
+  resolveFloorRoleDomainMainDirection,
   type FloorRebarRoleState,
 } from "@/lib/floor-rebar-role";
 import {
@@ -61,6 +72,8 @@ import {
   FLOOR_REBAR_ROLE_STORAGE_KEY,
   parseFloorRebarRoleStoredRecord,
 } from "@/lib/floor-rebar-role-storage";
+import { getFloorPrintEligibility } from "@/lib/floor-print";
+import { resolveFloorTopThroughPathGeometry } from "@/lib/floor-top-through";
 
 const SLAB_TYPE_OPTIONS: Array<{ value: FloorSlabType; label: string }> = [
   { value: "room", label: "房间" }, { value: "corridor", label: "内走廊" }, { value: "hall", label: "客厅" },
@@ -132,6 +145,13 @@ function blockTopForDrafts(
 
 function nextObjectId(kind: "slab" | "opening"): string {
   return `floor-${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function nextThroughPathName(paths: readonly FloorTopState["throughPaths"][number][]): string {
+  const names = new Set(paths.map((path) => path.name));
+  let index = 1;
+  while (names.has(`通墙${String(index).padStart(2, "0")}`)) index += 1;
+  return `通墙${String(index).padStart(2, "0")}`;
 }
 
 function formatMm(value: number): string {
@@ -221,9 +241,7 @@ function DraftNumberField({
   );
 }
 
-type FloorWorkflowStage = "plan" | "bottom" | "top" | "bom";
-
-function WorkflowTabs({ stage, onChange }: { stage: FloorWorkflowStage; onChange: (stage: FloorWorkflowStage) => void }) {
+function WorkflowTabs({ stage, statuses, onChange }: { stage: FloorWorkflowStage; statuses: Record<FloorWorkflowStage, FloorWorkflowStatus>; onChange: (stage: FloorWorkflowStage) => void }) {
   const tabs: Array<{ stage: FloorWorkflowStage; label: string }> = [
     { stage: "plan", label: "楼层" },
     { stage: "bottom", label: "地筋" },
@@ -231,10 +249,10 @@ function WorkflowTabs({ stage, onChange }: { stage: FloorWorkflowStage; onChange
     { stage: "bom", label: "料单" },
   ];
   return (
-    <div className="mb-5 grid grid-cols-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" aria-label="整层计算步骤">
+    <div className="sticky top-0 z-40 mb-3 grid grid-cols-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm md:static xl:mb-4" aria-label="整层计算步骤">
       {tabs.map((tab, index) => (
         <button key={tab.stage} type="button" onClick={() => onChange(tab.stage)} className={`min-h-12 min-w-0 px-1 py-3 text-center text-xs font-semibold sm:text-sm ${stage === tab.stage ? "bg-blue-600 text-white" : "border-l border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`} aria-current={stage === tab.stage ? "step" : undefined}>
-          <span className="hidden sm:inline">{index + 1}. </span>{tab.label}
+          <span className="inline-flex items-center justify-center gap-1">{statuses[tab.stage] === "valid" ? <Check size={14} /> : statuses[tab.stage] === "invalid" || statuses[tab.stage] === "warning" ? <AlertTriangle size={14} /> : <Circle size={11} />}<span className="hidden sm:inline">{index + 1}. </span>{tab.label}</span>
         </button>
       ))}
     </div>
@@ -248,6 +266,7 @@ function BoundaryPanel({
   selectedBoundaryId,
   onSelectBoundary,
   onSetSupport,
+  compact = false,
 }: {
   state: FloorPlanState;
   selection: FloorSelection;
@@ -255,10 +274,11 @@ function BoundaryPanel({
   selectedBoundaryId: string | null;
   onSelectBoundary: (id: string) => void;
   onSetSupport: (segment: FloorAtomicBoundarySegment, target: FloorSupportRuleTarget, support: FloorSupportRule["support"]) => void;
+  compact?: boolean;
 }) {
   if (!selection) return null;
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+    <section className={compact ? "space-y-3" : "rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"}>
       <h2 className="font-semibold text-slate-900">{selection.kind === "slab" ? "板区边界关系" : "洞口边界处理"}</h2>
       <p className="mt-1 text-xs leading-5 text-slate-500">几何关系与实际支承分开保存；此处不设置钢筋锚固长度。</p>
       <div className="mt-4 max-h-80 space-y-3 overflow-y-auto pr-1">
@@ -311,6 +331,15 @@ export default function FloorRebarCalculator() {
   const [hydrated, setHydrated] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [inputRevision, setInputRevision] = useState(0);
+  const [selectedThroughPathId, setSelectedThroughPathId] = useState<string | null>(null);
+  const [inspectorTab, setInspectorTab] = useState<FloorInspectorTab>("object");
+  const [navigatorOpen, setNavigatorOpen] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [tabletInspectorExpanded, setTabletInspectorExpanded] = useState(false);
+  const [navigatorCollapsed, setNavigatorCollapsed] = useState(false);
+  const [detailsExpanded, setDetailsExpanded] = useState(false);
+  const [highlightedRoleDomainId, setHighlightedRoleDomainId] = useState<string | null>(null);
+  const [canvasFocusRequest, setCanvasFocusRequest] = useState<{ mode: "selection" | "domain"; key: string } | null>(null);
 
   useEffect(() => {
     try {
@@ -475,6 +504,46 @@ export default function FloorRebarCalculator() {
     : null;
   const selectedOpening = selection?.kind === "opening" ? state.openings.find((opening) => opening.id === selection.id) ?? null : null;
   const selectedSegments = selection ? atomic.filter((segment) => selection.kind === "slab" ? segment.slabIds.includes(selection.id) : segment.openingId === selection.id) : [];
+  const printEligibility = useMemo(() => getFloorPrintEligibility({
+    plan: state,
+    bottom: bottomCalculation,
+    top: topCalculation,
+    bottomRoleReviewRequired,
+    topRoleReviewRequired,
+    invalidDraftCount: invalidDrafts.size + invalidBottomDrafts.size + invalidTopDrafts.size,
+  }), [bottomCalculation, bottomRoleReviewRequired, invalidBottomDrafts.size, invalidDrafts.size, invalidTopDrafts.size, state, topCalculation, topRoleReviewRequired]);
+  const roleItems = useMemo<FloorWorkspaceRoleItem[]>(() => roleDomains.map((domain, index) => {
+    const resolved = resolveFloorRoleDomainMainDirection(domain, roleState);
+    const mainLabel = resolved.mainDirection === "x" ? "东西向主筋" : resolved.mainDirection === "y" ? "南北向主筋" : "主筋方向待确认";
+    return {
+      id: domain.id,
+      slabIds: domain.slabIds,
+      label: `区域${String(index + 1).padStart(2, "0")}`,
+      detail: `${domain.shape === "irregular" ? "不规则连续区域" : domain.shape === "square" ? "正方形区域" : resolved.source === "auto" ? "自动判断" : "人工指定"} · ${mainLabel}`,
+      status: resolved.mainDirection ? "valid" : "invalid",
+    };
+  }), [roleDomains, roleState]);
+  const throughItems = useMemo<FloorWorkspaceThroughItem[]>(() => topState.throughPaths.map((path) => {
+    const geometry = resolveFloorTopThroughPathGeometry(state, path);
+    const pathErrors = topCalculation.errors.filter((issue) => issue.code.startsWith("through-") && (issue.objectIds?.includes(path.id) || issue.message.includes(path.name)));
+    const names = geometry.orderedSlabIds.map((id) => state.slabs.find((slab) => slab.id === id)?.name ?? id);
+    return {
+      id: path.id,
+      name: path.name,
+      detail: names.length > 0 ? names.join(" → ") : path.slabIds.map((id) => state.slabs.find((slab) => slab.id === id)?.name ?? id).join(" → ") || "尚未选择板区",
+      status: !path.enabled ? "disabled" : pathErrors.length > 0 || geometry.errors.length > 0 ? "invalid" : "valid",
+    };
+  }), [state, topCalculation.errors, topState.throughPaths]);
+  const workflowStatuses: Record<FloorWorkflowStage, FloorWorkflowStatus> = {
+    plan: errors.length > 0 || invalidDrafts.size > 0 ? "invalid" : warnings.length > 0 ? "warning" : "valid",
+    bottom: bottomCalculation.isValid && !bottomRoleReviewRequired && invalidDrafts.size + invalidBottomDrafts.size === 0 ? "valid" : "invalid",
+    top: topCalculation.isValid && !topRoleReviewRequired && invalidDrafts.size + invalidTopDrafts.size === 0 ? "valid" : "invalid",
+    bom: printEligibility.eligible ? "valid" : "invalid",
+  };
+
+  useEffect(() => {
+    if (selectedThroughPathId && !topState.throughPaths.some((path) => path.id === selectedThroughPathId)) setSelectedThroughPathId(null);
+  }, [selectedThroughPathId, topState.throughPaths]);
 
   const setDraftValidity = (key: string, valid: boolean) => {
     setInvalidDrafts((current) => { const next = new Set(current); if (valid) next.delete(key); else next.add(key); return next; });
@@ -502,6 +571,7 @@ export default function FloorRebarCalculator() {
     setState((current) => ({ ...current, slabs: [...current.slabs, next] }));
     setSelection({ kind: "slab", id: next.id });
     setSelectedBoundaryId(null);
+    setInspectorTab("object");
   };
 
   const addOpening = () => {
@@ -515,6 +585,21 @@ export default function FloorRebarCalculator() {
     setState((current) => ({ ...current, openings: [...current.openings, next] }));
     setSelection({ kind: "opening", id: next.id });
     setSelectedBoundaryId(null);
+    setInspectorTab("object");
+  };
+
+  const resetPlan = () => {
+    if (!window.confirm("确定恢复Geometry V2默认数据吗？当前整层草稿将被替换。")) return;
+    const next = cloneDefaultState();
+    setState(next);
+    setRoleState(cloneDefaultRoleState());
+    setSelection({ kind: "slab", id: next.slabs[0].id });
+    setSelectedBoundaryId(null);
+    setSelectedThroughPathId(null);
+    setInvalidDrafts(new Set());
+    setInputRevision((value) => value + 1);
+    window.localStorage.removeItem(FLOOR_DRAFT_KEY);
+    window.localStorage.removeItem(FLOOR_REBAR_ROLE_STORAGE_KEY);
   };
 
   const duplicateSelected = () => {
@@ -604,6 +689,70 @@ export default function FloorRebarCalculator() {
     setSelectedBoundaryId(segment.id);
     if (segment.openingId) setSelection({ kind: "opening", id: segment.openingId });
     else if (segment.slabIds[0]) setSelection({ kind: "slab", id: segment.slabIds[0] });
+    setInspectorTab("boundary");
+    setInspectorOpen(true);
+    setTabletInspectorExpanded(true);
+  };
+
+  const changeStage = (nextStage: FloorWorkflowStage) => {
+    setStage(nextStage);
+    setDetailsExpanded(false);
+    setNavigatorOpen(false);
+    setInspectorOpen(false);
+    setHighlightedRoleDomainId(null);
+    if (nextStage !== "top") setSelectedThroughPathId(null);
+    setInspectorTab(nextStage === "plan" ? "object" : nextStage === "bottom" || nextStage === "top" ? "defaults" : "object");
+    setTabletInspectorExpanded(false);
+  };
+
+  const selectWorkspaceObject = (nextSelection: Exclude<FloorSelection, null>) => {
+    setSelection(nextSelection);
+    setSelectedBoundaryId(null);
+    setSelectedThroughPathId(null);
+    setHighlightedRoleDomainId(null);
+    setInspectorTab(stage === "plan" ? "object" : "slab");
+    setCanvasFocusRequest({ mode: "selection", key: `${nextSelection.kind}:${nextSelection.id}:${Date.now()}` });
+    setNavigatorOpen(false);
+  };
+
+  const selectRoleItem = (item: FloorWorkspaceRoleItem) => {
+    const slab = state.slabs.find((candidate) => item.slabIds.includes(candidate.id));
+    if (slab) setSelection({ kind: "slab", id: slab.id });
+    setSelectedBoundaryId(null);
+    setSelectedThroughPathId(null);
+    setHighlightedRoleDomainId(item.id);
+    setInspectorTab("role");
+    setCanvasFocusRequest({ mode: "domain", key: `${item.id}:${Date.now()}` });
+    setNavigatorOpen(false);
+    setInspectorOpen(true);
+    setTabletInspectorExpanded(true);
+  };
+
+  const selectThroughPath = (id: string) => {
+    setSelectedThroughPathId(id);
+    setHighlightedRoleDomainId(null);
+    setInspectorTab("through");
+    setNavigatorOpen(false);
+    setInspectorOpen(true);
+    setTabletInspectorExpanded(true);
+  };
+
+  const addThroughPath = () => {
+    const next = {
+      id: `floor-through-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      name: nextThroughPathName(topState.throughPaths),
+      direction: "x" as const,
+      slabIds: selectedSlab ? [selectedSlab.id] : [],
+      bandStartMm: 0,
+      bandEndMm: 0,
+      enabled: false,
+    };
+    setTopState((current) => ({ ...current, throughPaths: [...current.throughPaths, next] }));
+    setSelectedThroughPathId(next.id);
+    setInspectorTab("through");
+    setNavigatorOpen(false);
+    setInspectorOpen(true);
+    setTabletInspectorExpanded(true);
   };
 
   if (!hydrated) return <main className="mx-auto min-h-[60vh] max-w-7xl px-4 py-10 text-sm text-slate-500">正在迁移并恢复整层几何草稿…</main>;
@@ -617,16 +766,82 @@ export default function FloorRebarCalculator() {
     continuous: atomic.filter((segment) => segment.support === "continuous").length,
     opening: atomic.filter((segment) => segment.geometryKind === "opening-edge").length,
   };
+  const selectedThroughPath = selectedThroughPathId
+    ? topState.throughPaths.find((path) => path.id === selectedThroughPathId) ?? null
+    : null;
+  const inspectorTabs: FloorWorkspaceInspectorTab[] = stage === "plan"
+    ? [{ id: "object", label: "对象" }, { id: "boundary", label: "边界" }, { id: "floor", label: "楼层" }]
+    : stage === "bottom"
+      ? [{ id: "role", label: "区域" }, { id: "defaults", label: "整层默认" }, { id: "slab", label: "当前板区" }]
+      : [{ id: "role", label: "区域" }, { id: "defaults", label: "普通面筋" }, { id: "slab", label: "当前板区" }, { id: "through", label: "通墙" }];
+  const inspectorTitle = inspectorTab === "through" && selectedThroughPath
+    ? selectedThroughPath.name
+    : selectedSlab?.name ?? selectedOpening?.name ?? "未选择对象";
+  const inspectorSubtitle = inspectorTab === "through" && selectedThroughPath
+    ? `${selectedThroughPath.enabled ? "已启用" : "未启用"} · ${selectedThroughPath.direction === "x" ? "东西向" : "南北向"}`
+    : selectedSlab
+      ? `${SLAB_TYPE_OPTIONS.find((option) => option.value === selectedSlab.type)?.label ?? "板区"} · ${formatMm(selectedSlab.width)} × ${formatMm(selectedSlab.height)}mm`
+      : selectedOpening
+        ? `${OPENING_TYPE_OPTIONS.find((option) => option.value === selectedOpening.type)?.label ?? "洞口"} · ${formatMm(selectedOpening.width)} × ${formatMm(selectedOpening.height)}mm`
+        : undefined;
+  const inspectorIssueCount = stage === "plan"
+    ? errors.length + invalidDrafts.size
+    : stage === "bottom"
+      ? bottomCalculation.errors.length
+      : topCalculation.errors.length;
+
+  const inspectorContent = stage === "plan" ? (
+    inspectorTab === "boundary" ? (
+      <BoundaryPanel compact state={state} selection={selection} segments={selectedSegments} selectedBoundaryId={selectedBoundaryId} onSelectBoundary={setSelectedBoundaryId} onSetSupport={setSegmentSupport} />
+    ) : inspectorTab === "floor" ? (
+      <div className="space-y-5">
+        <section className="space-y-4">
+          <div><h3 className="font-semibold text-slate-900">净跨拓扑设置</h3><p className="mt-1 text-xs leading-5 text-slate-500">X/Y仅表达板区净跨拼接，不含墙厚；墙厚通过支承拓扑单独保存。</p></div>
+          {field("inner-wall", "内墙厚度", state.innerWallThickness, (value) => setState((current) => ({ ...current, innerWallThickness: value })), 1)}
+          {field("outer-wall", "外墙厚度", state.outerWallThickness, (value) => setState((current) => ({ ...current, outerWallThickness: value })), 1)}
+          {field("snap", "自动吸附距离", state.snapDistanceMm, (value) => setState((current) => ({ ...current, snapDistanceMm: value })), 0)}
+          <button type="button" onClick={resetPlan} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-slate-300 text-sm font-semibold text-slate-700"><RotateCcw size={16} />重置平面</button>
+        </section>
+        <section className={`rounded-xl border p-4 ${errors.length > 0 || invalidDrafts.size > 0 ? "border-rose-200 bg-rose-50" : warnings.length > 0 ? "border-amber-200 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}>
+          <h3 className="font-semibold text-slate-900">{errors.length > 0 || invalidDrafts.size > 0 ? "几何输入无效" : warnings.length > 0 ? "几何有效，但需要确认" : "几何与支承拓扑有效"}</h3>
+          {invalidDrafts.size > 0 && <p className="mt-2 text-sm text-rose-800">有 {invalidDrafts.size} 个数字输入仍为空或非法，旧数值不会被当作当前输入提交。</p>}
+          <ul className="mt-2 space-y-1 text-xs leading-5">{issues.map((issue) => <li key={`${issue.code}:${issue.message}`} className={issue.level === "error" ? "text-rose-800" : "text-amber-900"}>• {issue.message}</li>)}</ul>
+        </section>
+      </div>
+    ) : selectedSlab ? (
+      <section className="space-y-4">
+        <div className="flex items-center gap-2"><Grid2X2 size={18} className="text-blue-600" /><h3 className="font-semibold text-slate-900">板区精确参数</h3></div>
+        <label className="block"><span className="mb-1.5 block text-xs font-medium text-slate-600">板区名称</span><input value={selectedSlab.name} onChange={(event) => updateSlab({ name: event.target.value })} className="h-11 w-full rounded-xl border border-slate-300 px-3 text-sm" /></label>
+        <label className="block"><span className="mb-1.5 block text-xs font-medium text-slate-600">板区类型</span><select value={selectedSlab.type} onChange={(event) => updateSlab({ type: event.target.value as FloorSlabType })} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm">{SLAB_TYPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+        <div className="grid grid-cols-2 gap-3">{field(`${selectedSlab.id}:x`, "西南角 X", selectedSlab.x, (value) => updateSlab({ x: value }))}{field(`${selectedSlab.id}:y`, "西南角 Y", selectedSlab.y, (value) => updateSlab({ y: value }))}{field(`${selectedSlab.id}:w`, "东西向净尺寸", selectedSlab.width, (value) => updateSlab({ width: value }), 1)}{field(`${selectedSlab.id}:h`, "南北向净尺寸", selectedSlab.height, (value) => updateSlab({ height: value }), 1)}</div>
+      </section>
+    ) : selectedOpening ? (
+      <section className="space-y-4">
+        <div className="flex items-center gap-2"><DoorOpen size={18} className="text-rose-600" /><h3 className="font-semibold text-slate-900">洞口精确参数</h3></div>
+        <label className="block"><span className="mb-1.5 block text-xs font-medium text-slate-600">洞口名称</span><input value={selectedOpening.name} onChange={(event) => updateOpening({ name: event.target.value })} className="h-11 w-full rounded-xl border border-slate-300 px-3 text-sm" /></label>
+        <label className="block"><span className="mb-1.5 block text-xs font-medium text-slate-600">洞口类型</span><select value={selectedOpening.type} onChange={(event) => updateOpening({ type: event.target.value as FloorOpeningType })} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm">{OPENING_TYPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+        <div className="grid grid-cols-2 gap-3">{field(`${selectedOpening.id}:x`, "西南角 X", selectedOpening.x, (value) => updateOpening({ x: value }))}{field(`${selectedOpening.id}:y`, "西南角 Y", selectedOpening.y, (value) => updateOpening({ y: value }))}{field(`${selectedOpening.id}:w`, "东西向尺寸", selectedOpening.width, (value) => updateOpening({ width: value }), 1)}{field(`${selectedOpening.id}:h`, "南北向尺寸", selectedOpening.height, (value) => updateOpening({ height: value }), 1)}</div>
+        <p className="rounded-xl bg-rose-50 p-3 text-xs leading-5 text-rose-800">洞口会从与其重叠的板区中扣除。楼梯间仅表示无普通水平楼板区域。</p>
+      </section>
+    ) : <p className="text-sm text-slate-500">请从左侧Navigator或Canvas选择板区/洞口。</p>
+  ) : selection?.kind === "opening" ? (
+    <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">洞口不设置普通{stage === "bottom" ? "地筋" : "面筋"}规格。<button type="button" onClick={() => changeStage("plan")} className="mt-3 block min-h-11 w-full rounded-xl border border-amber-300 bg-white font-semibold">返回楼层编辑洞口</button></div>
+  ) : stage === "bottom" ? (
+    <div className="space-y-4">{bottomCalculation.errors.length > 0 && <section className="rounded-xl border border-rose-200 bg-rose-50 p-3"><strong className="text-sm text-rose-900">地筋问题</strong><ul className="mt-2 space-y-1 text-xs leading-5 text-rose-800">{bottomCalculation.errors.map((issue) => <li key={`${issue.code}:${issue.message}`}>• {issue.message}</li>)}</ul></section>}<FloorBottomSettingsPanel plan={state} bottom={bottomState} selectedSlab={selectedSlab} selectedRoleDomain={selectedRoleDomain} roleState={roleState} roleReviewRequired={bottomRoleReviewRequired} onChange={setBottomState} onRoleStateChange={setRoleState} onConfirmRoleReview={() => setBottomRoleReviewRequired(false)} onValidityChange={setBottomDraftValidity} section={inspectorTab === "role" ? "role" : inspectorTab === "slab" ? "slab" : "defaults"} /></div>
+  ) : (
+    <div className="space-y-4">{topCalculation.errors.length > 0 && <section className="rounded-xl border border-rose-200 bg-rose-50 p-3"><strong className="text-sm text-rose-900">面筋问题</strong><ul className="mt-2 space-y-1 text-xs leading-5 text-rose-800">{topCalculation.errors.map((issue) => <li key={`${issue.code}:${issue.message}`}>• {issue.message}</li>)}</ul></section>}<FloorTopSettingsPanel plan={state} top={topState} selectedSlab={selectedSlab} selectedRoleDomain={selectedRoleDomain} roleState={roleState} roleReviewRequired={topRoleReviewRequired} calculation={topCalculation} onChange={setTopState} onRoleStateChange={setRoleState} onConfirmRoleReview={() => setTopRoleReviewRequired(false)} onValidityChange={setTopDraftValidity} section={inspectorTab === "role" ? "role" : inspectorTab === "slab" ? "slab" : inspectorTab === "through" ? "through" : "defaults"} selectedThroughPathId={selectedThroughPathId} onSelectThroughPath={setSelectedThroughPathId} /></div>
+  );
+
+  const inspector = <FloorWorkspaceInspector title={inspectorTitle} subtitle={inspectorSubtitle} tabs={inspectorTabs} activeTab={inspectorTab} issueCount={inspectorIssueCount} onTabChange={setInspectorTab}>{inspectorContent}</FloorWorkspaceInspector>;
+  const navigator = <FloorWorkspaceNavigator stage={stage} plan={state} selection={selection} geometryIssues={issues} bottomOverrides={new Set(Object.keys(bottomState.slabOverrides))} topOverrides={new Set(Object.keys(topState.slabOverrides))} roleItems={roleItems} throughItems={throughItems} selectedThroughPathId={selectedThroughPathId} onSelect={selectWorkspaceObject} onSelectRole={selectRoleItem} onSelectThrough={selectThroughPath} onAddSlab={addSlab} onAddOpening={addOpening} onDuplicate={duplicateSelected} onDelete={deleteSelected} onAddThrough={addThroughPath} />;
 
   return (
-    <main className="mx-auto max-w-[1500px] px-4 py-8 sm:px-6 lg:px-8">
-      <header className="mb-6">
-        <p className="text-sm font-semibold text-blue-600">FloorRebarCalculator · Geometry V2.1 + Floor 2D V2.2 + Bottom V1.1 + Top/Through V1 + Role V1.1 + BOM/Print V1</p>
-        <h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-950">整层楼板板筋系统</h1>
-        <p className="mt-3 max-w-4xl text-sm leading-6 text-slate-600">当前支持整层楼板几何、洞口、支承拓扑、主副筋、地筋、普通面筋、面筋通墙、整层下料单及冻结快照打印。</p>
+    <main className="mx-auto max-w-[1500px] px-4 py-4 sm:px-6 lg:px-8 lg:py-5">
+      <header className="mb-3">
+        <h1 className="text-2xl font-bold tracking-tight text-slate-950 xl:text-3xl">整层楼板板筋系统</h1>
+        <p className="mt-1 hidden truncate text-xs font-semibold text-blue-600 xl:block">FloorRebarCalculator · Multi-Block Workspace V1 + Tablet Workspace V1 · Geometry V2.1 + Floor 2D V2.2 + Bottom/Top/Through + BOM/Print V1</p>
       </header>
-      <CalculatorModeNav />
-      <WorkflowTabs stage={stage} onChange={setStage} />
+      <WorkflowTabs stage={stage} statuses={workflowStatuses} onChange={changeStage} />
 
       {stage === "bom" ? (
         <FloorBomPanel
@@ -637,122 +852,41 @@ export default function FloorRebarCalculator() {
           topRoleReviewRequired={topRoleReviewRequired}
           invalidDraftCount={invalidDrafts.size + invalidBottomDrafts.size + invalidTopDrafts.size}
         />
-      ) : (
-      <>
-        <div className="grid gap-5 xl:grid-cols-[minmax(0,1.65fr)_minmax(360px,0.75fr)]">
-        <section className="min-w-0 space-y-4">
-          {stage === "plan" && <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
-            <button type="button" onClick={addSlab} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"><Plus size={17} />添加板区</button>
-            <button type="button" onClick={addOpening} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700"><DoorOpen size={17} />添加洞口</button>
-            <button type="button" onClick={duplicateSelected} disabled={!selection} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-40"><Copy size={16} />复制所选</button>
-            <button type="button" onClick={deleteSelected} disabled={!selection || (selection.kind === "slab" && state.slabs.length <= 1)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-rose-200 bg-white px-4 py-2 text-sm font-semibold text-rose-700 disabled:opacity-40"><Trash2 size={16} />删除所选</button>
-            <button type="button" onClick={() => {
-              if (!window.confirm("确定恢复Geometry V2默认数据吗？当前整层草稿将被替换。")) return;
-              const next = cloneDefaultState();
-              setState(next); setRoleState(cloneDefaultRoleState()); setSelection({ kind: "slab", id: next.slabs[0].id }); setSelectedBoundaryId(null); setInvalidDrafts(new Set()); setInputRevision((value) => value + 1); window.localStorage.removeItem(FLOOR_DRAFT_KEY); window.localStorage.removeItem(FLOOR_REBAR_ROLE_STORAGE_KEY);
-            }} className="col-span-2 inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 sm:col-span-1"><RotateCcw size={16} />重置平面</button>
-          </div>}
-
-          <FloorCanvas state={state} selection={selection} selectedBoundaryId={selectedBoundaryId} onSelect={(next) => { setSelection(next); setSelectedBoundaryId(null); }} onSelectBoundary={selectAtomicBoundary} onMove={moveObject} onDragStateChange={setDragActive} bottomCalculation={stage === "bottom" ? bottomCalculation : undefined} topCalculation={stage === "top" ? topCalculation : undefined} roleDomains={roleDomains} roleState={roleState} />
-
-          {stage === "plan" && <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-            {[["板区", state.slabs.length, "slate"], ["洞口", state.openings.length, "rose"], ["建筑外边", stats.exterior, "slate"], ["内墙段", stats.inner, "blue"], ["连续板边", stats.continuous, "cyan"], ["洞口边", stats.opening, "amber"]].map(([label, value, tone]) => (
-              <div key={String(label)} className={`rounded-2xl border p-4 ${tone === "blue" ? "border-blue-200 bg-blue-50" : tone === "rose" ? "border-rose-200 bg-rose-50" : tone === "cyan" ? "border-cyan-200 bg-cyan-50" : tone === "amber" ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-white"}`}><span className="text-xs text-slate-600">{label}</span><strong className="mt-1 block text-2xl text-slate-950">{value}</strong></div>
-            ))}
-          </div>}
-        </section>
-
-        <aside className="space-y-4 xl:sticky xl:top-20 xl:self-start">
-          {stage === "bottom" ? (
-            <FloorBottomSettingsPanel
-              plan={state}
-              bottom={bottomState}
-              selectedSlab={selectedSlab}
-              selectedRoleDomain={selectedRoleDomain}
-              roleState={roleState}
-              roleReviewRequired={bottomRoleReviewRequired}
-              onChange={setBottomState}
-              onRoleStateChange={setRoleState}
-              onConfirmRoleReview={() => setBottomRoleReviewRequired(false)}
-              onValidityChange={setBottomDraftValidity}
-            />
-          ) : stage === "top" ? (
-            <FloorTopSettingsPanel
-              plan={state}
-              top={topState}
-              selectedSlab={selectedSlab}
-              selectedRoleDomain={selectedRoleDomain}
-              roleState={roleState}
-              roleReviewRequired={topRoleReviewRequired}
-              calculation={topCalculation}
-              onChange={setTopState}
-              onRoleStateChange={setRoleState}
-              onConfirmRoleReview={() => setTopRoleReviewRequired(false)}
-              onValidityChange={setTopDraftValidity}
-            />
-          ) : <>
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center gap-2"><House size={18} className="text-blue-600" /><h2 className="font-semibold text-slate-900">净跨拓扑设置</h2></div>
-            <p className="mt-2 text-xs leading-5 text-slate-500">X/Y仅表达板区净跨拼接，不含墙厚；墙厚通过支承拓扑单独保存。</p>
-            <div className="mt-4 grid gap-4 sm:grid-cols-3 xl:grid-cols-1">
-              {field("inner-wall", "内墙厚度", state.innerWallThickness, (value) => setState((current) => ({ ...current, innerWallThickness: value })), 1)}
-              {field("outer-wall", "外墙厚度", state.outerWallThickness, (value) => setState((current) => ({ ...current, outerWallThickness: value })), 1)}
-              {field("snap", "自动吸附距离", state.snapDistanceMm, (value) => setState((current) => ({ ...current, snapDistanceMm: value })), 0)}
-            </div>
-          </section>
-
-          {selectedSlab && (
-            <section className="rounded-2xl border border-blue-200 bg-white p-5 shadow-sm">
-              <div className="flex items-center gap-2"><Grid2X2 size={18} className="text-blue-600" /><h2 className="font-semibold text-slate-900">板区精确参数</h2></div>
-              <div className="mt-4 space-y-4">
-                <label className="block"><span className="mb-1.5 block text-xs font-medium text-slate-600">板区名称</span><input value={selectedSlab.name} onChange={(event) => updateSlab({ name: event.target.value })} className="h-11 w-full rounded-xl border border-slate-300 px-3 text-sm" /></label>
-                <label className="block"><span className="mb-1.5 block text-xs font-medium text-slate-600">板区类型</span><select value={selectedSlab.type} onChange={(event) => updateSlab({ type: event.target.value as FloorSlabType })} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm">{SLAB_TYPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-                <div className="grid grid-cols-2 gap-3">
-                  {field(`${selectedSlab.id}:x`, "西南角 X", selectedSlab.x, (value) => updateSlab({ x: value }))}
-                  {field(`${selectedSlab.id}:y`, "西南角 Y", selectedSlab.y, (value) => updateSlab({ y: value }))}
-                  {field(`${selectedSlab.id}:w`, "东西向净尺寸", selectedSlab.width, (value) => updateSlab({ width: value }), 1)}
-                  {field(`${selectedSlab.id}:h`, "南北向净尺寸", selectedSlab.height, (value) => updateSlab({ height: value }), 1)}
-                </div>
-              </div>
-            </section>
-          )}
-
-          {selectedOpening && (
-            <section className="rounded-2xl border border-rose-200 bg-white p-5 shadow-sm">
-              <div className="flex items-center gap-2"><DoorOpen size={18} className="text-rose-600" /><h2 className="font-semibold text-slate-900">洞口精确参数</h2></div>
-              <div className="mt-4 space-y-4">
-                <label className="block"><span className="mb-1.5 block text-xs font-medium text-slate-600">洞口名称</span><input value={selectedOpening.name} onChange={(event) => updateOpening({ name: event.target.value })} className="h-11 w-full rounded-xl border border-slate-300 px-3 text-sm" /></label>
-                <label className="block"><span className="mb-1.5 block text-xs font-medium text-slate-600">洞口类型</span><select value={selectedOpening.type} onChange={(event) => updateOpening({ type: event.target.value as FloorOpeningType })} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm">{OPENING_TYPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-                <div className="grid grid-cols-2 gap-3">
-                  {field(`${selectedOpening.id}:x`, "西南角 X", selectedOpening.x, (value) => updateOpening({ x: value }))}
-                  {field(`${selectedOpening.id}:y`, "西南角 Y", selectedOpening.y, (value) => updateOpening({ y: value }))}
-                  {field(`${selectedOpening.id}:w`, "东西向尺寸", selectedOpening.width, (value) => updateOpening({ width: value }), 1)}
-                  {field(`${selectedOpening.id}:h`, "南北向尺寸", selectedOpening.height, (value) => updateOpening({ height: value }), 1)}
-                </div>
-                <p className="rounded-xl bg-rose-50 p-3 text-xs leading-5 text-rose-800">洞口会从与其重叠的板区中扣除。楼梯间仅表示无普通水平楼板区域，不表示楼梯平台。</p>
-              </div>
-            </section>
-          )}
-
-          <BoundaryPanel state={state} selection={selection} segments={selectedSegments} selectedBoundaryId={selectedBoundaryId} onSelectBoundary={setSelectedBoundaryId} onSetSupport={setSegmentSupport} />
-
-          <section className={`rounded-2xl border p-5 ${errors.length > 0 || invalidDrafts.size > 0 ? "border-rose-200 bg-rose-50" : warnings.length > 0 ? "border-amber-200 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}>
-            <h2 className="font-semibold text-slate-900">{errors.length > 0 || invalidDrafts.size > 0 ? "几何输入无效" : warnings.length > 0 ? "几何有效，但需要确认" : "几何与支承拓扑有效"}</h2>
-            {invalidDrafts.size > 0 && <p className="mt-2 text-sm text-rose-800">有 {invalidDrafts.size} 个数字输入仍为空或非法，旧数值不会被当作当前输入提交。</p>}
-            <ul className="mt-2 space-y-1 text-sm text-slate-700">{issues.map((issue) => <li key={`${issue.code}:${issue.message}`} className={issue.level === "error" ? "text-rose-800" : "text-amber-900"}>• {issue.message}</li>)}</ul>
-            {issues.length === 0 && invalidDrafts.size === 0 && <p className="mt-2 text-sm leading-6 text-emerald-800">系统已区分建筑外边、共享板边、连续板边与洞口裁断边。</p>}
-          </section>
-
-          <section className="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm leading-6 text-slate-700">
-            <div className="flex items-start gap-2"><Info size={18} className="mt-0.5 shrink-0 text-blue-600" /><div><strong>几何职责</strong><p className="mt-1">楼层页只维护Geometry与Support。地筋和普通面筋页基于同一Atomic Boundary生成Domain、理论BarLine、Opening裁断后的Piece和分层料单。</p></div></div>
-          </section>
-          </>}
-        </aside>
+      ) : <>
+        <div className="mb-2 flex items-center gap-2 xl:hidden">
+          <button type="button" onClick={() => setNavigatorOpen(true)} className="inline-flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 text-left text-sm font-semibold text-slate-800"><Menu size={17} /><span className="min-w-0 flex-1 truncate">当前：{selectedSlab?.name ?? selectedOpening?.name ?? selectedThroughPath?.name ?? "请选择对象"}</span><ChevronRight size={16} /></button>
+          <button type="button" onClick={() => setInspectorOpen(true)} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white md:hidden"><Settings2 size={17} />编辑</button>
+          <button type="button" aria-expanded={tabletInspectorExpanded} onClick={() => setTabletInspectorExpanded((value) => !value)} className="hidden min-h-11 items-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white md:inline-flex lg:hidden"><Settings2 size={17} />{tabletInspectorExpanded ? "收起编辑" : "展开编辑"}</button>
         </div>
-        {stage === "bottom" && <FloorBottomResults plan={state} calculation={bottomCalculation} invalidDraftCount={invalidDrafts.size + invalidBottomDrafts.size} />}
-        {stage === "top" && <FloorTopResults plan={state} calculation={topCalculation} invalidDraftCount={invalidDrafts.size + invalidTopDrafts.size} />}
-      </>
-      )}
+
+        <div className={`grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_350px] ${navigatorCollapsed ? "xl:grid-cols-[52px_minmax(0,1fr)_370px]" : "xl:grid-cols-[240px_minmax(0,1fr)_370px]"}`} data-testid="floor-workspace-grid">
+          <aside className="relative hidden min-h-[560px] overflow-hidden rounded-2xl border border-slate-200 bg-white xl:sticky xl:top-20 xl:col-start-1 xl:row-start-1 xl:block xl:h-[calc(100dvh-20rem)] xl:max-h-[calc(100dvh-20rem)]">
+            <button type="button" aria-label={navigatorCollapsed ? "展开左侧导航" : "收起左侧导航"} onClick={() => setNavigatorCollapsed((value) => !value)} className="absolute right-1 top-1 z-10 flex size-10 items-center justify-center rounded-xl bg-white/90 text-slate-600 shadow-sm">{navigatorCollapsed ? <ChevronRight size={17} /> : <ChevronLeft size={17} />}</button>
+            {navigatorCollapsed ? <FloorWorkspaceNavigator compact stage={stage} plan={state} selection={selection} geometryIssues={issues} bottomOverrides={new Set(Object.keys(bottomState.slabOverrides))} topOverrides={new Set(Object.keys(topState.slabOverrides))} roleItems={roleItems} throughItems={throughItems} selectedThroughPathId={selectedThroughPathId} onSelect={selectWorkspaceObject} onSelectRole={selectRoleItem} onSelectThrough={selectThroughPath} onAddSlab={addSlab} onAddOpening={addOpening} onDuplicate={duplicateSelected} onDelete={deleteSelected} onAddThrough={addThroughPath} /> : navigator}
+          </aside>
+
+          <section className="min-w-0 space-y-3 md:col-start-1 md:row-start-1 lg:col-start-1 lg:row-start-1 xl:col-start-2">
+            <FloorCanvas key={canvasFocusRequest?.key ?? "floor-canvas"} state={state} selection={selection} selectedBoundaryId={selectedBoundaryId} onSelect={(next) => { setSelection(next); setSelectedBoundaryId(null); setSelectedThroughPathId(null); setHighlightedRoleDomainId(null); if (next) setInspectorTab(stage === "plan" ? "object" : "slab"); }} onSelectBoundary={selectAtomicBoundary} onMove={moveObject} onDragStateChange={setDragActive} bottomCalculation={stage === "bottom" ? bottomCalculation : undefined} topCalculation={stage === "top" ? topCalculation : undefined} roleDomains={roleDomains} roleState={roleState} highlightedRoleDomainId={highlightedRoleDomainId} highlightedThroughPathId={selectedThroughPathId} initialFitMode={canvasFocusRequest?.mode} />
+            {stage === "plan" && <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] text-slate-600 lg:hidden">{[["板区", state.slabs.length], ["洞口", state.openings.length], ["建筑外边", stats.exterior], ["内墙", stats.inner], ["连续板边", stats.continuous], ["洞口边", stats.opening]].map(([label, value]) => <span key={String(label)} className="rounded-full bg-slate-100 px-2.5 py-1"><strong className="text-slate-900">{value}</strong> {label}</span>)}</div>}
+            <button type="button" onClick={() => setInspectorOpen(true)} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 text-sm font-semibold text-white md:hidden"><Settings2 size={17} />编辑当前对象</button>
+          </section>
+
+          {inspectorOpen && <button type="button" aria-label="关闭属性面板遮罩" onClick={() => setInspectorOpen(false)} className="fixed inset-0 z-[60] bg-slate-950/40 md:hidden" />}
+          <aside className={`${inspectorOpen ? "fixed inset-x-0 bottom-0 z-[70] block max-h-[82dvh] overflow-hidden rounded-t-3xl" : "hidden"} ${tabletInspectorExpanded ? "md:block" : "md:hidden lg:block"} border border-slate-200 bg-white shadow-2xl md:relative md:top-auto md:z-auto md:col-start-1 md:row-start-3 md:max-h-[62dvh] md:min-h-0 md:rounded-2xl md:shadow-none lg:sticky lg:top-20 lg:col-start-2 lg:row-start-1 lg:h-[calc(100dvh-20.5rem)] lg:max-h-[calc(100dvh-20.5rem)] lg:min-h-[440px] xl:col-start-3 xl:h-[calc(100dvh-20rem)] xl:max-h-[calc(100dvh-20rem)] xl:min-h-[560px]`}>
+            <div className="flex min-h-14 items-center justify-between border-b border-slate-200 px-4 md:hidden"><strong className="text-sm text-slate-950">编辑：{inspectorTitle}</strong><button type="button" onClick={() => setInspectorOpen(false)} className="min-h-11 rounded-xl px-3 text-sm font-semibold text-slate-600">关闭</button></div>
+            <div className="max-h-[calc(82dvh-3.5rem)] overflow-y-auto pb-[max(16px,env(safe-area-inset-bottom))] md:h-full md:max-h-none md:overflow-hidden md:pb-0">{inspector}</div>
+          </aside>
+
+          <div className="min-w-0 md:col-start-1 md:row-start-2 lg:col-span-2 lg:row-start-2 xl:col-span-3">
+            <FloorWorkspaceSummary stage={stage} bottom={bottomCalculation} top={topCalculation} geometryErrorCount={errors.length + invalidDrafts.size} onShowDetails={() => setDetailsExpanded((value) => !value)} onShowIssues={() => { if (stage === "plan") { setInspectorTab("floor"); setInspectorOpen(true); setTabletInspectorExpanded(true); } else { setDetailsExpanded(true); } }} />
+          </div>
+        </div>
+
+        {detailsExpanded && stage === "bottom" && <FloorBottomResults plan={state} calculation={bottomCalculation} invalidDraftCount={invalidDrafts.size + invalidBottomDrafts.size} />}
+        {detailsExpanded && stage === "top" && <FloorTopResults plan={state} calculation={topCalculation} invalidDraftCount={invalidDrafts.size + invalidTopDrafts.size} />}
+
+        <FloorWorkspaceDrawer open={navigatorOpen} title={stage === "plan" ? "楼层对象" : stage === "bottom" ? "地筋导航" : "面筋导航"} side="left" onClose={() => setNavigatorOpen(false)}>{navigator}</FloorWorkspaceDrawer>
+      </>}
       <p className="mt-5 text-xs text-slate-500">当前显示边界 {displays.length} 段；正式板筋计算使用原子边界 {atomic.length} 段。显示段ID不会用于保存支承或钢筋业务规则。</p>
     </main>
   );

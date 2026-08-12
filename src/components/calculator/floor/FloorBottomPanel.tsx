@@ -113,6 +113,7 @@ export function FloorBottomSettingsPanel({
   onRoleStateChange,
   onConfirmRoleReview,
   onValidityChange,
+  section = "all",
 }: {
   plan: FloorPlanState;
   bottom: FloorBottomState;
@@ -124,6 +125,7 @@ export function FloorBottomSettingsPanel({
   onRoleStateChange: (state: FloorRebarRoleState) => void;
   onConfirmRoleReview: () => void;
   onValidityChange: (key: string, valid: boolean) => void;
+  section?: "all" | "role" | "defaults" | "slab";
 }) {
   const updateDefault = (patch: Partial<FloorBottomDefaults>) => {
     onChange({ ...bottom, defaults: { ...bottom.defaults, ...patch } });
@@ -158,7 +160,7 @@ export function FloorBottomSettingsPanel({
 
   return (
     <div className="space-y-4">
-      <FloorRolePanel
+      {(section === "all" || section === "role") && <FloorRolePanel
         plan={plan}
         domain={selectedRoleDomain}
         roleState={roleState}
@@ -166,8 +168,8 @@ export function FloorBottomSettingsPanel({
         reviewLabel="地筋"
         onChange={onRoleStateChange}
         onConfirmReview={onConfirmRoleReview}
-      />
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      />}
+      {(section === "all" || section === "defaults") && <section className={section === "all" ? "rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" : "space-y-4"}>
         <div className="flex items-center gap-2"><Layers3 size={18} className="text-blue-600" /><h2 className="font-semibold text-slate-900">整层地筋默认规格</h2></div>
         <p className="mt-2 text-xs leading-5 text-slate-500">系统按当前连续楼板区域的净跨自动判断：短跨方向为主筋，长跨方向为副筋。间距仍按东西、南北方向设置。</p>
         <label className="mt-4 block">
@@ -179,23 +181,23 @@ export function FloorBottomSettingsPanel({
         <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
           {defaultsFields("bottom:default", bottom.defaults, updateDefault, onValidityChange)}
         </div>
-      </section>
+      </section>}
 
-      <section className="rounded-2xl border border-blue-200 bg-white p-5 shadow-sm">
+      {(section === "all" || section === "slab") && <section className={section === "all" ? "rounded-2xl border border-blue-200 bg-white p-5 shadow-sm" : "space-y-4"}>
         <h2 className="font-semibold text-slate-900">板区局部规格</h2>
         {!selectedSlab && <p className="mt-2 text-sm text-slate-500">请在平面图中选择板区。洞口不设置普通地筋规格。</p>}
         {selectedSlab && (
           <div className="mt-3 space-y-4">
             <p className="text-sm font-medium text-blue-800">当前板区：{selectedSlab.name}</p>
-            <label className="flex min-h-11 items-center gap-3 text-sm font-medium text-slate-700">
-              <input type="checkbox" checked={!custom} onChange={(event) => setOverrideEnabled(!event.target.checked)} className="h-5 w-5 rounded border-slate-300" />
-              使用整层默认
-            </label>
+            <div className="grid grid-cols-2 rounded-xl border border-slate-200 bg-slate-50 p-1" aria-label="地筋规格来源">
+              <button type="button" aria-pressed={!custom} onClick={() => setOverrideEnabled(false)} className={`min-h-11 rounded-lg px-2 text-xs font-semibold ${!custom ? "bg-white text-blue-700 shadow-sm" : "text-slate-600"}`}>整层默认</button>
+              <button type="button" aria-pressed={custom} onClick={() => setOverrideEnabled(true)} className={`min-h-11 rounded-lg px-2 text-xs font-semibold ${custom ? "bg-blue-600 text-white" : "text-slate-600"}`}>局部规格</button>
+            </div>
             {custom && defaultsFields(`bottom:${selectedSlab.id}`, resolveFloorBottomDefaults(bottom, selectedSlab.id), updateOverride, onValidityChange)}
           </div>
         )}
         <p className="mt-3 text-xs leading-5 text-slate-500">当前楼层共 {plan.slabs.length} 个板区；同一连续 Domain 内同方向的最终规格必须一致。</p>
-      </section>
+      </section>}
     </div>
   );
 }

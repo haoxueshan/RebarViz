@@ -31,7 +31,7 @@ test("Floor 2D V2.2近错位在图中警示并阻止正式Piece与打印", async
   }, { draftKey: DRAFT_KEY, bottomKey: BOTTOM_KEY, topKey: TOP_KEY, roleKey: ROLE_KEY });
   await page.reload();
 
-  await expect(page.getByText(/相差0\.5mm/).first()).toBeVisible();
+  await expect(page.getByText(/0\.5mm/).first()).toBeVisible();
   await expect(page.locator("[data-near-miss]")).toHaveCount(1);
   await page.getByRole("button", { name: "地筋", exact: true }).click();
   await expect(page.getByText("地筋结果无效")).toBeVisible();
@@ -141,7 +141,7 @@ test("正式普通Piece和Through Piece均可点击检查，远端洞口不压�
   await expect(page.getByText(/有1个洞口位于楼板范围外/)).toBeVisible();
   await page.getByRole("button", { name: "查看全部" }).click();
   await expect(page.locator('svg[data-floor-canvas-fit="all"]')).toBeVisible();
-  await page.getByRole("button", { name: "主体视图" }).click();
+  await page.getByRole("button", { name: "适合楼层" }).click();
 
   await page.getByRole("button", { name: /3\. 面筋/ }).click();
   await expect(page.getByText("正式面筋结果有效")).toBeVisible();

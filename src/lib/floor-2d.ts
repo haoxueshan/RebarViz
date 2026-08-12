@@ -1,6 +1,6 @@
 import type { FloorOpening, FloorPlanState } from "./floor-plan";
 
-export type FloorCanvasFitMode = "floor" | "all";
+export type FloorCanvasFitMode = "floor" | "all" | "selection" | "domain";
 
 export type Floor2dBounds = {
   minX: number;

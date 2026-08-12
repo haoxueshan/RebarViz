@@ -212,10 +212,14 @@ test.describe("Floor Print V1整层冻结快照打印", () => {
     await page.getByRole("button", { name: /3\. 面筋/ }).click();
     await page.getByRole("button", { name: "新建通墙路径" }).click();
     const pathCard = page.locator("[data-through-path-id]").first();
+    await pathCard.getByRole("button", { name: "编辑经过板区" }).click();
+    await pathCard.getByLabel("内走廊", { exact: true }).check();
     await pathCard.getByLabel("房间C", { exact: true }).check();
+    await pathCard.getByRole("button", { name: "完成选择" }).click();
     await pathCard.getByRole("button", { name: "使用最大共同范围" }).click();
     await pathCard.getByLabel("启用", { exact: true }).check();
     await expect(page.getByText("正式面筋结果有效")).toBeVisible();
+    await page.getByRole("button", { name: /详细料单/ }).click();
     await expect(page.getByText("13.220m").first()).toBeVisible();
     await expect(page.getByText("T01", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("通墙面筋 · 通墙01", { exact: true }).first()).toBeVisible();
@@ -247,5 +251,34 @@ test.describe("Floor Print V1整层冻结快照打印", () => {
     await page.reload();
     const after = await page.evaluate((id) => JSON.parse(sessionStorage.getItem(`rebarviz:floor-print:snapshot:${id}`) ?? "null"), snapshotId);
     expect(after).toEqual(frozen);
+  });
+
+  test("Tablet print dialog stays within portrait and landscape viewports", async ({ page }) => {
+    for (const viewport of [
+      { width: 768, height: 1024 },
+      { width: 1024, height: 768 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await openFloorBom(page, { width: 4200, height: 3600 });
+      await page.getByTestId("open-floor-print-dialog").click();
+
+      const dialog = page.getByTestId("floor-print-dialog");
+      await expect(dialog).toBeVisible();
+      await expect(page.getByTestId("generate-floor-print-preview")).toBeVisible();
+      const metrics = await page.evaluate(() => {
+        const element = document.querySelector<HTMLElement>('[data-testid="floor-print-dialog"]');
+        const rect = element?.getBoundingClientRect();
+        return {
+          pageOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          dialogTop: rect?.top ?? -1,
+          dialogBottom: rect?.bottom ?? Number.POSITIVE_INFINITY,
+          viewportHeight: window.innerHeight,
+        };
+      });
+      expect(metrics.pageOverflow).toBeLessThanOrEqual(0);
+      expect(metrics.dialogTop).toBeGreaterThanOrEqual(0);
+      expect(metrics.dialogBottom).toBeLessThanOrEqual(metrics.viewportHeight + 1);
+      await page.getByLabel("关闭打印设置").click();
+    }
   });
 });

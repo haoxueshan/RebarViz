@@ -1,6 +1,6 @@
 "use client";
 
-import { Eye, Move, TriangleAlert } from "lucide-react";
+import { Eye, Focus, Layers3, Move, TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   buildFloorAtomicBoundarySegments,
@@ -139,6 +139,9 @@ export function FloorCanvas({
   topCalculation,
   roleDomains = [],
   roleState,
+  highlightedRoleDomainId,
+  highlightedThroughPathId,
+  initialFitMode = "floor",
 }: {
   state: FloorPlanState;
   selection: FloorSelection;
@@ -152,13 +155,26 @@ export function FloorCanvas({
   topCalculation?: FloorTopCalculation;
   roleDomains?: readonly FloorRebarRoleDomain[];
   roleState?: FloorRebarRoleState;
+  highlightedRoleDomainId?: string | null;
+  highlightedThroughPathId?: string | null;
+  initialFitMode?: "floor" | "selection" | "domain";
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const dragRef = useRef<DragState | null>(null);
-  const [fitMode, setFitMode] = useState<FloorCanvasFitMode>("floor");
+  const [fitMode, setFitMode] = useState<FloorCanvasFitMode>(initialFitMode);
   const [svgWidthPx, setSvgWidthPx] = useState(SVG_WIDTH);
   const [selectedPieceId, setSelectedPieceId] = useState<string | null>(null);
-  const bounds = useMemo(() => calculateFloorCanvasBounds(state, fitMode), [fitMode, state]);
+  const highlightedRoleDomain = roleDomains.find((domain) => domain.id === highlightedRoleDomainId);
+  const bounds = useMemo(() => {
+    if (fitMode === "selection" && selection) {
+      const object = selection.kind === "slab"
+        ? state.slabs.find((slab) => slab.id === selection.id)
+        : state.openings.find((opening) => opening.id === selection.id);
+      if (object) return { minX: object.x, minY: object.y, maxX: object.x + object.width, maxY: object.y + object.height };
+    }
+    if (fitMode === "domain" && highlightedRoleDomain) return { minX: highlightedRoleDomain.minX, minY: highlightedRoleDomain.minY, maxX: highlightedRoleDomain.maxX, maxY: highlightedRoleDomain.maxY };
+    return calculateFloorCanvasBounds(state, fitMode === "all" ? "all" : "floor");
+  }, [fitMode, highlightedRoleDomain, selection, state]);
   const displayBoundaries = useMemo(() => buildFloorDisplayBoundarySegments(state), [state]);
   const atomicBoundaries = useMemo(() => buildFloorAtomicBoundarySegments(state), [state]);
   const atomicById = useMemo(() => new Map(atomicBoundaries.map((segment) => [segment.id, segment])), [atomicBoundaries]);
@@ -288,12 +304,15 @@ export function FloorCanvas({
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-3">
         <div className="min-w-0 flex-1">
           <h2 className="font-semibold text-slate-900">{topCalculation ? "整层面筋净跨路径" : bottomCalculation ? "整层地筋净跨路径" : "整层板区平面"}</h2>
-          <p className="mt-0.5 max-w-3xl text-xs leading-5 text-slate-500">图中钢筋线表示净跨位置关系；实际下料长度以料单/钢筋详情为准，已包含墙厚、端部增加及通墙中间墙厚。网格为净跨坐标辅助网格。</p>
+          <p className="mt-0.5 max-w-3xl text-xs leading-5 text-slate-500 lg:hidden">图中钢筋线表示净跨位置关系；实际下料长度以料单/钢筋详情为准，已包含墙厚、端部增加及通墙中间墙厚。网格为净跨坐标辅助网格。</p>
+          <p className="mt-0.5 hidden text-xs leading-5 text-slate-500 lg:block">净跨布置示意；下料长度以钢筋详情/料单为准。</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {uncoveredOpenings.length > 0 && <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-3 py-1 text-xs font-medium text-rose-700"><TriangleAlert size={13} /> 有{uncoveredOpenings.length}个洞口位于楼板范围外</span>}
           <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1" aria-label="画布取景范围">
-            <button type="button" onClick={() => setFitMode("floor")} aria-pressed={fitMode === "floor"} className={`min-h-11 rounded-lg px-3 text-xs font-semibold ${fitMode === "floor" ? "bg-white text-blue-700 shadow-sm" : "text-slate-600"}`}>主体视图</button>
+            <button type="button" onClick={() => setFitMode("floor")} aria-pressed={fitMode === "floor"} className={`min-h-11 rounded-lg px-3 text-xs font-semibold ${fitMode === "floor" ? "bg-white text-blue-700 shadow-sm" : "text-slate-600"}`}>适合楼层</button>
+            <button type="button" disabled={!selection} onClick={() => setFitMode("selection")} aria-pressed={fitMode === "selection"} className={`min-h-11 rounded-lg px-3 text-xs font-semibold disabled:opacity-40 ${fitMode === "selection" ? "bg-white text-blue-700 shadow-sm" : "text-slate-600"}`}><Focus size={13} className="mr-1 inline" />选中</button>
+            {highlightedRoleDomain && <button type="button" onClick={() => setFitMode("domain")} aria-pressed={fitMode === "domain"} className={`min-h-11 rounded-lg px-3 text-xs font-semibold ${fitMode === "domain" ? "bg-white text-indigo-700 shadow-sm" : "text-slate-600"}`}><Layers3 size={13} className="mr-1 inline" />区域</button>}
             <button type="button" onClick={() => setFitMode("all")} aria-pressed={fitMode === "all"} className={`min-h-11 rounded-lg px-3 text-xs font-semibold ${fitMode === "all" ? "bg-white text-blue-700 shadow-sm" : "text-slate-600"}`}><Eye size={13} className="mr-1 inline" />查看全部</button>
           </div>
           <span className="inline-flex min-h-10 items-center gap-1 rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700"><Move size={13} /> 可拖动</span>
@@ -302,7 +321,8 @@ export function FloorCanvas({
       <svg
         ref={svgRef}
         viewBox={`0 0 ${SVG_WIDTH} ${SVG_HEIGHT}`}
-        className="block h-auto w-full touch-none bg-white"
+        preserveAspectRatio="xMidYMid meet"
+        className="block h-[clamp(300px,54dvh,430px)] w-full select-none bg-white md:h-[clamp(380px,52dvh,500px)] lg:h-[clamp(330px,42dvh,460px)] xl:h-auto"
         role="img"
         aria-label="整层板区、洞口、正式钢筋Piece和支承关系布局预览"
         data-floor-canvas-fit={fitMode}
@@ -343,13 +363,14 @@ export function FloorCanvas({
         <g clipPath="url(#floor-plot-clip-v22)" data-floor-layer="slabs">
           {state.slabs.map((slab) => {
             const selected = selection?.kind === "slab" && selection.id === slab.id;
+            const domainHighlighted = Boolean(highlightedRoleDomain?.slabIds.includes(slab.id));
             return (
               <rect
                 key={slab.id}
                 x={toX(slab.x)} y={toY(slab.y + slab.height)}
                 width={Math.max(slab.width * scale, 1)} height={Math.max(slab.height * scale, 1)}
-                fill={slabFill(slab.type, selected)} stroke={selected ? "#2563eb" : "#94a3b8"} strokeWidth={selected ? 4 : 1.5}
-                className="cursor-move" role="button" aria-label={`选择板区 ${slab.name}`} tabIndex={0}
+                fill={slabFill(slab.type, selected)} fillOpacity={highlightedRoleDomain ? domainHighlighted ? 1 : 0.42 : 1} stroke={selected ? "#2563eb" : domainHighlighted ? "#4f46e5" : "#94a3b8"} strokeWidth={selected ? 4 : domainHighlighted ? 3 : 1.5}
+                className="cursor-move touch-none" role="button" aria-label={`选择板区 ${slab.name}`} tabIndex={0}
                 onPointerDown={(event) => beginDrag(event, { kind: "slab", id: slab.id }, slab)}
                 onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { setSelectedPieceId(null); onSelect({ kind: "slab", id: slab.id }); } }}
               />
@@ -360,7 +381,7 @@ export function FloorCanvas({
               key={`opening-fill-${opening.id}`}
               x={toX(opening.x)} y={toY(opening.y + opening.height)}
               width={Math.max(opening.width * scale, 1)} height={Math.max(opening.height * scale, 1)}
-              fill="url(#opening-hatch-v22)" stroke="transparent" className="cursor-move"
+              fill="url(#opening-hatch-v22)" stroke="transparent" className="cursor-move touch-none"
               role="button" aria-label={`选择洞口 ${opening.name}`} tabIndex={0}
               onPointerDown={(event) => beginDrag(event, { kind: "opening", id: opening.id }, opening)}
               onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { setSelectedPieceId(null); onSelect({ kind: "opening", id: opening.id }); } }}
@@ -374,7 +395,7 @@ export function FloorCanvas({
             const coordinates = pieceCoordinates(drawable);
             const topLayer = piece.layer === "top";
             const selected = selectedPiece?.id === piece.id;
-            return <line key={piece.id} {...coordinates} stroke={topLayer ? piece.direction === "x" ? "#0891b2" : "#047857" : piece.direction === "x" ? "#dc2626" : "#7c3aed"} strokeWidth={selected ? 5 : topLayer ? 2.8 : 2.4} strokeDasharray={topLayer ? "8 5" : undefined} strokeLinecap="round" />;
+            return <line key={piece.id} {...coordinates} opacity={highlightedThroughPathId ? 0.25 : 1} stroke={topLayer ? piece.direction === "x" ? "#0891b2" : "#047857" : piece.direction === "x" ? "#dc2626" : "#7c3aed"} strokeWidth={selected ? 5 : topLayer ? 2.8 : 2.4} strokeDasharray={topLayer ? "8 5" : undefined} strokeLinecap="round" />;
           })}
         </g>
         <g clipPath="url(#floor-plot-clip-v22)" data-floor-layer="normal-pieces-hit">
@@ -403,7 +424,8 @@ export function FloorCanvas({
           {throughPieces.map((drawable) => {
             const coordinates = pieceCoordinates(drawable);
             const selected = selectedPiece?.id === drawable.piece.id;
-            return <line key={drawable.piece.id} {...coordinates} stroke="#1d4ed8" strokeWidth={selected ? 7 : 5} strokeLinecap="round" />;
+            const pathSelected = !highlightedThroughPathId || drawable.piece.throughPathId === highlightedThroughPathId;
+            return <line key={drawable.piece.id} {...coordinates} opacity={pathSelected ? 1 : 0.18} stroke="#1d4ed8" strokeWidth={selected ? 7 : pathSelected && highlightedThroughPathId ? 6.5 : 5} strokeLinecap="round" />;
           })}
           {throughPieces.flatMap((drawable) => drawable.piece.intermediateBoundaryIds.flatMap((boundaryId) => {
             const boundary = atomicById.get(boundaryId);

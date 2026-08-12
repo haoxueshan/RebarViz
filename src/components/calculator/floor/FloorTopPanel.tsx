@@ -109,6 +109,9 @@ export function FloorTopSettingsPanel({
   onRoleStateChange,
   onConfirmRoleReview,
   onValidityChange,
+  section = "all",
+  selectedThroughPathId,
+  onSelectThroughPath,
 }: {
   plan: FloorPlanState;
   top: FloorTopState;
@@ -121,6 +124,9 @@ export function FloorTopSettingsPanel({
   onRoleStateChange: (state: FloorRebarRoleState) => void;
   onConfirmRoleReview: () => void;
   onValidityChange: (key: string, valid: boolean) => void;
+  section?: "all" | "role" | "defaults" | "slab" | "through";
+  selectedThroughPathId?: string | null;
+  onSelectThroughPath?: (id: string | null) => void;
 }) {
   const updateDefault = (patch: Partial<FloorTopDefaults>) => onChange({ ...top, defaults: { ...top.defaults, ...patch } });
   const setOverrideEnabled = (enabled: boolean) => {
@@ -142,7 +148,7 @@ export function FloorTopSettingsPanel({
 
   return (
     <div className="space-y-4">
-      <FloorRolePanel
+      {(section === "all" || section === "role") && <FloorRolePanel
         plan={plan}
         domain={selectedRoleDomain}
         roleState={roleState}
@@ -150,8 +156,8 @@ export function FloorTopSettingsPanel({
         reviewLabel="面筋"
         onChange={onRoleStateChange}
         onConfirmReview={onConfirmRoleReview}
-      />
-      <section className="rounded-2xl border border-cyan-200 bg-white p-5 shadow-sm">
+      />}
+      {(section === "all" || section === "defaults") && <section className={section === "all" ? "rounded-2xl border border-cyan-200 bg-white p-5 shadow-sm" : "space-y-4"}>
         <div className="flex items-center gap-2"><Layers3 size={18} className="text-cyan-700" /><h2 className="font-semibold text-slate-900">整层普通面筋默认规格</h2></div>
         <p className="mt-2 text-xs leading-5 text-slate-500">系统按当前连续楼板区域的净跨自动判断：短跨方向为主筋，长跨方向为副筋。增加端仍按真实东西、南北方向设置。</p>
         <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
@@ -163,27 +169,30 @@ export function FloorTopSettingsPanel({
         </div>
         <p className="mt-2 rounded-xl bg-cyan-50 p-3 text-xs leading-5 text-cyan-900">仅作用于实际内墙端；外墙端、洞口裁断端和连续板边不增加。X 向起点为西端、终点为东端；Y 向起点为南端、终点为北端。</p>
         <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">{defaultsFields("top:default", top.defaults, updateDefault, onValidityChange)}</div>
-      </section>
+      </section>}
 
-      <section className="rounded-2xl border border-cyan-200 bg-white p-5 shadow-sm">
+      {(section === "all" || section === "slab") && <section className={section === "all" ? "rounded-2xl border border-cyan-200 bg-white p-5 shadow-sm" : "space-y-4"}>
         <h2 className="font-semibold text-slate-900">板区局部面筋规格</h2>
         {!selectedSlab && <p className="mt-2 text-sm text-slate-500">请在平面图中选择板区。洞口不设置普通面筋规格。</p>}
         {selectedSlab && (
           <div className="mt-3 space-y-4">
             <p className="text-sm font-medium text-cyan-900">当前板区：{selectedSlab.name}</p>
-            <label className="flex min-h-11 items-center gap-3 text-sm font-medium text-slate-700"><input type="checkbox" checked={!custom} onChange={(event) => setOverrideEnabled(!event.target.checked)} className="h-5 w-5 rounded border-slate-300" />使用整层默认</label>
+            <div className="grid grid-cols-2 rounded-xl border border-slate-200 bg-slate-50 p-1" aria-label="面筋规格来源"><button type="button" aria-pressed={!custom} onClick={() => setOverrideEnabled(false)} className={`min-h-11 rounded-lg px-2 text-xs font-semibold ${!custom ? "bg-white text-cyan-800 shadow-sm" : "text-slate-600"}`}>整层默认</button><button type="button" aria-pressed={custom} onClick={() => setOverrideEnabled(true)} className={`min-h-11 rounded-lg px-2 text-xs font-semibold ${custom ? "bg-cyan-700 text-white" : "text-slate-600"}`}>局部规格</button></div>
             {custom && defaultsFields(`top:${selectedSlab.id}`, resolveFloorTopDefaults(top, selectedSlab.id), updateOverride, onValidityChange)}
           </div>
         )}
         <p className="mt-3 text-xs leading-5 text-slate-500">当前楼层共 {plan.slabs.length} 个板区；同一连续 Domain 内同方向的直径、间距和增加位置必须一致。</p>
-      </section>
-      <FloorTopThroughPanel
+      </section>}
+      {(section === "all" || section === "through") && <FloorTopThroughPanel
         plan={plan}
         top={top}
         calculation={calculation}
         onChange={onChange}
         onValidityChange={onValidityChange}
-      />
+        selectedPathId={selectedThroughPathId}
+        selectedSlabId={selectedSlab?.id}
+        onSelectPath={onSelectThroughPath}
+      />}
     </div>
   );
 }
