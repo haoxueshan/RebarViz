@@ -16,12 +16,12 @@ export type FloorWorkspaceRoleItem = {
   slabIds: string[];
   label: string;
   detail: string;
-  status: "valid" | "invalid";
+  status: "valid" | "warning" | "invalid";
 };
 
 export type FloorWorkspaceThroughItem = {
   id: string;
   name: string;
   detail: string;
-  status: "valid" | "invalid" | "disabled";
+  status: "valid" | "warning" | "invalid" | "disabled";
 };

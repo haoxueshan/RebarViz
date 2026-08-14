@@ -111,6 +111,24 @@ describe("Opening扣洞", () => {
     expect(floorOpeningsOverlap(first, overlap)).toBe(true);
     expect(validateFloorPlanV2(plan([slab({ id: "s", x: 0, y: 0, width: 5000, height: 5000 })], [first, overlap])).map((issue) => issue.code)).toContain("opening-overlap");
   });
+
+  it("洞口边与楼板边近错位返回opening-edge-near-slab-edge warning，真正对齐不报", () => {
+    const base = slab({ id: "a", x: 0, y: 0, width: 4000, height: 4000 });
+    const near = plan([base], [opening({ id: "near", x: 4003, y: 1000, width: 1000, height: 1000 })]);
+    const aligned = plan([base], [opening({ id: "aligned", x: 4000, y: 1000, width: 1000, height: 1000 })]);
+    const codes = validateFloorPlanV2(near).map((issue) => issue.code);
+    expect(codes).toContain("opening-edge-near-slab-edge");
+    expect(validateFloorPlanV2(aligned).map((issue) => issue.code)).not.toContain("opening-edge-near-slab-edge");
+    const issue = validateFloorPlanV2(near).find((item) => item.code === "opening-edge-near-slab-edge");
+    expect(issue?.level).toBe("warning");
+    expect(issue?.objectIds).toEqual(["near", "a"]);
+  });
+
+  it("洞口远离楼板边不产生near-miss，且不影响FLOOR_GEOMETRY_EPSILON_MM", () => {
+    const base = slab({ id: "a", x: 0, y: 0, width: 4000, height: 4000 });
+    const far = plan([base], [opening({ id: "far", x: 2000, y: 0, width: 1000, height: 1000 })]);
+    expect(validateFloorPlanV2(far).map((issue) => issue.code)).not.toContain("opening-edge-near-slab-edge");
+  });
 });
 
 describe("Geometry与Support分离", () => {

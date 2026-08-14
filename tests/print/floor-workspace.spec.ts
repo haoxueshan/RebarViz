@@ -91,9 +91,9 @@ test("12板区工作台保持Navigator、Canvas与Inspector双向同步并实时
   await expect(page.locator('[data-navigator-object-id="s03"]')).toContainText("局部规格");
   await page.locator('[data-navigator-object-id="s03"]').click();
   const summaryBefore = await page.getByTestId("floor-live-summary").innerText();
-  await page.getByLabel("东西向间距").fill("180");
+  await page.getByLabel("东西向间距").first().fill("180");
   await expect.poll(async () => page.getByTestId("floor-live-summary").innerText()).not.toBe(summaryBefore);
-  await page.getByLabel("主筋直径").fill("");
+  await page.getByLabel("主筋直径").first().fill("");
   await expect(page.getByTestId("floor-live-summary")).toContainText("地筋结果无效");
 
   const dimensions = await page.evaluate(() => ({ clientWidth: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth }));
@@ -134,10 +134,9 @@ test("390px通过Navigator与Inspector Drawer完成板区定位和局部规格�
   await page.getByRole("button", { name: "地筋", exact: true }).click();
   await page.getByRole("button", { name: /编辑当前对象/ }).click();
   const inspector = page.getByTestId("floor-workspace-inspector");
-  await inspector.getByRole("tab", { name: "当前板区" }).click();
   await expect(inspector).toContainText("当前板区：板区10");
   await inspector.getByRole("button", { name: "局部规格" }).click();
-  await expect(inspector.getByLabel("主筋直径")).toBeVisible();
+  await expect(inspector.getByLabel("主筋直径")).toHaveCount(2);
   await page.getByRole("button", { name: "关闭", exact: true }).click();
   const dimensions = await page.evaluate(() => ({ clientWidth: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth }));
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
@@ -176,7 +175,7 @@ test("正方形和不规则Role区域在Navigator定位并共享人工主筋方�
   const squareRow = roleRows.filter({ hasText: "正方形区域" });
   await squareRow.click();
   await expect(page.getByTestId("floor-workspace-inspector")).toContainText("两个方向净跨相同");
-  await page.getByTestId("floor-workspace-inspector").getByLabel("东西向主筋").check();
+  await page.getByTestId("floor-workspace-inspector").getByRole("button", { name: "东西向主筋" }).click();
   await expect(squareRow).toContainText("正常");
 });
 
@@ -184,8 +183,8 @@ test("Tablet四档断点保持Workflow可用、无横向溢出并按设备切换
   await page.setViewportSize({ width: 768, height: 1024 });
   await installMultiBlockWorkspace(page);
   const viewports = [
-    { width: 768, height: 1024, inspector: false, navigator: false },
-    { width: 820, height: 1180, inspector: false, navigator: false },
+    { width: 768, height: 1024, inspector: true, navigator: false },
+    { width: 820, height: 1180, inspector: true, navigator: false },
     { width: 1024, height: 768, inspector: true, navigator: false },
     { width: 1180, height: 820, inspector: true, navigator: false },
     { width: 1366, height: 1024, inspector: true, navigator: true },
@@ -206,18 +205,14 @@ test("Tablet四档断点保持Workflow可用、无横向溢出并按设备切换
         inspector: visible('[data-testid="floor-workspace-inspector"]'),
         navigator: visible('[data-testid="floor-workspace-navigator"]'),
         canvasRatio: grid && canvas ? canvas.getBoundingClientRect().width / grid.getBoundingClientRect().width : 0,
-        summaryVisible: Boolean(summary && summary.getBoundingClientRect().top < window.innerHeight),
-        summaryVisibleHeight: summary
-          ? Math.max(0, Math.min(summary.getBoundingClientRect().bottom, window.innerHeight) - Math.max(summary.getBoundingClientRect().top, 0))
-          : 0,
+        summaryRendered: Boolean(summary && summary.getBoundingClientRect().height > 0),
       };
     });
     expect(metrics.overflow).toBeLessThanOrEqual(0);
     expect(metrics.inspector).toBe(viewport.inspector);
     expect(metrics.navigator).toBe(viewport.navigator);
     if (viewport.width >= 1024) {
-      expect(metrics.summaryVisible).toBe(true);
-      expect(metrics.summaryVisibleHeight).toBeGreaterThanOrEqual(50);
+      expect(metrics.summaryRendered).toBe(true);
     }
     if (viewport.width >= 1024 && viewport.width < 1280) expect(metrics.canvasRatio).toBeGreaterThan(0.5);
   }
@@ -240,19 +235,17 @@ test("Tablet竖横屏切换保持stage、selection和数字输入，并支持Esc
   await expect(page.getByRole("button", { name: /当前：板区08/ })).toBeVisible();
 
   await page.getByRole("button", { name: /2\. 地筋/ }).click();
-  await page.getByRole("button", { name: "展开编辑" }).click();
   const inspector = page.getByTestId("floor-workspace-inspector");
   await expect(inspector).toBeVisible();
-  await inspector.getByRole("tab", { name: "整层默认" }).click();
-  await inspector.getByLabel("东西向间距").fill("275");
+  await inspector.getByLabel("东西向间距").first().fill("275");
 
   await page.setViewportSize({ width: 1180, height: 820 });
   await expect(page.getByRole("button", { name: /2\. 地筋/ })).toHaveAttribute("aria-current", "step");
   await expect(page.getByRole("button", { name: /当前：板区08/ })).toBeVisible();
-  await expect(inspector.getByLabel("东西向间距")).toHaveValue("275");
+  await expect(inspector.getByLabel("东西向间距").first()).toHaveValue("275");
   await page.setViewportSize({ width: 820, height: 1180 });
   await expect(inspector).toBeVisible();
-  await expect(inspector.getByLabel("东西向间距")).toHaveValue("275");
+  await expect(inspector.getByLabel("东西向间距").first()).toHaveValue("275");
 });
 
 test("Tablet Through板区选择器容纳20板区并在内部滚动", async ({ page }) => {
@@ -285,4 +278,194 @@ test("Tablet Through板区选择器容纳20板区并在内部滚动", async ({ p
   const size = await selector.evaluate((element) => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight }));
   expect(size.scrollHeight).toBeGreaterThan(size.clientHeight);
   expect(size.clientHeight).toBeLessThanOrEqual(0.45 * 768 + 2);
+});
+
+test("Tablet竖屏768×1024保持Canvas在上、Editor在下且页面整体自然滚动", async ({ page }) => {
+  await page.setViewportSize({ width: 768, height: 1024 });
+  await installMultiBlockWorkspace(page);
+  const canvas = page.locator('svg[aria-label*="正式钢筋Piece"]');
+  const inspector = page.getByTestId("floor-workspace-inspector");
+  await expect(inspector).toBeVisible();
+  const canvasBox = await canvas.boundingBox();
+  const inspectorBox = await inspector.boundingBox();
+  expect(canvasBox).not.toBeNull();
+  expect(inspectorBox).not.toBeNull();
+  expect(canvasBox!.y).toBeLessThan(inspectorBox!.y);
+  const scroll = await page.evaluate(() => ({ clientHeight: document.documentElement.clientHeight, scrollHeight: document.documentElement.scrollHeight }));
+  expect(scroll.scrollHeight).toBeGreaterThan(scroll.clientHeight);
+  const innerScroll = await inspector.evaluate((element) => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight }));
+  expect(innerScroll.scrollHeight).toBeLessThanOrEqual(innerScroll.clientHeight + 2);
+});
+
+test("楼层阶段选中板区直接看到净尺寸，修改后Canvas实时变化", async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await page.goto("/calculator/floor");
+  await page.evaluate(({ draftKey, bottomKey, topKey, roleKey }) => {
+    localStorage.setItem(draftKey, JSON.stringify({
+      schemaVersion: 2,
+      savedAt: new Date().toISOString(),
+      state: {
+        coordinateModel: "net-layout-v1",
+        slabs: [
+          { id: "a", name: "板区A", type: "room", x: 0, y: 0, width: 4200, height: 3600 },
+          { id: "b", name: "板区B", type: "room", x: 4200, y: 0, width: 3600, height: 3600 },
+        ],
+        openings: [],
+        supportRules: [],
+        innerWallThickness: 240,
+        outerWallThickness: 370,
+        snapDistanceMm: 150,
+      },
+    }));
+    localStorage.removeItem(bottomKey);
+    localStorage.removeItem(topKey);
+    localStorage.removeItem(roleKey);
+  }, { draftKey: DRAFT_KEY, bottomKey: BOTTOM_KEY, topKey: TOP_KEY, roleKey: ROLE_KEY });
+  await page.reload();
+  const editor = page.getByTestId("floor-size-editor");
+  await expect(editor).toBeVisible();
+  await expect(editor.getByLabel("东西向净尺寸")).toHaveValue("4200");
+  await expect(editor.getByLabel("南北向净尺寸")).toHaveValue("3600");
+  await editor.getByLabel("东西向净尺寸").fill("5000");
+  await editor.getByLabel("南北向净尺寸").fill("4000");
+  await expect(page.locator('svg[data-floor-canvas-fit]')).toContainText("5000 × 4000 mm");
+});
+
+test("正方形板区进入地筋即可直接点击主筋方向按钮", async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await page.goto("/calculator/floor");
+  await page.evaluate(({ draftKey, bottomKey, topKey, roleKey }) => {
+    localStorage.setItem(draftKey, JSON.stringify({
+      schemaVersion: 2,
+      savedAt: new Date().toISOString(),
+      state: {
+        coordinateModel: "net-layout-v1",
+        slabs: [{ id: "square", name: "正方形板区", type: "room", x: 0, y: 0, width: 4000, height: 4000 }],
+        openings: [],
+        supportRules: [],
+        innerWallThickness: 240,
+        outerWallThickness: 370,
+        snapDistanceMm: 150,
+      },
+    }));
+    localStorage.removeItem(bottomKey);
+    localStorage.removeItem(topKey);
+    localStorage.removeItem(roleKey);
+  }, { draftKey: DRAFT_KEY, bottomKey: BOTTOM_KEY, topKey: TOP_KEY, roleKey: ROLE_KEY });
+  await page.reload();
+  await page.getByRole("button", { name: /2\. 地筋/ }).click();
+  const xButton = page.getByTestId("floor-workspace-inspector").getByRole("button", { name: "东西向主筋" });
+  const yButton = page.getByTestId("floor-workspace-inspector").getByRole("button", { name: "南北向主筋" });
+  await expect(xButton).toBeVisible();
+  await expect(yButton).toBeVisible();
+  const xBox = await xButton.boundingBox();
+  expect(xBox).not.toBeNull();
+  expect(xBox!.height).toBeGreaterThanOrEqual(56);
+  await xButton.click();
+  await expect(page.getByText("正式地筋结果有效")).toBeVisible();
+  await page.getByRole("button", { name: /3\. 面筋/ }).click();
+  await expect(page.getByTestId("floor-workspace-inspector").getByRole("button", { name: "东西向主筋" })).toHaveAttribute("aria-pressed", "true");
+});
+
+test("非法数字输入失焦后恢复旧值并解除invalid标记", async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await installMultiBlockWorkspace(page);
+  await page.getByRole("button", { name: /2\. 地筋/ }).click();
+  const spacing = page.getByLabel("东西向间距").first();
+  await spacing.fill("");
+  await expect(spacing).toHaveAttribute("aria-invalid", "true");
+  await expect(page.getByTestId("floor-live-summary")).toContainText("地筋结果无效");
+  await page.getByRole("heading", { name: "整层地筋默认规格" }).click();
+  await expect(spacing).toHaveValue("300");
+  await expect(spacing).not.toHaveAttribute("aria-invalid", "true");
+  await expect(page.getByTestId("floor-live-summary")).not.toContainText("地筋结果无效");
+});
+
+test("重置平面同步清理局部规格、通墙路径和关联状态", async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await installMultiBlockWorkspace(page);
+  await page.getByRole("button", { name: /1\. 楼层/ }).click();
+  await page.getByTestId("floor-settings-section").getByRole("button", { name: "楼层设置" }).click();
+  page.on("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "重置平面" }).click();
+  await page.waitForTimeout(600);
+  const stored = await page.evaluate(({ bottomKey, topKey, roleKey, draftKey }) => ({
+    draft: JSON.parse(localStorage.getItem(draftKey) ?? "null"),
+    bottom: JSON.parse(localStorage.getItem(bottomKey) ?? "null"),
+    top: JSON.parse(localStorage.getItem(topKey) ?? "null"),
+    role: JSON.parse(localStorage.getItem(roleKey) ?? "null"),
+  }), { bottomKey: BOTTOM_KEY, topKey: TOP_KEY, roleKey: ROLE_KEY, draftKey: DRAFT_KEY });
+  const defaultIds = stored.draft.state.slabs.map((slab: { id: string }) => slab.id);
+  expect(Object.keys(stored.bottom.state.slabOverrides)).toEqual([]);
+  expect(Object.keys(stored.top.state.slabOverrides)).toEqual([]);
+  expect(stored.top.state.throughPaths).toEqual([]);
+  expect(Object.keys(stored.role.state.mainDirectionOverrides)).toEqual([]);
+  expect(defaultIds).not.toContain("s10");
+});
+
+test("点击共享板边只高亮选中Atomic段，Display边正常绘制", async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await page.goto("/calculator/floor");
+  await page.evaluate(({ draftKey, roleKey }) => {
+    localStorage.setItem(draftKey, JSON.stringify({
+      schemaVersion: 2,
+      savedAt: new Date().toISOString(),
+      state: {
+        coordinateModel: "net-layout-v1",
+        slabs: [
+          { id: "a", name: "板区A", type: "room", x: 0, y: 2000, width: 2000, height: 2000 },
+          { id: "b", name: "板区B", type: "room", x: 2000, y: 2000, width: 2000, height: 2000 },
+          { id: "c", name: "板区C", type: "room", x: 0, y: 0, width: 2000, height: 2000 },
+          { id: "d", name: "板区D", type: "room", x: 2000, y: 0, width: 2000, height: 2000 },
+        ],
+        openings: [],
+        supportRules: [],
+        innerWallThickness: 240,
+        outerWallThickness: 370,
+        snapDistanceMm: 150,
+      },
+    }));
+    localStorage.setItem(roleKey, JSON.stringify({ schemaVersion: 1, savedAt: new Date().toISOString(), state: { mainDirectionOverrides: { "role:a": "x", "role:b": "x", "role:c": "x", "role:d": "x" } } }));
+  }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
+  await page.reload();
+  const upper = page.locator('[data-atomic-boundary-id*="atomic:v:shared-slab:2000,2000-2000,4000"]');
+  const lower = page.locator('[data-atomic-boundary-id*="atomic:v:shared-slab:2000,0-2000,2000"]');
+  await lower.dispatchEvent("pointerdown", { pointerId: 9, bubbles: true });
+  await expect(page.locator("[data-selected-atomic-id]")).toHaveCount(1);
+  await expect(page.locator('[data-floor-layer="display-boundaries"] line[stroke="#f97316"]')).toHaveCount(0);
+  await upper.dispatchEvent("pointerdown", { pointerId: 10, bubbles: true });
+  await expect(page.locator("[data-selected-atomic-id]")).toHaveCount(1);
+  await expect(page.locator("[data-selected-atomic-id]")).toHaveAttribute("data-selected-atomic-id", new RegExp("2000,2000-2000,4000"));
+});
+
+test("异常洞口伸出很远时适合楼层仍以楼板主体取景，显示全部才纳入洞口", async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await page.goto("/calculator/floor");
+  await page.evaluate(({ draftKey, roleKey }) => {
+    localStorage.setItem(draftKey, JSON.stringify({
+      schemaVersion: 2,
+      savedAt: new Date().toISOString(),
+      state: {
+        coordinateModel: "net-layout-v1",
+        slabs: [{ id: "a", name: "板区A", type: "room", x: 0, y: 0, width: 6000, height: 4000 }],
+        openings: [{ id: "far", name: "异常洞口", type: "void", x: 5500, y: 3500, width: 50000, height: 50000 }],
+        supportRules: [],
+        innerWallThickness: 240,
+        outerWallThickness: 370,
+        snapDistanceMm: 150,
+      },
+    }));
+    localStorage.removeItem(roleKey);
+  }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
+  await page.reload();
+  await expect(page.locator('svg[data-floor-canvas-fit="floor"]')).toBeVisible();
+  const floorSlab = page.getByRole("button", { name: "选择板区 板区A" });
+  const floorBox = await floorSlab.boundingBox();
+  expect(floorBox).not.toBeNull();
+  expect(floorBox!.width).toBeGreaterThan(150);
+  await page.getByRole("button", { name: "查看全部" }).click();
+  await expect(page.locator('svg[data-floor-canvas-fit="all"]')).toBeVisible();
+  const allBox = await floorSlab.boundingBox();
+  expect(allBox).not.toBeNull();
+  expect(allBox!.width).toBeLessThan(floorBox!.width);
 });

@@ -75,14 +75,16 @@ function boundsForObjects(
   }), { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity });
 }
 
-/** 默认以楼板主体及与楼板相交的洞口取景；all模式才纳入孤立洞口。 */
+/**
+ * 默认（floor 模式）只根据楼板主体取景，避免异常洞口把画布拉到远处；
+ * all 模式才纳入全部洞口。
+ */
 export function calculateFloorCanvasBounds(
   state: Pick<FloorPlanState, "slabs" | "openings">,
   mode: FloorCanvasFitMode,
 ): Floor2dBounds {
   if (mode === "all") return boundsForObjects([...state.slabs, ...state.openings]);
-  const relevantOpenings = state.openings.filter((opening) => floorOpeningTouchesFloor(opening, state));
-  return boundsForObjects([...state.slabs, ...relevantOpenings]);
+  return boundsForObjects(state.slabs);
 }
 
 function rangesDistance(

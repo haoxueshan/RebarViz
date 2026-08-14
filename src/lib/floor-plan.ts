@@ -116,6 +116,17 @@ export type FloorNearMiss = {
   overlapEndMm: number;
 };
 
+export type FloorOpeningNearMiss = {
+  openingId: string;
+  slabId: string;
+  orientation: "vertical" | "horizontal";
+  openingSide: FloorEdgeSide;
+  slabSide: FloorEdgeSide;
+  distanceMm: number;
+  overlapStartMm: number;
+  overlapEndMm: number;
+};
+
 type FloorRect = { x: number; y: number; width: number; height: number };
 type AtomicCandidate = Omit<FloorAtomicBoundarySegment, "id" | "support" | "thicknessMm">;
 
@@ -323,6 +334,71 @@ export function findFloorSlabNearMisses(
     || left.orientation.localeCompare(right.orientation)
     || left.overlapStartMm - right.overlapStartMm
     || left.coordinateA - right.coordinateA);
+}
+
+/**
+ * 检测洞口边与楼板边视觉上接近、但尚未真正对齐的情况。
+ * 只报告问题，不修改坐标，也不放大正式 Geometry EPSILON。
+ */
+export function findOpeningSlabNearMisses(
+  state: Pick<FloorPlanState, "openings" | "slabs">,
+  toleranceMm = FLOOR_TOPOLOGY_NEAR_MISS_TOLERANCE_MM,
+): FloorOpeningNearMiss[] {
+  const tolerance = Number.isFinite(toleranceMm) ? Math.max(toleranceMm, 0) : FLOOR_TOPOLOGY_NEAR_MISS_TOLERANCE_MM;
+  const nearMisses: FloorOpeningNearMiss[] = [];
+  state.openings.forEach((opening) => {
+    if (![opening.x, opening.y, opening.width, opening.height].every(Number.isFinite) || opening.width <= 0 || opening.height <= 0) return;
+    state.slabs.forEach((slab) => {
+      if (![slab.x, slab.y, slab.width, slab.height].every(Number.isFinite) || slab.width <= 0 || slab.height <= 0) return;
+      const yOverlap = positiveRangeOverlap(opening.y, opening.y + opening.height, slab.y, slab.y + slab.height);
+      if (yOverlap) {
+        const verticalCandidates: Array<[number, number, FloorEdgeSide, FloorEdgeSide]> = [
+          [opening.x + opening.width, slab.x, "east", "west"],
+          [opening.x, slab.x + slab.width, "west", "east"],
+        ];
+        verticalCandidates.forEach(([coordinateA, coordinateB, sideA, sideB]) => {
+          const distanceMm = sideA === "east" ? coordinateB - coordinateA : coordinateA - coordinateB;
+          if (distanceMm <= EPSILON || distanceMm > tolerance) return;
+          nearMisses.push({
+            openingId: opening.id,
+            slabId: slab.id,
+            orientation: "vertical",
+            openingSide: sideA,
+            slabSide: sideB,
+            distanceMm,
+            overlapStartMm: yOverlap[0],
+            overlapEndMm: yOverlap[1],
+          });
+        });
+      }
+      const xOverlap = positiveRangeOverlap(opening.x, opening.x + opening.width, slab.x, slab.x + slab.width);
+      if (xOverlap) {
+        const horizontalCandidates: Array<[number, number, FloorEdgeSide, FloorEdgeSide]> = [
+          [opening.y + opening.height, slab.y, "north", "south"],
+          [opening.y, slab.y + slab.height, "south", "north"],
+        ];
+        horizontalCandidates.forEach(([coordinateA, coordinateB, sideA, sideB]) => {
+          const distanceMm = sideA === "north" ? coordinateB - coordinateA : coordinateA - coordinateB;
+          if (distanceMm <= EPSILON || distanceMm > tolerance) return;
+          nearMisses.push({
+            openingId: opening.id,
+            slabId: slab.id,
+            orientation: "horizontal",
+            openingSide: sideA,
+            slabSide: sideB,
+            distanceMm,
+            overlapStartMm: xOverlap[0],
+            overlapEndMm: xOverlap[1],
+          });
+        });
+      }
+    });
+  });
+  return nearMisses.sort((left, right) =>
+    left.openingId.localeCompare(right.openingId)
+    || left.slabId.localeCompare(right.slabId)
+    || left.orientation.localeCompare(right.orientation)
+    || left.overlapStartMm - right.overlapStartMm);
 }
 
 function intersectionArea(left: FloorRect, right: FloorRect): number {
@@ -736,6 +812,16 @@ export function validateFloorPlanV2(state: FloorPlanState): FloorPlanIssue[] {
     const coverage = floorOpeningCoverage(opening, state.slabs);
     if (coverage.coveredAreaMm2 <= EPSILON) issues.push({ level: "warning", code: "opening-uncovered", message: `“${opening.name}”当前未覆盖任何楼板区域，请确认位置。`, objectIds: [opening.id] });
     else if (coverage.coverageRatio < 1 - EPSILON) issues.push({ level: "warning", code: "opening-partial-outside", message: `“${opening.name}”部分区域位于楼板范围之外，请确认是否符合实际楼层。`, objectIds: [opening.id] });
+  });
+  findOpeningSlabNearMisses(state).forEach((nearMiss) => {
+    const opening = state.openings.find((item) => item.id === nearMiss.openingId);
+    const slab = state.slabs.find((item) => item.id === nearMiss.slabId);
+    issues.push({
+      level: "warning",
+      code: "opening-edge-near-slab-edge",
+      message: `“${opening?.name ?? nearMiss.openingId}”${sideText[nearMiss.openingSide]}与“${slab?.name ?? nearMiss.slabId}”${sideText[nearMiss.slabSide]}相差${Number(nearMiss.distanceMm.toFixed(3))}mm，尚未完全对齐，请确认洞口位置。`,
+      objectIds: [nearMiss.openingId, nearMiss.slabId],
+    });
   });
   if (!Number.isFinite(state.innerWallThickness) || state.innerWallThickness <= 0) issues.push({ level: "error", code: "inner-wall-invalid", message: "内墙厚度必须大于0。" });
   if (!Number.isFinite(state.outerWallThickness) || state.outerWallThickness <= 0) issues.push({ level: "error", code: "outer-wall-invalid", message: "外墙厚度必须大于0。" });

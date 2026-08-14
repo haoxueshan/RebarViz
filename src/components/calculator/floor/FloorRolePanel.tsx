@@ -72,12 +72,6 @@ export function FloorRolePanel({
       )}
       {domain && resolved && (
         <div className="mt-3 space-y-3">
-          <div className="rounded-xl bg-indigo-50 p-3 text-sm text-indigo-950">
-            <strong className="block">{domainLabel(plan, domain)}</strong>
-            <span className="mt-1 block text-xs text-indigo-800">
-              东西净跨 {domain.maxX - domain.minX}mm · 南北净跨 {domain.maxY - domain.minY}mm
-            </span>
-          </div>
           {resolved.source === "auto" ? (
             <p className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
               自动判断：{directionLabel(resolved.mainDirection!)}为主筋，
@@ -86,27 +80,35 @@ export function FloorRolePanel({
           ) : (
             <fieldset className="rounded-xl border border-amber-200 bg-amber-50 p-3">
               <legend className="px-1 text-sm font-semibold text-amber-950">主筋方向</legend>
-              <p className="mb-3 text-xs leading-5 text-amber-900">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {(["x", "y"] as const).map((direction) => {
+                  const selected = resolved.mainDirection === direction;
+                  return (
+                    <button
+                      key={direction}
+                      type="button"
+                      aria-pressed={selected}
+                      onClick={() => choose(direction)}
+                      className={`flex min-h-14 items-center justify-center gap-2 rounded-xl border-2 px-3 text-sm font-bold transition ${selected ? "border-amber-600 bg-amber-600 text-white shadow-sm" : "border-amber-300 bg-white text-slate-800"}`}
+                    >
+                      {directionLabel(direction)}主筋
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-3 text-xs leading-5 text-amber-900">
                 {domain.shape === "square"
                   ? "当前连续板区域两个方向净跨相同，请人工指定主筋方向。该选择同时用于地筋和面筋。"
                   : "当前连续板区域为 L/T 或其他非矩形形状，无法可靠通过外包尺寸判断主副筋，请人工指定。"}
               </p>
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                {(["x", "y"] as const).map((direction) => (
-                  <label key={direction} className="flex min-h-11 items-center gap-3 rounded-lg border border-amber-300 bg-white px-3 text-sm font-medium text-slate-800">
-                    <input
-                      type="radio"
-                      name={`role-main:${domain.id}`}
-                      checked={resolved.mainDirection === direction}
-                      onChange={() => choose(direction)}
-                      className="h-5 w-5"
-                    />
-                    {directionLabel(direction)}主筋
-                  </label>
-                ))}
-              </div>
             </fieldset>
           )}
+          <div className="rounded-xl bg-indigo-50 p-3 text-sm text-indigo-950">
+            <strong className="block">{domainLabel(plan, domain)}</strong>
+            <span className="mt-1 block text-xs text-indigo-800">
+              东西净跨 {domain.maxX - domain.minX}mm · 南北净跨 {domain.maxY - domain.minY}mm
+            </span>
+          </div>
         </div>
       )}
     </section>

@@ -56,7 +56,11 @@ function TopNumberField({ fieldKey, label, value, suffix, min, onChange, onValid
             onValidityChange(fieldKey, valid);
             if (valid) onChange(next);
           }}
-          onBlur={() => { if (!invalid) setDraft(null); }}
+          onBlur={() => {
+            // 非法输入失焦时放弃 draft、恢复正式 State 旧值并解除 invalid 标记。
+            if (invalid) onValidityChange(fieldKey, true);
+            setDraft(null);
+          }}
           className={`h-11 w-full rounded-xl border bg-white px-3 pr-12 text-sm text-slate-900 outline-none focus:ring-2 ${invalid ? "border-rose-500 focus:ring-rose-100" : "border-slate-300 focus:border-cyan-600 focus:ring-cyan-100"}`}
         />
         <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-slate-400">{suffix}</span>

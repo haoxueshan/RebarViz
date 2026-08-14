@@ -41,6 +41,17 @@ describe("Floor 2D世界网格与取景", () => {
     expect(calculateFloorCanvasBounds(state, "floor")).toEqual({ minX: 0, minY: 0, maxX: 6000, maxY: 4000 });
     expect(calculateFloorCanvasBounds(state, "all")).toEqual({ minX: 0, minY: 0, maxX: 52000, maxY: 52000 });
   });
+
+  it("异常洞口仅少量与楼板相交且伸出很远时，floor模式仍以楼板主体取景", () => {
+    const state: FloorPlanState = {
+      ...plan(),
+      slabs: [{ id: "a", name: "板区A", type: "room", x: 0, y: 0, width: 6000, height: 4000 }],
+      openings: [{ id: "far", name: "异常洞口", type: "void", x: 5500, y: 3500, width: 50000, height: 50000 }],
+    };
+    expect(floorOpeningTouchesFloor(state.openings[0], state)).toBe(true);
+    expect(calculateFloorCanvasBounds(state, "floor")).toEqual({ minX: 0, minY: 0, maxX: 6000, maxY: 4000 });
+    expect(calculateFloorCanvasBounds(state, "all")).toEqual({ minX: 0, minY: 0, maxX: 55500, maxY: 53500 });
+  });
 });
 
 describe("Floor Print Mark空间聚类", () => {

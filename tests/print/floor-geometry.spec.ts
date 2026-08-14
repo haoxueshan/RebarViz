@@ -1,7 +1,8 @@
 import { expect, test } from "@playwright/test";
 
 async function openBoundaryInspector(page: import("@playwright/test").Page) {
-  await page.getByRole("tab", { name: "边界" }).click();
+  const toggle = page.getByRole("button", { name: "边界关系" });
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
 }
 
 async function openDetailedResults(page: import("@playwright/test").Page) {
@@ -62,7 +63,7 @@ test("Geometry V2.1支持板区、洞口、支承切换和草稿恢复", async (
   await expect(page.getByRole("button", { name: "按内墙" }).first()).toHaveAttribute("aria-pressed", "true");
 });
 
-test("数字空草稿明确无效且移动端没有横向溢出", async ({ page }) => {
+test("数字空草稿明确无效，失焦后恢复旧值且移动端没有横向溢出", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/calculator/floor");
   await page.evaluate(() => {
@@ -75,8 +76,8 @@ test("数字空草稿明确无效且移动端没有横向溢出", async ({ page 
   await widthInput.fill("");
   await expect(widthInput).toHaveAttribute("aria-invalid", "true");
   await page.getByRole("button", { name: "关闭", exact: true }).click();
-  await page.getByTestId("floor-live-summary").getByRole("button", { name: "查看问题" }).click();
-  await expect(page.getByText(/旧数值不会被当作当前输入提交/)).toBeVisible();
+  await expect(widthInput).not.toHaveAttribute("aria-invalid", "true");
+  await expect(widthInput).toHaveValue("4200");
   const dimensions = await page.evaluate(() => ({ clientWidth: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth }));
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
 });
@@ -112,7 +113,7 @@ test("Bottom V1合并continuous、显示地筋料单并恢复独立设置", asyn
   await expect(page.getByLabel("主筋直径").first()).toHaveValue("14");
 });
 
-test("Bottom数字空草稿阻止旧值生成正式结果", async ({ page }) => {
+test("Bottom数字空草稿明确无效，失焦后恢复旧值并解除invalid", async ({ page }) => {
   await page.goto("/calculator/floor");
   await page.evaluate(() => localStorage.removeItem("rebarviz:floor-rebar:bottom:v1"));
   await page.reload();
@@ -121,8 +122,9 @@ test("Bottom数字空草稿阻止旧值生成正式结果", async ({ page }) => 
   await spacing.fill("");
   await expect(spacing).toHaveAttribute("aria-invalid", "true");
   await expect(page.getByText("地筋结果无效")).toBeVisible();
-  await page.getByTestId("floor-live-summary").getByRole("button", { name: "查看问题" }).click();
-  await expect(page.getByText(/未使用旧值计算/)).toBeVisible();
+  await page.getByRole("heading", { name: "整层地筋默认规格" }).click();
+  await expect(spacing).toHaveValue("150");
+  await expect(spacing).not.toHaveAttribute("aria-invalid", "true");
 });
 
 test("Bottom V1.1迁移复核后，局部continuous与inner-wall同时生成长短Piece", async ({ page }) => {
@@ -162,7 +164,6 @@ test("Bottom V1.1迁移复核后，局部continuous与inner-wall同时生成长�
   await page.reload();
   await page.getByRole("button", { name: /2\. 地筋/ }).click();
   await expect(page.getByText("地筋结果无效")).toBeVisible();
-  await page.getByRole("tab", { name: "区域" }).click();
   await expect(page.getByText(/旧版本的东西\/南北向直径已迁移/).first()).toBeVisible();
   await page.getByRole("button", { name: "确认地筋主副筋规格" }).click();
   await expect(page.getByText("正式地筋结果有效")).toBeVisible();
@@ -282,7 +283,7 @@ test("Top V1楼梯间Opening裁断Piece且洞口边改内墙后增加下料长�
   await expect(page.getByText("2.860m").first()).toBeVisible();
 });
 
-test("Top数字空草稿阻止旧值计算且390px页面不横向溢出", async ({ page }) => {
+test("Top数字空草稿明确无效，失焦后恢复旧值且390px页面不横向溢出", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/calculator/floor");
   await page.evaluate(() => {
@@ -297,8 +298,8 @@ test("Top数字空草稿阻止旧值计算且390px页面不横向溢出", async 
   await expect(extra).toHaveAttribute("aria-invalid", "true");
   await expect(page.getByText("面筋结果无效")).toBeVisible();
   await page.getByRole("button", { name: "关闭", exact: true }).click();
-  await page.getByTestId("floor-live-summary").getByRole("button", { name: "查看问题" }).click();
-  await expect(page.getByText(/未使用旧值计算/)).toBeVisible();
+  await expect(extra).not.toHaveAttribute("aria-invalid", "true");
+  await expect(extra).toHaveValue("250");
   const dimensions = await page.evaluate(() => ({
     clientWidth: document.documentElement.clientWidth,
     scrollWidth: document.documentElement.scrollWidth,
@@ -332,15 +333,13 @@ test("正方形主筋方向人工选择由地筋和面筋共享，390px无页面
   const bottomInspector = await openMobileInspector(page);
   await expect(page.getByText("地筋结果无效")).toBeVisible();
   await expect(page.getByText(/两个方向净跨相同/).first()).toBeVisible();
-  await bottomInspector.getByRole("tab", { name: "区域" }).click();
-  await bottomInspector.getByLabel("东西向主筋").check();
+  await bottomInspector.getByRole("button", { name: "东西向主筋" }).click();
   await expect(page.getByText("正式地筋结果有效")).toBeVisible();
   await page.getByRole("button", { name: "关闭", exact: true }).click();
 
   await page.getByRole("button", { name: "面筋", exact: true }).click();
   const topInspector = await openMobileInspector(page);
-  await topInspector.getByRole("tab", { name: "区域" }).click();
-  await expect(topInspector.getByLabel("东西向主筋")).toBeChecked();
+  await expect(topInspector.getByRole("button", { name: "东西向主筋" })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByText("正式面筋结果有效")).toBeVisible();
   const dimensions = await page.evaluate(() => ({
     clientWidth: document.documentElement.clientWidth,
@@ -385,8 +384,7 @@ test("390px通墙Path被Opening阻断，缩小Band后恢复并持久化Schema 4"
   });
   await page.reload();
   await page.getByRole("button", { name: "面筋", exact: true }).click();
-  const throughInspector = await openMobileInspector(page);
-  await throughInspector.getByRole("tab", { name: "通墙" }).click();
+  await openMobileInspector(page);
   await expect(page.getByText("面筋结果无效")).toBeVisible();
   await expect(page.getByText(/与洞口发生正面积相交/).first()).toBeVisible();
   const pathCard = page.locator('[data-through-path-id="p"]');

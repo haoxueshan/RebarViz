@@ -59,7 +59,9 @@ function BottomNumberField({
             if (valid) onChange(next);
           }}
           onBlur={() => {
-            if (!invalid) setDraft(null);
+            // 非法输入失焦时放弃 draft、恢复正式 State 旧值并解除 invalid 标记。
+            if (invalid) onValidityChange(fieldKey, true);
+            setDraft(null);
           }}
           className={`h-11 w-full rounded-xl border bg-white px-3 pr-12 text-sm text-slate-900 outline-none focus:ring-2 ${invalid ? "border-rose-500 focus:ring-rose-100" : "border-slate-300 focus:border-blue-500 focus:ring-blue-100"}`}
         />

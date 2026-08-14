@@ -178,6 +178,7 @@ export function FloorCanvas({
   const displayBoundaries = useMemo(() => buildFloorDisplayBoundarySegments(state), [state]);
   const atomicBoundaries = useMemo(() => buildFloorAtomicBoundarySegments(state), [state]);
   const atomicById = useMemo(() => new Map(atomicBoundaries.map((segment) => [segment.id, segment])), [atomicBoundaries]);
+  const selectedAtomicSegment = selectedBoundaryId ? atomicById.get(selectedBoundaryId) ?? null : null;
   const nearMisses = useMemo(() => findFloorSlabNearMisses(state), [state]);
   const uncoveredOpenings = useMemo(() => state.openings.filter((opening) => !floorOpeningTouchesFloor(opening, state)), [state]);
   const rebarCalculation = topCalculation ?? bottomCalculation;
@@ -408,8 +409,7 @@ export function FloorCanvas({
         <g clipPath="url(#floor-plot-clip-v22)" data-floor-layer="display-boundaries" pointerEvents="none">
           {displayBoundaries.map((segment) => {
             const style = wallStyle(segment, scale);
-            const selected = segment.atomicIds.includes(selectedBoundaryId ?? "");
-            return <line key={segment.id} x1={toX(segment.startX)} y1={toY(segment.startY)} x2={toX(segment.endX)} y2={toY(segment.endY)} stroke={selected ? "#f97316" : style.stroke} strokeWidth={selected ? style.width + 3 : style.width} strokeDasharray={style.dash} strokeLinecap="square" />;
+            return <line key={segment.id} x1={toX(segment.startX)} y1={toY(segment.startY)} x2={toX(segment.endX)} y2={toY(segment.endY)} stroke={style.stroke} strokeWidth={style.width} strokeDasharray={style.dash} strokeLinecap="square" />;
           })}
           {state.openings.map((opening) => {
             const selected = selection?.kind === "opening" && selection.id === opening.id;
@@ -418,6 +418,18 @@ export function FloorCanvas({
           {displayBoundaries.filter((segment) => segment.support === "continuous").map((segment) => (
             <text key={`continuous:${segment.id}`} x={toX((segment.startX + segment.endX) / 2)} y={toY((segment.startY + segment.endY) / 2) - 5} textAnchor="middle" fontSize="10" fontWeight="700" fill="#475569" style={{ paintOrder: "stroke", stroke: "white", strokeWidth: 3 }}>连续</text>
           ))}
+        </g>
+
+        <g clipPath="url(#floor-plot-clip-v22)" data-floor-layer="selected-atomic-overlay" pointerEvents="none">
+          {selectedAtomicSegment && (
+            <line
+              key={`selected-atomic:${selectedAtomicSegment.id}`}
+              x1={toX(selectedAtomicSegment.startX)} y1={toY(selectedAtomicSegment.startY)}
+              x2={toX(selectedAtomicSegment.endX)} y2={toY(selectedAtomicSegment.endY)}
+              stroke="#f97316" strokeWidth="9" strokeLinecap="round"
+              data-selected-atomic-id={selectedAtomicSegment.id}
+            />
+          )}
         </g>
 
         <g clipPath="url(#floor-plot-clip-v22)" data-floor-layer="through-pieces-visible" pointerEvents="none">
