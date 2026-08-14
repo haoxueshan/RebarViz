@@ -132,7 +132,7 @@ test("390px通过Navigator与Inspector Drawer完成板区定位和局部规格�
   await expect(page.getByRole("button", { name: /当前：板区10/ })).toBeVisible();
 
   await page.getByRole("button", { name: "地筋", exact: true }).click();
-  await page.getByRole("button", { name: /编辑当前对象/ }).click();
+  await page.getByRole("button", { name: "编辑", exact: true }).click();
   const inspector = page.getByTestId("floor-workspace-inspector");
   await expect(inspector).toContainText("当前板区：板区10");
   await inspector.getByRole("button", { name: "局部规格" }).click();
@@ -187,8 +187,11 @@ test("Tablet四档断点保持Workflow可用、无横向溢出并按设备切换
     { width: 820, height: 1180, inspector: true, navigator: false },
     { width: 1024, height: 768, inspector: true, navigator: false },
     { width: 1180, height: 820, inspector: true, navigator: false },
+    { width: 1280, height: 800, inspector: true, navigator: true },
+    { width: 1366, height: 768, inspector: true, navigator: true },
     { width: 1366, height: 1024, inspector: true, navigator: true },
     { width: 1440, height: 900, inspector: true, navigator: true },
+    { width: 1920, height: 1080, inspector: true, navigator: true },
   ];
 
   for (const viewport of viewports) {
@@ -468,4 +471,113 @@ test("异常洞口伸出很远时适合楼层仍以楼板主体取景，显示�
   const allBox = await floorSlab.boundingBox();
   expect(allBox).not.toBeNull();
   expect(allBox!.width).toBeLessThan(floorBox!.width);
+});
+
+test("平板竖屏768×1024顺序为Canvas→Editor→Summary", async ({ page }) => {
+  await page.setViewportSize({ width: 768, height: 1024 });
+  await installMultiBlockWorkspace(page);
+  const canvas = page.locator('svg[aria-label*="正式钢筋Piece"]');
+  const inspector = page.getByTestId("floor-workspace-inspector");
+  const summary = page.getByTestId("floor-live-summary");
+  await expect(canvas).toBeVisible();
+  await expect(inspector).toBeVisible();
+  await expect(summary).toBeVisible();
+  const canvasBox = await canvas.boundingBox();
+  const inspectorBox = await inspector.boundingBox();
+  const summaryBox = await summary.boundingBox();
+  expect(canvasBox).not.toBeNull();
+  expect(inspectorBox).not.toBeNull();
+  expect(summaryBox).not.toBeNull();
+  expect(canvasBox!.y + canvasBox!.height).toBeLessThanOrEqual(inspectorBox!.y + 1);
+  expect(inspectorBox!.y + inspectorBox!.height).toBeLessThanOrEqual(summaryBox!.y + 1);
+});
+
+test("平板横屏1024×768保持Canvas与Editor同行、Summary在下方", async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await installMultiBlockWorkspace(page);
+  const canvas = page.getByTestId("floor-canvas-card");
+  const inspector = page.getByTestId("floor-workspace-inspector");
+  const summary = page.getByTestId("floor-live-summary");
+  await expect(inspector).toBeVisible();
+  const canvasBox = await canvas.boundingBox();
+  const inspectorBox = await inspector.boundingBox();
+  const summaryBox = await summary.boundingBox();
+  expect(canvasBox).not.toBeNull();
+  expect(inspectorBox).not.toBeNull();
+  expect(summaryBox).not.toBeNull();
+  expect(Math.abs(canvasBox!.y - inspectorBox!.y)).toBeLessThan(40);
+  expect(canvasBox!.x + canvasBox!.width).toBeLessThanOrEqual(inspectorBox!.x + 1);
+  expect(summaryBox!.y).toBeGreaterThanOrEqual(Math.max(canvasBox!.y + canvasBox!.height, inspectorBox!.y + inspectorBox!.height) - 1);
+});
+
+test("桌面1440×900保持Navigator|Canvas|Editor三栏", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await installMultiBlockWorkspace(page);
+  const navigator = page.getByTestId("floor-workspace-navigator");
+  const canvas = page.getByTestId("floor-canvas-card");
+  const inspector = page.getByTestId("floor-workspace-inspector");
+  await expect(navigator).toBeVisible();
+  await expect(inspector).toBeVisible();
+  const navBox = await navigator.boundingBox();
+  const canvasBox = await canvas.boundingBox();
+  const editorBox = await inspector.boundingBox();
+  expect(navBox).not.toBeNull();
+  expect(canvasBox).not.toBeNull();
+  expect(editorBox).not.toBeNull();
+  expect(navBox!.x).toBeLessThan(canvasBox!.x);
+  expect(canvasBox!.x).toBeLessThan(editorBox!.x);
+  expect(Math.abs(navBox!.y - canvasBox!.y)).toBeLessThan(40);
+  expect(Math.abs(canvasBox!.y - editorBox!.y)).toBeLessThan(40);
+});
+
+test("桌面1366×768 Navigator充分利用垂直空间且不溢出视口", async ({ page }) => {
+  await page.setViewportSize({ width: 1366, height: 768 });
+  await installMultiBlockWorkspace(page);
+  const navigator = page.getByTestId("floor-workspace-navigator");
+  await expect(navigator).toBeVisible();
+  const box = await navigator.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.height).toBeGreaterThanOrEqual(480);
+  expect(box!.y + box!.height).toBeLessThanOrEqual(768);
+  const dimensions = await page.evaluate(() => ({ clientWidth: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth }));
+  expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
+});
+
+test("390px手机仅保留一个编辑入口且Canvas可视高度充足", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installMultiBlockWorkspace(page);
+  await expect(page.getByRole("button", { name: "编辑", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: /编辑当前对象/ })).toHaveCount(0);
+  const canvas = page.locator('svg[aria-label*="正式钢筋Piece"]');
+  const canvasBox = await canvas.boundingBox();
+  expect(canvasBox).not.toBeNull();
+  expect(canvasBox!.height).toBeGreaterThanOrEqual(340);
+});
+
+test("平板收起与展开编辑保持Inspector状态和选择", async ({ page }) => {
+  await page.setViewportSize({ width: 820, height: 1180 });
+  await installMultiBlockWorkspace(page);
+  await page.getByRole("button", { name: /2\. 地筋/ }).click();
+  const inspector = page.getByTestId("floor-workspace-inspector");
+  await expect(inspector).toBeVisible();
+  const toggle = page.getByRole("button", { name: "收起编辑" });
+  await expect(toggle).toBeVisible();
+  await expect(toggle).not.toHaveClass(/bg-blue-600/);
+  await toggle.click();
+  await expect(inspector).not.toBeVisible();
+  await expect(page.getByRole("button", { name: "展开编辑" })).toBeVisible();
+  await page.getByRole("button", { name: "展开编辑" }).click();
+  await expect(inspector).toBeVisible();
+  await expect(page.getByRole("button", { name: /2\. 地筋/ })).toHaveAttribute("aria-current", "step");
+  await expect(page.getByRole("button", { name: /当前：板区01/ })).toBeVisible();
+});
+
+test("430×932与1280×800无横向溢出且工作区可用", async ({ page }) => {
+  for (const viewport of [{ width: 430, height: 932 }, { width: 1280, height: 800 }]) {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await installMultiBlockWorkspace(page);
+    await expect(page.locator('[aria-label="整层计算步骤"] button')).toHaveCount(4);
+    const dimensions = await page.evaluate(() => ({ clientWidth: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth }));
+    expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
+  }
 });

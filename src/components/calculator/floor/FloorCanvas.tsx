@@ -301,7 +301,7 @@ export function FloorCanvas({
     : undefined;
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50" data-testid="floor-canvas-card">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-3">
         <div className="min-w-0 flex-1">
           <h2 className="font-semibold text-slate-900">{topCalculation ? "整层面筋净跨路径" : bottomCalculation ? "整层地筋净跨路径" : "整层板区平面"}</h2>
@@ -323,7 +323,7 @@ export function FloorCanvas({
         ref={svgRef}
         viewBox={`0 0 ${SVG_WIDTH} ${SVG_HEIGHT}`}
         preserveAspectRatio="xMidYMid meet"
-        className="block h-[clamp(300px,54dvh,430px)] w-full select-none bg-white md:h-[clamp(380px,52dvh,500px)] lg:h-[clamp(330px,42dvh,460px)] xl:h-auto"
+        className="block h-[clamp(360px,54dvh,430px)] w-full select-none bg-white md:h-[clamp(380px,52dvh,500px)] lg:h-[clamp(330px,42dvh,460px)] xl:h-auto"
         role="img"
         aria-label="整层板区、洞口、正式钢筋Piece和支承关系布局预览"
         data-floor-canvas-fit={fitMode}
