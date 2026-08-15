@@ -23,6 +23,7 @@ test("Floor 2D V2.2近错位在图中警示并阻止正式Piece与打印", async
         innerWallThickness: 240,
         outerWallThickness: 370,
         snapDistanceMm: 150,
+        overlapToleranceMm: 0,
       },
     }));
     localStorage.removeItem(bottomKey);
@@ -40,6 +41,43 @@ test("Floor 2D V2.2近错位在图中警示并阻止正式Piece与打印", async
   await expect(page.getByRole("button", { name: "打印设置" })).toBeDisabled();
   const dimensions = await page.evaluate(() => ({ clientWidth: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth }));
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
+});
+
+test("容差内0.5mm间隙自动对齐为精确共边并生成正式Piece", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/calculator/floor");
+  await page.evaluate(({ draftKey, bottomKey, topKey, roleKey }) => {
+    localStorage.setItem(draftKey, JSON.stringify({
+      schemaVersion: 2,
+      savedAt: new Date().toISOString(),
+      state: {
+        coordinateModel: "net-layout-v1",
+        slabs: [
+          { id: "a", name: "板区A", type: "room", x: 0, y: 0, width: 4200, height: 3600 },
+          { id: "b", name: "板区B", type: "room", x: 4200.5, y: 0, width: 3600, height: 3600 },
+        ],
+        openings: [],
+        supportRules: [],
+        innerWallThickness: 240,
+        outerWallThickness: 370,
+        snapDistanceMm: 150,
+        overlapToleranceMm: 10,
+      },
+    }));
+    localStorage.removeItem(bottomKey);
+    localStorage.removeItem(topKey);
+    localStorage.setItem(roleKey, JSON.stringify({ schemaVersion: 1, savedAt: new Date().toISOString(), state: { mainDirectionOverrides: { "role:b": "x" } } }));
+  }, { draftKey: DRAFT_KEY, bottomKey: BOTTOM_KEY, topKey: TOP_KEY, roleKey: ROLE_KEY });
+  await page.reload();
+
+  await page.getByRole("button", { name: "编辑", exact: true }).click();
+  await page.getByRole("button", { name: "楼层设置" }).click();
+  await expect(page.getByText(/已自动对齐/)).toBeVisible();
+  await expect(page.locator("[data-near-miss]")).toHaveCount(0);
+  await page.getByRole("button", { name: "关闭", exact: true }).click();
+  await page.getByRole("button", { name: "地筋", exact: true }).click();
+  await expect(page.getByText("正式地筋结果有效")).toBeVisible();
+  await expect(page.locator("[data-piece-id]")).not.toHaveCount(0);
 });
 
 test("Display边可合并但点击与编辑精确落到对应Atomic段", async ({ page }) => {

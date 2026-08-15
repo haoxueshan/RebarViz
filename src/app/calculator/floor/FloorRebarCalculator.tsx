@@ -71,6 +71,9 @@ import {
   FLOOR_REBAR_ROLE_STORAGE_KEY,
   parseFloorRebarRoleStoredRecord,
 } from "@/lib/floor-rebar-role-storage";
+import {
+  resolveFloorGeometryTolerance,
+} from "@/lib/floor-geometry-tolerance";
 import { getFloorPrintEligibility } from "@/lib/floor-print";
 import { resolveFloorTopThroughPathGeometry } from "@/lib/floor-top-through";
 
@@ -208,6 +211,7 @@ function DraftNumberField({
   onChange,
   onValidityChange,
   min,
+  max,
 }: {
   fieldKey: string;
   label: string;
@@ -215,10 +219,11 @@ function DraftNumberField({
   onChange: (value: number) => void;
   onValidityChange: (key: string, valid: boolean) => void;
   min?: number;
+  max?: number;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   const displayed = draft ?? String(value);
-  const invalid = draft !== null && (draft.trim() === "" || !Number.isFinite(Number(draft)) || (min !== undefined && Number(draft) < min));
+  const invalid = draft !== null && (draft.trim() === "" || !Number.isFinite(Number(draft)) || (min !== undefined && Number(draft) < min) || (max !== undefined && Number(draft) > max));
   return (
     <label className="block">
       <span className="mb-1.5 block text-xs font-medium text-slate-600">{label}</span>
@@ -228,13 +233,14 @@ function DraftNumberField({
           inputMode="decimal"
           value={displayed}
           min={min}
+          max={max}
           aria-invalid={invalid}
           onFocus={(event) => { setDraft(String(value)); event.currentTarget.select(); }}
           onChange={(event) => {
             const raw = event.target.value;
             setDraft(raw);
             const parsed = Number(raw);
-            const valid = raw.trim() !== "" && Number.isFinite(parsed) && (min === undefined || parsed >= min);
+            const valid = raw.trim() !== "" && Number.isFinite(parsed) && (min === undefined || parsed >= min) && (max === undefined || parsed <= max);
             onValidityChange(fieldKey, valid);
             if (valid) onChange(parsed);
           }}
@@ -453,13 +459,17 @@ export default function FloorRebarCalculator() {
     }
   }, []);
 
+  const toleranceResult = useMemo(() => resolveFloorGeometryTolerance(state), [state]);
+  const canonicalPlan = toleranceResult.plan;
+  const roleDomains = useMemo(() => buildFloorRebarRoleDomains(canonicalPlan), [canonicalPlan]);
+
   useEffect(() => {
     if (!hydrated || dragActive) return;
     const timer = window.setTimeout(() => {
-      window.localStorage.setItem(FLOOR_DRAFT_KEY, JSON.stringify(createFloorDraftRecord(state)));
+      window.localStorage.setItem(FLOOR_DRAFT_KEY, JSON.stringify(createFloorDraftRecord(toleranceResult.plan)));
     }, 300);
     return () => window.clearTimeout(timer);
-  }, [dragActive, hydrated, state]);
+  }, [dragActive, hydrated, toleranceResult]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -499,8 +509,6 @@ export default function FloorRebarCalculator() {
     return () => window.clearTimeout(timer);
   }, [hydrated, state.slabs, topRoleReviewRequired, topState]);
 
-  const roleDomains = useMemo(() => buildFloorRebarRoleDomains(state), [state]);
-
   useEffect(() => {
     if (!hydrated) return;
     const timer = window.setTimeout(() => {
@@ -518,22 +526,22 @@ export default function FloorRebarCalculator() {
     return () => window.clearTimeout(timer);
   }, [hydrated, roleDomains, roleState]);
 
-  const atomic = useMemo(() => buildFloorAtomicBoundarySegments(state), [state]);
-  const displays = useMemo(() => buildFloorDisplayBoundarySegments(state), [state]);
-  const issues = useMemo(() => validateFloorPlanV2(state), [state]);
+  const atomic = useMemo(() => buildFloorAtomicBoundarySegments(canonicalPlan), [canonicalPlan]);
+  const displays = useMemo(() => buildFloorDisplayBoundarySegments(canonicalPlan), [canonicalPlan]);
+  const issues = useMemo(() => validateFloorPlanV2(canonicalPlan), [canonicalPlan]);
   const errors = issues.filter((issue) => issue.level === "error");
   const warnings = issues.filter((issue) => issue.level === "warning");
   const rawBottomCalculation = useMemo(
-    () => calculateFloorBottomRebar(state, bottomState, roleState, bottomRoleReviewRequired),
-    [bottomRoleReviewRequired, bottomState, roleState, state],
+    () => calculateFloorBottomRebar(canonicalPlan, bottomState, roleState, bottomRoleReviewRequired),
+    [bottomRoleReviewRequired, bottomState, canonicalPlan, roleState],
   );
   const bottomCalculation = useMemo(
     () => blockBottomForDrafts(rawBottomCalculation, invalidDrafts.size + invalidBottomDrafts.size),
     [invalidBottomDrafts.size, invalidDrafts.size, rawBottomCalculation],
   );
   const rawTopCalculation = useMemo(
-    () => calculateFloorTopRebar(state, topState, roleState, topRoleReviewRequired),
-    [roleState, state, topRoleReviewRequired, topState],
+    () => calculateFloorTopRebar(canonicalPlan, topState, roleState, topRoleReviewRequired),
+    [canonicalPlan, roleState, topRoleReviewRequired, topState],
   );
   const topCalculation = useMemo(
     () => blockTopForDrafts(rawTopCalculation, invalidDrafts.size + invalidTopDrafts.size),
@@ -546,13 +554,13 @@ export default function FloorRebarCalculator() {
   const selectedOpening = selection?.kind === "opening" ? state.openings.find((opening) => opening.id === selection.id) ?? null : null;
   const selectedSegments = selection ? atomic.filter((segment) => selection.kind === "slab" ? segment.slabIds.includes(selection.id) : segment.openingId === selection.id) : [];
   const printEligibility = useMemo(() => getFloorPrintEligibility({
-    plan: state,
+    plan: canonicalPlan,
     bottom: bottomCalculation,
     top: topCalculation,
     bottomRoleReviewRequired,
     topRoleReviewRequired,
     invalidDraftCount: invalidDrafts.size + invalidBottomDrafts.size + invalidTopDrafts.size,
-  }), [bottomCalculation, bottomRoleReviewRequired, invalidBottomDrafts.size, invalidDrafts.size, invalidTopDrafts.size, state, topCalculation, topRoleReviewRequired]);
+  }), [bottomCalculation, bottomRoleReviewRequired, canonicalPlan, invalidBottomDrafts.size, invalidDrafts.size, invalidTopDrafts.size, topCalculation, topRoleReviewRequired]);
   const roleItems = useMemo<FloorWorkspaceRoleItem[]>(() => roleDomains.map((domain, index) => {
     const resolved = resolveFloorRoleDomainMainDirection(domain, roleState);
     const mainLabel = resolved.mainDirection === "x" ? "东西向主筋" : resolved.mainDirection === "y" ? "南北向主筋" : "主筋方向待确认";
@@ -567,17 +575,17 @@ export default function FloorRebarCalculator() {
     };
   }), [issues, roleDomains, roleState]);
   const throughItems = useMemo<FloorWorkspaceThroughItem[]>(() => topState.throughPaths.map((path) => {
-    const geometry = resolveFloorTopThroughPathGeometry(state, path);
+    const geometry = resolveFloorTopThroughPathGeometry(canonicalPlan, path);
     const pathErrors = topCalculation.errors.filter((issue) => issue.code.startsWith("through-") && (issue.objectIds?.includes(path.id) || issue.message.includes(path.name)));
-    const names = geometry.orderedSlabIds.map((id) => state.slabs.find((slab) => slab.id === id)?.name ?? id);
+    const names = geometry.orderedSlabIds.map((id) => canonicalPlan.slabs.find((slab) => slab.id === id)?.name ?? id);
     const hasWarning = path.slabIds.some((id) => issues.some((issue) => issue.level === "warning" && WORKSPACE_NAV_WARNING_CODES.has(issue.code) && issue.objectIds?.includes(id)));
     return {
       id: path.id,
       name: path.name,
-      detail: names.length > 0 ? names.join(" → ") : path.slabIds.map((id) => state.slabs.find((slab) => slab.id === id)?.name ?? id).join(" → ") || "尚未选择板区",
+      detail: names.length > 0 ? names.join(" → ") : path.slabIds.map((id) => canonicalPlan.slabs.find((slab) => slab.id === id)?.name ?? id).join(" → ") || "尚未选择板区",
       status: !path.enabled ? "disabled" : pathErrors.length > 0 || geometry.errors.length > 0 ? "invalid" : hasWarning ? "warning" : "valid",
     };
-  }), [issues, state, topCalculation.errors, topState.throughPaths]);
+  }), [canonicalPlan, issues, topCalculation.errors, topState.throughPaths]);
   const workflowStatuses: Record<FloorWorkflowStage, FloorWorkflowStatus> = {
     plan: errors.length > 0 || invalidDrafts.size > 0 ? "invalid" : warnings.length > 0 ? "warning" : "valid",
     bottom: bottomCalculation.isValid && !bottomRoleReviewRequired && invalidDrafts.size + invalidBottomDrafts.size === 0 ? "valid" : "invalid",
@@ -601,12 +609,18 @@ export default function FloorRebarCalculator() {
 
   const updateSlab = (patch: Partial<FloorSlab>) => {
     if (!selectedSlab) return;
-    setState((current) => ({ ...current, slabs: current.slabs.map((slab) => slab.id === selectedSlab.id ? { ...slab, ...patch } : slab) }));
+    setState((current) => resolveFloorGeometryTolerance({
+      ...current,
+      slabs: current.slabs.map((slab) => slab.id === selectedSlab.id ? { ...slab, ...patch } : slab),
+    }).plan);
   };
 
   const updateOpening = (patch: Partial<FloorOpening>) => {
     if (!selectedOpening) return;
-    setState((current) => ({ ...current, openings: current.openings.map((opening) => opening.id === selectedOpening.id ? { ...opening, ...patch } : opening) }));
+    setState((current) => resolveFloorGeometryTolerance({
+      ...current,
+      openings: current.openings.map((opening) => opening.id === selectedOpening.id ? { ...opening, ...patch } : opening),
+    }).plan);
   };
 
   const addSlab = () => {
@@ -709,13 +723,15 @@ export default function FloorRebarCalculator() {
         if (!object) return current;
         const moved = { ...object, x, y };
         const finalObject = finished ? snapFloorSlab(moved, current.slabs.filter((slab) => slab.id !== object.id), current.snapDistanceMm) : moved;
-        return { ...current, slabs: current.slabs.map((slab) => slab.id === object.id ? finalObject : slab) };
+        const next = { ...current, slabs: current.slabs.map((slab) => slab.id === object.id ? finalObject : slab) };
+        return finished ? resolveFloorGeometryTolerance(next).plan : next;
       }
       const object = current.openings.find((opening) => opening.id === nextSelection.id);
       if (!object) return current;
       const moved = { ...object, x, y };
       const finalObject = finished ? snapFloorOpening(moved, current.slabs, current.openings.filter((opening) => opening.id !== object.id), current.snapDistanceMm) : moved;
-      return { ...current, openings: current.openings.map((opening) => opening.id === object.id ? finalObject : opening) };
+      const next = { ...current, openings: current.openings.map((opening) => opening.id === object.id ? finalObject : opening) };
+      return finished ? resolveFloorGeometryTolerance(next).plan : next;
     });
   };
 
@@ -811,8 +827,8 @@ export default function FloorRebarCalculator() {
 
   if (!hydrated) return <main className="mx-auto min-h-[60vh] max-w-7xl px-4 py-10 text-sm text-slate-500">正在迁移并恢复整层几何草稿…</main>;
 
-  const field = (key: string, label: string, value: number, onChange: (value: number) => void, min?: number) => (
-    <DraftNumberField key={`${inputRevision}:${key}`} fieldKey={key} label={label} value={value} onChange={onChange} onValidityChange={setDraftValidity} min={min} />
+  const field = (key: string, label: string, value: number, onChange: (value: number) => void, min?: number, max?: number) => (
+    <DraftNumberField key={`${inputRevision}:${key}`} fieldKey={key} label={label} value={value} onChange={onChange} onValidityChange={setDraftValidity} min={min} max={max} />
   );
   const stats = {
     exterior: atomic.filter((segment) => segment.geometryKind === "building-exterior").length,
@@ -877,11 +893,14 @@ export default function FloorRebarCalculator() {
               {field("inner-wall", "内墙厚度", state.innerWallThickness, (value) => setState((current) => ({ ...current, innerWallThickness: value })), 1)}
               {field("outer-wall", "外墙厚度", state.outerWallThickness, (value) => setState((current) => ({ ...current, outerWallThickness: value })), 1)}
               {field("snap", "自动吸附距离", state.snapDistanceMm, (value) => setState((current) => ({ ...current, snapDistanceMm: value })), 0)}
+              {field("overlap-tolerance", "几何对齐容差", state.overlapToleranceMm, (value) => setState((current) => ({ ...current, overlapToleranceMm: value })), 0, 30)}
+              <p className="rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-600">几何对齐容差：边缘重叠/间隙在该范围内时自动纠偏为精确共边；设为 0 时关闭自动纠偏（严格模式）。</p>
               <button type="button" onClick={resetPlan} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-slate-300 text-sm font-semibold text-slate-700"><RotateCcw size={16} />重置平面</button>
             </section>
             <section className={`rounded-xl border p-4 ${errors.length > 0 || invalidDrafts.size > 0 ? "border-rose-200 bg-rose-50" : warnings.length > 0 ? "border-amber-200 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}>
               <h3 className="font-semibold text-slate-900">{errors.length > 0 || invalidDrafts.size > 0 ? "几何输入无效" : warnings.length > 0 ? "几何有效，但需要确认" : "几何与支承拓扑有效"}</h3>
               {invalidDrafts.size > 0 && <p className="mt-2 text-sm text-rose-800">有 {invalidDrafts.size} 个数字输入仍为空或非法，旧数值不会被当作当前输入提交。</p>}
+              {toleranceResult.corrections.length > 0 && <p className="mt-2 rounded-lg bg-blue-50 p-2 text-xs leading-5 text-blue-800">已自动对齐 {toleranceResult.corrections.length} 处板区边缘：在 {formatMm(state.overlapToleranceMm)}mm 容差内的重叠/间隙已纠偏为精确共边。</p>}
               <ul className="mt-2 space-y-1 text-xs leading-5">{issues.map((issue) => <li key={`${issue.code}:${issue.message}`} className={issue.level === "error" ? "text-rose-800" : "text-amber-900"}>• {issue.message}</li>)}</ul>
             </section>
           </div>
@@ -930,7 +949,7 @@ export default function FloorRebarCalculator() {
           </aside>
 
           <section className="min-w-0 space-y-3 md:col-start-1 md:row-start-1 lg:col-start-1 lg:row-start-1 xl:col-start-2">
-            <FloorCanvas key={canvasFocusRequest?.key ?? "floor-canvas"} state={state} selection={selection} selectedBoundaryId={selectedBoundaryId} onSelect={(next) => { setSelection(next); setSelectedBoundaryId(null); setSelectedThroughPathId(null); setHighlightedRoleDomainId(null); }} onSelectBoundary={selectAtomicBoundary} onMove={moveObject} onDragStateChange={setDragActive} bottomCalculation={stage === "bottom" ? bottomCalculation : undefined} topCalculation={stage === "top" ? topCalculation : undefined} roleDomains={roleDomains} roleState={roleState} highlightedRoleDomainId={highlightedRoleDomainId} highlightedThroughPathId={selectedThroughPathId} initialFitMode={canvasFocusRequest?.mode} />
+            <FloorCanvas key={canvasFocusRequest?.key ?? "floor-canvas"} state={dragActive ? state : canonicalPlan} selection={selection} selectedBoundaryId={selectedBoundaryId} onSelect={(next) => { setSelection(next); setSelectedBoundaryId(null); setSelectedThroughPathId(null); setHighlightedRoleDomainId(null); }} onSelectBoundary={selectAtomicBoundary} onMove={moveObject} onDragStateChange={setDragActive} bottomCalculation={stage === "bottom" ? bottomCalculation : undefined} topCalculation={stage === "top" ? topCalculation : undefined} roleDomains={roleDomains} roleState={roleState} highlightedRoleDomainId={highlightedRoleDomainId} highlightedThroughPathId={selectedThroughPathId} initialFitMode={canvasFocusRequest?.mode} />
             {stage === "plan" && <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] text-slate-600 lg:hidden">{[["板区", state.slabs.length], ["洞口", state.openings.length], ["建筑外边", stats.exterior], ["内墙", stats.inner], ["连续板边", stats.continuous], ["洞口边", stats.opening]].map(([label, value]) => <span key={String(label)} className="rounded-full bg-slate-100 px-2.5 py-1"><strong className="text-slate-900">{value}</strong> {label}</span>)}</div>}
           </section>
 

@@ -36,6 +36,7 @@ function plan(
     innerWallThickness: 240,
     outerWallThickness: 370,
     snapDistanceMm: 150,
+    overlapToleranceMm: 10,
   };
 }
 

@@ -15,6 +15,7 @@ import {
   type FloorPlanState,
 } from "./floor-plan";
 import type { FloorBarLine, FloorBarPiece } from "./floor-rebar-types";
+import { buildFloorRebarLayout } from "./floor-rebar-layout";
 import {
   applyFloorTopThroughPaths,
   type ResolvedFloorTopThroughPath,
@@ -525,9 +526,16 @@ export function calculateFloorTopNormalRebar(
         settings.spacing,
         top.countMode,
       );
+      const layout = buildFloorRebarLayout({
+        key: `top:${domain.id}:${direction}`,
+        direction,
+        count,
+        spacingMm: settings.spacing,
+        minMm: perpendicularStart,
+        maxMm: perpendicularEnd,
+      });
       for (let index = 0; index < count; index += 1) {
-        const positionMm = perpendicularStart +
-          ((index + 0.5) * (perpendicularEnd - perpendicularStart)) / count;
+        const positionMm = layout.positionsMm[index];
         const line: FloorBarLine = {
           id: `top:${domain.id}:${direction}:line:${index + 1}`,
           domainId: domain.id,

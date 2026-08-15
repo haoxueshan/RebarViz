@@ -20,7 +20,7 @@ function opening(id: string, x: number, y: number, width: number, height: number
 }
 
 function plan(slabs: FloorSlab[], openings: FloorOpening[] = [], supportRules: FloorSupportRule[] = []): FloorPlanState {
-  return { coordinateModel: "net-layout-v1", slabs, openings, supportRules, innerWallThickness: 240, outerWallThickness: 370, snapDistanceMm: 150 };
+  return { coordinateModel: "net-layout-v1", slabs, openings, supportRules, innerWallThickness: 240, outerWallThickness: 370, snapDistanceMm: 150, overlapToleranceMm: 10 };
 }
 
 const emptyRoleState: FloorRebarRoleState = { mainDirectionOverrides: {} };

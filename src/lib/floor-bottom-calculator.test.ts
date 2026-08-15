@@ -39,6 +39,7 @@ function plan(slabs: FloorSlab[], openings: FloorOpening[] = [], supportRules: F
     innerWallThickness: 240,
     outerWallThickness: 370,
     snapDistanceMm: 150,
+    overlapToleranceMm: 10,
   };
 }
 
@@ -483,5 +484,65 @@ describe("Atomic端点归属与BOM稳定分组", () => {
     expect(groups).toHaveLength(1);
     expect(groups[0]).toMatchObject({ count: 2, singleLengthMm: 4940.1, pieceIds: ["a", "b"] });
     expect(pieces[1].singleLengthMm).toBe(4940.100000000001);
+  });
+});
+
+describe("Floor Bottom对齐排布引擎", () => {
+  it("continuous Domain内同一方向共享统一Origin且步长等于间距", () => {
+    const state = plan(
+      [slab("a", 0, 0, 4200, 3600), slab("b", 4200, 0, 3600, 3600)],
+      [],
+      [continuousRule("a", "east")],
+    );
+    const calculation = calculateFloorBottomRebar(
+      state,
+      bottom({ defaults: { mainDiameter: 12, secondaryDiameter: 10, xSpacing: 150, ySpacing: 220 } }),
+    );
+    expect(calculation.isValid).toBe(true);
+    const xLines = calculation.lines.filter((line) => line.direction === "x");
+    const yLines = calculation.lines.filter((line) => line.direction === "y");
+    expect(xLines.map((line) => line.positionMm)).toEqual(Array.from({ length: 24 }, (_, index) => 75 + index * 150));
+    expect(yLines.map((line) => line.positionMm)).toEqual(Array.from({ length: 36 }, (_, index) => 50 + index * 220));
+    expect(yLines[0].positionMm).toBe(50);
+    expect(yLines[35].positionMm).toBe(7750);
+  });
+
+  it("独立板区各自按自身净跨居中，不贴边也不越界", () => {
+    const state = plan([slab("a", 0, 0, 4200, 3600), slab("b", 4200, 0, 3600, 3000)]);
+    const calculation = calculateFloorBottomRebar(state, bottom());
+    expect(calculation.isValid).toBe(true);
+    const yOf = (slabId: string) => calculation.lines
+      .filter((line) => line.slabIds.includes(slabId) && line.direction === "y")
+      .map((line) => line.positionMm);
+    const yA = yOf("a");
+    const yB = yOf("b");
+    expect(yA[0]).toBe(100);
+    expect(yA[yA.length - 1]).toBe(4100);
+    expect(yB[0]).toBe(4300);
+    expect(yB[yB.length - 1]).toBe(7700);
+  });
+
+  it("洞口裁断不改变理论线Origin与位置序列", () => {
+    const plain = plan([slab("a", 0, 0, 4200, 3600)]);
+    const withOpening = plan(
+      [slab("a", 0, 0, 4200, 3600)],
+      [opening("o", 1800, 1400, 600, 800)],
+    );
+    const plainCalculation = calculateFloorBottomRebar(plain, bottom());
+    const openingCalculation = calculateFloorBottomRebar(withOpening, bottom());
+    expect(plainCalculation.lines.map((line) => line.positionMm)).toEqual(
+      openingCalculation.lines.map((line) => line.positionMm),
+    );
+  });
+
+  it("小板区首末钢筋到边缘等距且非负", () => {
+    const calculation = calculateFloorBottomRebar(
+      plan([slab("a", 0, 0, 3350, 3300)]),
+      bottom({ defaults: { mainDiameter: 12, secondaryDiameter: 10, xSpacing: 220, ySpacing: 260 } }),
+    );
+    const yLines = calculation.lines.filter((line) => line.direction === "y");
+    expect(yLines).toHaveLength(countBars(3350, 260, "project"));
+    expect(yLines[0].positionMm).toBe(115);
+    expect(yLines[yLines.length - 1].positionMm).toBe(3235);
   });
 });

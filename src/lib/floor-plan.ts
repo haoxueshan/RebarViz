@@ -48,6 +48,8 @@ export type FloorPlanState = {
   innerWallThickness: number;
   outerWallThickness: number;
   snapDistanceMm: number;
+  /** 几何对齐容差：小于该值的边缘重叠/间隙自动纠偏为精确共边；0 为严格模式。 */
+  overlapToleranceMm: number;
 };
 
 export type FloorTopologyCell = {
@@ -148,6 +150,7 @@ export const DEFAULT_FLOOR_PLAN_STATE: FloorPlanState = {
   innerWallThickness: 240,
   outerWallThickness: 370,
   snapDistanceMm: 150,
+  overlapToleranceMm: 10,
 };
 
 /**
@@ -237,6 +240,7 @@ export function normalizeFloorPlanState(value: unknown): FloorPlanState {
     innerWallThickness: finiteNumber(value.innerWallThickness, 240),
     outerWallThickness: finiteNumber(value.outerWallThickness, 370),
     snapDistanceMm: finiteNumber(value.snapDistanceMm, 150),
+    overlapToleranceMm: Math.min(30, Math.max(0, finiteNumber(value.overlapToleranceMm, 10))),
   };
 }
 

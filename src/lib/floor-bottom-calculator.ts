@@ -10,6 +10,7 @@ import {
   buildFloorRebarDomains,
   type FloorRebarDomain,
 } from "./floor-rebar-domain";
+import { buildFloorRebarLayout } from "./floor-rebar-layout";
 import type { FloorBarLine, FloorBarPiece } from "./floor-rebar-types";
 import {
   DEFAULT_FLOOR_REBAR_ROLE_STATE,
@@ -577,8 +578,16 @@ export function calculateFloorBottomRebar(
       const perpendicularStart = direction === "x" ? domain.minY : domain.minX;
       const perpendicularEnd = direction === "x" ? domain.maxY : domain.maxX;
       const count = countBars(perpendicularEnd - perpendicularStart, settings.spacing, bottom.countMode);
+      const layout = buildFloorRebarLayout({
+        key: `${domain.id}:${direction}`,
+        direction,
+        count,
+        spacingMm: settings.spacing,
+        minMm: perpendicularStart,
+        maxMm: perpendicularEnd,
+      });
       for (let index = 0; index < count; index += 1) {
-        const positionMm = perpendicularStart + ((index + 0.5) * (perpendicularEnd - perpendicularStart)) / count;
+        const positionMm = layout.positionsMm[index];
         const line: FloorBarLine = {
           id: `${domain.id}:${direction}:line:${index + 1}`,
           domainId: domain.id,

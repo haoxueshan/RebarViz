@@ -50,6 +50,7 @@ function fixture() {
     innerWallThickness: 240,
     outerWallThickness: 370,
     snapDistanceMm: 150,
+    overlapToleranceMm: 10,
   };
   const bottom = calculateFloorBottomRebar(plan, structuredClone(DEFAULT_FLOOR_BOTTOM_STATE));
   const top = calculateFloorTopRebar(plan, structuredClone(DEFAULT_FLOOR_TOP_STATE));
