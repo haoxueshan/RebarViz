@@ -17,6 +17,11 @@ import {
 import type { FloorBarLine, FloorBarPiece } from "./floor-rebar-types";
 import { buildFloorRebarLayout } from "./floor-rebar-layout";
 import {
+  buildFloorTopAlignmentPlan,
+  EMPTY_FLOOR_TOP_ALIGNMENT_PLAN,
+  type FloorTopAlignmentPlan,
+} from "./floor-top-alignment";
+import {
   applyFloorTopThroughPaths,
   type ResolvedFloorTopThroughPath,
 } from "./floor-top-through";
@@ -102,6 +107,8 @@ export type FloorTopCalculation = {
   pieces: FloorBarPiece[];
   groups: FloorTopBomGroup[];
   resolvedThroughPaths: ResolvedFloorTopThroughPath[];
+  /** 跨 Domain 排筋相位规划（仅面筋；通墙启用时构建）。 */
+  alignmentPlan?: FloorTopAlignmentPlan;
   normalPieceCount: number;
   throughPieceCount: number;
   totalBarLines: number;
@@ -383,6 +390,7 @@ function emptyCalculation(
   roleDomains: FloorRebarRoleDomain[],
   errors: FloorTopIssue[],
   warnings: FloorTopIssue[],
+  alignmentPlan: FloorTopAlignmentPlan = EMPTY_FLOOR_TOP_ALIGNMENT_PLAN,
 ): FloorTopCalculation {
   return {
     domains,
@@ -391,6 +399,7 @@ function emptyCalculation(
     pieces: [],
     groups: [],
     resolvedThroughPaths: [],
+    alignmentPlan,
     normalPieceCount: 0,
     throughPieceCount: 0,
     totalBarLines: 0,
@@ -487,13 +496,18 @@ export function calculateFloorTopNormalRebar(
     code: "top-role-review-required",
     message: "旧版本的东西/南北向直径已迁移为主/副筋语义，请确认当前面筋主筋、副筋直径后再生成正式料单。",
   }] : [];
+  const alignmentPlan = top.throughPaths.some((path) => path.enabled)
+    ? buildFloorTopAlignmentPlan(plan, top, domains, top.throughPaths, roleState)
+    : EMPTY_FLOOR_TOP_ALIGNMENT_PLAN;
   const errors = [
     ...geometryErrors,
     ...roleContext.errors,
     ...reviewErrors,
     ...validateTopState(plan, top, domains, roleContext.mainDirectionByPhysicalDomain),
+    ...alignmentPlan.errors,
   ];
-  if (errors.length > 0) return emptyCalculation(domains, roleContext.roleDomains, errors, warnings);
+  warnings.push(...alignmentPlan.warnings);
+  if (errors.length > 0) return emptyCalculation(domains, roleContext.roleDomains, errors, warnings, alignmentPlan);
 
   const allCells = buildFloorTopologyCells(plan);
   const cellsById = new Map(allCells.map((cell) => [cell.id, cell]));
@@ -526,6 +540,9 @@ export function calculateFloorTopNormalRebar(
         settings.spacing,
         top.countMode,
       );
+      const inheritedPhase = alignmentPlan.phaseByDomainDirection.get(`${domain.id}:${direction}`);
+      const alignmentGroup = alignmentPlan.groups.find((group) =>
+        group.direction === direction && group.domainIds.includes(domain.id));
       const layout = buildFloorRebarLayout({
         key: `top:${domain.id}:${direction}`,
         direction,
@@ -533,7 +550,16 @@ export function calculateFloorTopNormalRebar(
         spacingMm: settings.spacing,
         minMm: perpendicularStart,
         maxMm: perpendicularEnd,
+        inheritedPhaseMm: inheritedPhase,
       });
+      if (layout.positionsMm.length !== count) {
+        calculationErrors.push({
+          code: "through-alignment-phase-unsatisfied",
+          message: `${directionLabel(direction)}面筋在共享通墙相位下无法保持当前根数算法生成的根数，已停止生成。`,
+          objectIds: domain.slabIds,
+        });
+        return;
+      }
       for (let index = 0; index < count; index += 1) {
         const positionMm = layout.positionsMm[index];
         const line: FloorBarLine = {
@@ -545,6 +571,9 @@ export function calculateFloorTopNormalRebar(
           role,
           source: "normal",
           positionMm,
+          alignmentMode: layout.mode === "inherited" ? "inherited" : "domain-centered",
+          alignmentPhaseMm: inheritedPhase,
+          alignmentGroupId: alignmentGroup?.id,
         };
         lines.push(line);
         const intervalResult = mergeFloorLineIntervalsBySupport(
@@ -645,7 +674,7 @@ export function calculateFloorTopNormalRebar(
     });
   });
   if (calculationErrors.length > 0) {
-    return emptyCalculation(domains, roleContext.roleDomains, calculationErrors, warnings);
+    return emptyCalculation(domains, roleContext.roleDomains, calculationErrors, warnings, alignmentPlan);
   }
 
   const groups = buildFloorTopBomGroups(pieces, settingsByDomainDirection);
@@ -665,6 +694,7 @@ export function calculateFloorTopNormalRebar(
     pieces,
     groups,
     resolvedThroughPaths: [],
+    alignmentPlan,
     normalPieceCount: pieces.length,
     throughPieceCount: 0,
     totalBarLines: lines.length,
@@ -760,6 +790,7 @@ export function calculateFloorTopRebar(
     pieces: applied.pieces,
     groups,
     resolvedThroughPaths: applied.resolvedPaths,
+    alignmentPlan: normal.alignmentPlan,
     normalPieceCount,
     throughPieceCount,
     totalBarLines: applied.lines.length,

@@ -18,6 +18,10 @@ export type FloorBarLine = {
   throughPathId?: string;
   /** X筋为全局Y坐标，Y筋为全局X坐标；始终使用net-layout-v1拓扑坐标。 */
   positionMm: number;
+  /** 对齐调试字段（可选）：相位来源、共享相位与对齐组。 */
+  alignmentMode?: "domain-centered" | "inherited";
+  alignmentPhaseMm?: number;
+  alignmentGroupId?: string;
 };
 
 /** Opening裁断并解析两端Atomic Boundary后，真正参与下料的一根钢筋实物件。 */

@@ -12,7 +12,10 @@ import {
   type FloorTopState,
   type FloorTopThroughPath,
 } from "./floor-top-calculator";
-import { resolveFloorTopThroughPathGeometry } from "./floor-top-through";
+import {
+  applyFloorTopThroughPaths,
+  resolveFloorTopThroughPathGeometry,
+} from "./floor-top-through";
 
 function slab(id: string, x: number, y: number, width: number, height: number): FloorSlab {
   return { id, name: `板区${id.toUpperCase()}`, type: "room", x, y, width, height };
@@ -263,7 +266,43 @@ describe("Floor Top Through路径解析与替换", () => {
     ]);
     const phaseInput = top([path()]);
     phaseInput.defaults.xSpacing = 1000;
-    expect(calculateFloorTopRebar(phasePlan, phaseInput).errors.map((item) => item.code))
+    // Alignment V2：两个Domain原本相位不同（500 vs 300），但能统一到500且保持根数不变。
+    const unified = calculateFloorTopRebar(phasePlan, phaseInput);
+    expect(unified.errors.map((item) => item.code)).not.toContain("through-path-line-phase-conflict");
+    expect(unified.throughPieceCount).toBeGreaterThan(0);
+    expect(unified.resolvedThroughPaths[0]?.linePositionsMm).toEqual([500, 1500, 2500, 3500]);
+  });
+
+  it("positionsEqual仍是最终安全防线：人为破坏普通Top相位后被拒绝", () => {
+    const state = plan([
+      slab("a", 0, 0, 4000, 3600),
+      slab("b", 4000, 0, 4000, 3600),
+    ]);
+    const normal = calculateFloorTopNormalRebar(state, top([]));
+    const sabotaged = {
+      ...normal,
+      lines: normal.lines.map((line) =>
+        line.slabIds.includes("b") && line.direction === "x"
+          ? { ...line, positionMm: line.positionMm + 10 }
+          : line),
+    };
+    const applied = applyFloorTopThroughPaths({
+      plan: state,
+      paths: [path()],
+      normalLines: sabotaged.lines,
+      normalPieces: sabotaged.pieces,
+      topAnchorExtraMm: 250,
+      resolveSettings: (slabId, direction, role) => ({
+        diameter: role === "main" ? 10 : 10,
+        spacing: 200,
+        extraMode: "both",
+      }),
+      resolveEndpointAnchor: (segment) => ({
+        anchorMm: segment.support === "outer-wall" ? 370 : 240,
+        extraApplied: false,
+      }),
+    });
+    expect(applied.errors.map((item) => item.code))
       .toContain("through-path-line-phase-conflict");
   });
 

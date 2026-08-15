@@ -172,6 +172,22 @@ export function FloorTopThroughPanel({
               </div>
 
               {resolved && <div className="mt-3 grid grid-cols-2 gap-2 rounded-xl bg-emerald-50 p-3 text-xs text-emerald-900 sm:grid-cols-4"><span>角色<strong className="mt-1 block">{floorBarRoleLabel(resolved.role)}</strong></span><span>继承规格<strong className="mt-1 block">Φ{resolved.diameter}@{resolved.spacing}</strong></span><span>方向<strong className="mt-1 block">{directionLabel(resolved.direction)}</strong></span><span>有效通墙筋<strong className="mt-1 block">{resolved.linePositionsMm.length}根</strong></span></div>}
+              {(() => {
+                const pathGroup = calculation.alignmentPlan?.groups.find((group) => group.throughPathIds.includes(path.id));
+                if (path.enabled && pathGroup) {
+                  return (
+                    <div className="mt-3 rounded-xl bg-blue-50 p-3 text-xs leading-5 text-blue-900" data-testid="through-alignment-status">
+                      <span className="font-semibold">排筋相位：已统一</span>
+                      <span className="ml-3">共享相位：{Number.isInteger(pathGroup.originMm) ? pathGroup.originMm : pathGroup.originMm.toFixed(1)} / @{pathGroup.spacingMm}</span>
+                      <span className="ml-3">参与区域：{pathGroup.domainIds.length} 个</span>
+                    </div>
+                  );
+                }
+                if (path.enabled && pathIssues.some((item) => item.code.startsWith("through-alignment-"))) {
+                  return <div className="mt-3 rounded-xl bg-amber-50 p-3 text-xs font-semibold text-amber-900">排筋相位：待协调</div>;
+                }
+                return null;
+              })()}
               {geometry.errors.length > 0 && <ul className="mt-3 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-900">{geometry.errors.map((item) => <li key={`${item.code}:${item.message}`}>• {item.message}</li>)}</ul>}
               {path.enabled && pathIssues.length > 0 && <ul className="mt-3 rounded-xl bg-rose-100 p-3 text-xs leading-5 text-rose-900">{pathIssues.map((item) => <li key={`${item.code}:${item.message}`}>• {item.message}</li>)}</ul>}
             </article>
