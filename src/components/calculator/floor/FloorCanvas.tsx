@@ -19,6 +19,11 @@ import {
   floorOpeningTouchesFloor,
   type FloorCanvasFitMode,
 } from "@/lib/floor-2d";
+import {
+  floorDockDirectionLabel,
+  type FloorDockDirection,
+  type FloorDockPreview,
+} from "@/lib/floor-docking";
 import type { FloorBottomCalculation } from "@/lib/floor-bottom-calculator";
 import type { FloorTopCalculation } from "@/lib/floor-top-calculator";
 import {
@@ -142,6 +147,17 @@ export function FloorCanvas({
   highlightedRoleDomainId,
   highlightedThroughPathId,
   initialFitMode = "floor",
+  editMode = "move",
+  onEditModeChange,
+  dockSourceId = null,
+  dockTargetId = null,
+  dockHoverDirection = null,
+  dockPreview = null,
+  multiSelection = new Set<string>(),
+  onDockPick,
+  onDockHoverDirection,
+  onDockConfirm,
+  onMultiToggle,
 }: {
   state: FloorPlanState;
   selection: FloorSelection;
@@ -158,6 +174,17 @@ export function FloorCanvas({
   highlightedRoleDomainId?: string | null;
   highlightedThroughPathId?: string | null;
   initialFitMode?: "floor" | "selection" | "domain";
+  editMode?: "move" | "dock" | "multi";
+  onEditModeChange?: (mode: "move" | "dock" | "multi") => void;
+  dockSourceId?: string | null;
+  dockTargetId?: string | null;
+  dockHoverDirection?: FloorDockDirection | null;
+  dockPreview?: FloorDockPreview | null;
+  multiSelection?: ReadonlySet<string>;
+  onDockPick?: (slabId: string) => void;
+  onDockHoverDirection?: (direction: FloorDockDirection | null) => void;
+  onDockConfirm?: (direction: FloorDockDirection) => void;
+  onMultiToggle?: (slabId: string) => void;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const dragRef = useRef<DragState | null>(null);
@@ -300,6 +327,15 @@ export function FloorCanvas({
     ? roleDomains.find((domain) => domain.shape === "irregular" && domain.slabIds.includes(selection.id))
     : undefined;
 
+  const dockSource = state.slabs.find((slab) => slab.id === dockSourceId) ?? null;
+  const dockTarget = state.slabs.find((slab) => slab.id === dockTargetId) ?? null;
+  const modeHint = editMode === "dock"
+    ? (!dockSource ? "点击选择源板区" : !dockTarget ? "已选源板区，点击选择目标板区" : "已选目标板区，点击目标四边确认拼接")
+    : editMode === "multi"
+      ? `已选${multiSelection.size}个板区，选择2个以上后可对齐`
+      : "拖动板区或洞口自由布置";
+  const dockGhost = dockPreview?.sourcePreview ?? null;
+
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50" data-testid="floor-canvas-card">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-3">
@@ -316,7 +352,12 @@ export function FloorCanvas({
             {highlightedRoleDomain && <button type="button" onClick={() => setFitMode("domain")} aria-pressed={fitMode === "domain"} className={`min-h-11 rounded-lg px-3 text-xs font-semibold ${fitMode === "domain" ? "bg-white text-indigo-700 shadow-sm" : "text-slate-600"}`}><Layers3 size={13} className="mr-1 inline" />区域</button>}
             <button type="button" onClick={() => setFitMode("all")} aria-pressed={fitMode === "all"} className={`min-h-11 rounded-lg px-3 text-xs font-semibold ${fitMode === "all" ? "bg-white text-blue-700 shadow-sm" : "text-slate-600"}`}><Eye size={13} className="mr-1 inline" />查看全部</button>
           </div>
-          <span className="inline-flex min-h-10 items-center gap-1 rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700"><Move size={13} /> 可拖动</span>
+          <span className="inline-flex min-h-10 items-center gap-1 rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700"><Move size={13} /> {modeHint}</span>
+          <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1" aria-label="编辑模式" data-testid="floor-edit-mode">
+            <button type="button" onClick={() => onEditModeChange?.("move")} aria-pressed={editMode === "move"} className={`min-h-11 rounded-lg px-3 text-xs font-semibold ${editMode === "move" ? "bg-white text-blue-700 shadow-sm" : "text-slate-600"}`}>移动</button>
+            <button type="button" onClick={() => onEditModeChange?.("dock")} aria-pressed={editMode === "dock"} className={`min-h-11 rounded-lg px-3 text-xs font-semibold ${editMode === "dock" ? "bg-white text-orange-600 shadow-sm" : "text-slate-600"}`}>拼接</button>
+            <button type="button" onClick={() => onEditModeChange?.("multi")} aria-pressed={editMode === "multi"} className={`min-h-11 rounded-lg px-3 text-xs font-semibold ${editMode === "multi" ? "bg-white text-violet-600 shadow-sm" : "text-slate-600"}`}>多选对齐</button>
+          </div>
         </div>
       </div>
       <svg
@@ -365,14 +406,28 @@ export function FloorCanvas({
           {state.slabs.map((slab) => {
             const selected = selection?.kind === "slab" && selection.id === slab.id;
             const domainHighlighted = Boolean(highlightedRoleDomain?.slabIds.includes(slab.id));
+            const dockSourceSelected = editMode === "dock" && dockSourceId === slab.id;
+            const dockTargetSelected = editMode === "dock" && dockTargetId === slab.id;
+            const multiSelected = editMode === "multi" && multiSelection.has(slab.id);
+            const ghostDimmed = dockGhost?.id === slab.id;
+            const interactive = editMode === "move";
             return (
               <rect
                 key={slab.id}
                 x={toX(slab.x)} y={toY(slab.y + slab.height)}
                 width={Math.max(slab.width * scale, 1)} height={Math.max(slab.height * scale, 1)}
-                fill={slabFill(slab.type, selected)} fillOpacity={highlightedRoleDomain ? domainHighlighted ? 1 : 0.42 : 1} stroke={selected ? "#2563eb" : domainHighlighted ? "#4f46e5" : "#94a3b8"} strokeWidth={selected ? 4 : domainHighlighted ? 3 : 1.5}
-                className="cursor-move touch-none" role="button" aria-label={`选择板区 ${slab.name}`} tabIndex={0}
-                onPointerDown={(event) => beginDrag(event, { kind: "slab", id: slab.id }, slab)}
+                fill={slabFill(slab.type, selected)} fillOpacity={ghostDimmed ? 0.25 : highlightedRoleDomain ? domainHighlighted ? 1 : 0.42 : 1}
+                stroke={dockSourceSelected ? "#f97316" : dockTargetSelected ? "#0ea5e9" : multiSelected ? "#8b5cf6" : selected ? "#2563eb" : domainHighlighted ? "#4f46e5" : "#94a3b8"}
+                strokeWidth={dockSourceSelected || dockTargetSelected || multiSelected ? 4 : selected ? 4 : domainHighlighted ? 3 : 1.5}
+                className={interactive ? "cursor-move touch-none" : editMode === "dock" ? "cursor-pointer touch-none" : "cursor-crosshair touch-none"}
+                role="button" aria-label={`选择板区 ${slab.name}`} tabIndex={0}
+                data-dock-role={dockSourceSelected ? "source" : dockTargetSelected ? "target" : undefined}
+                data-multi-selected={multiSelected ? "true" : undefined}
+                onPointerDown={(event) => {
+                  if (editMode === "dock") { event.stopPropagation(); onDockPick?.(slab.id); return; }
+                  if (editMode === "multi") { event.stopPropagation(); onMultiToggle?.(slab.id); return; }
+                  beginDrag(event, { kind: "slab", id: slab.id }, slab);
+                }}
                 onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { setSelectedPieceId(null); onSelect({ kind: "slab", id: slab.id }); } }}
               />
             );
@@ -389,6 +444,48 @@ export function FloorCanvas({
             />
           ))}
         </g>
+
+        {dockGhost && <g clipPath="url(#floor-plot-clip-v22)" data-floor-layer="dock-ghost" pointerEvents="none" data-dock-ghost="true">
+          <rect
+            x={toX(dockGhost.x)} y={toY(dockGhost.y + dockGhost.height)}
+            width={Math.max(dockGhost.width * scale, 1)} height={Math.max(dockGhost.height * scale, 1)}
+            fill="#3b82f6" fillOpacity="0.35" stroke="#2563eb" strokeWidth="3" strokeDasharray="8 5"
+          />
+          <text x={toX(dockGhost.x + dockGhost.width / 2)} y={toY(dockGhost.y + dockGhost.height / 2) + 5} textAnchor="middle" fontSize="13" fontWeight="800" fill="#1d4ed8">{dockGhost.name} 预览</text>
+        </g>}
+
+        {editMode === "dock" && dockTarget && (() => {
+          const target = dockTarget;
+          const sides: Array<{ direction: FloorDockDirection; x: number; y: number; width: number; height: number; labelX: number; labelY: number }> = [
+            { direction: "north", x: toX(target.x), y: toY(target.y + target.height) - 48, width: Math.max(target.width * scale, 1), height: 88, labelX: toX(target.x + target.width / 2), labelY: toY(target.y + target.height) - 52 },
+            { direction: "south", x: toX(target.x), y: toY(target.y) - 40, width: Math.max(target.width * scale, 1), height: 88, labelX: toX(target.x + target.width / 2), labelY: toY(target.y) + 14 },
+            { direction: "west", x: toX(target.x) - 48, y: toY(target.y + target.height), width: 88, height: Math.max(target.height * scale, 1), labelX: toX(target.x) - 52, labelY: toY(target.y + target.height / 2) + 4 },
+            { direction: "east", x: toX(target.x + target.width) - 40, y: toY(target.y + target.height), width: 88, height: Math.max(target.height * scale, 1), labelX: toX(target.x + target.width) + 8, labelY: toY(target.y + target.height / 2) + 4 },
+          ];
+          return (
+            <g clipPath="url(#floor-plot-clip-v22)" data-floor-layer="dock-hit">
+              {sides.map((side) => {
+                const hovered = dockHoverDirection === side.direction;
+                return (
+                  <g key={side.direction}>
+                    <rect
+                      x={side.x} y={side.y} width={side.width} height={side.height}
+                      fill={hovered ? "#bfdbfe" : "#e0f2fe"} fillOpacity={hovered ? 0.85 : 0.25}
+                      stroke={hovered ? "#2563eb" : "#93c5fd"} strokeWidth={hovered ? 4 : 1.5} strokeDasharray={hovered ? undefined : "4 4"}
+                      className="cursor-pointer" role="button" tabIndex={0} data-dock-side={side.direction}
+                      aria-label={`拼到${target.name}${floorDockDirectionLabel(side.direction)}`}
+                      onPointerEnter={() => onDockHoverDirection?.(side.direction)}
+                      onPointerLeave={() => onDockHoverDirection?.(null)}
+                      onPointerDown={(event) => { event.stopPropagation(); onDockConfirm?.(side.direction); }}
+                      onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onDockConfirm?.(side.direction); }}
+                    />
+                    {hovered && <text x={side.labelX} y={side.labelY} textAnchor="middle" fontSize="12" fontWeight="800" fill="#1d4ed8" style={{ paintOrder: "stroke", stroke: "white", strokeWidth: 4 }}>拼到{target.name}{floorDockDirectionLabel(side.direction)}</text>}
+                  </g>
+                );
+              })}
+            </g>
+          );
+        })()}
 
         <g clipPath="url(#floor-plot-clip-v22)" data-floor-layer="normal-pieces-visible" pointerEvents="none">
           {normalPieces.map((drawable) => {

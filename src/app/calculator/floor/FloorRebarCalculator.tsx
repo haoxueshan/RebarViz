@@ -72,6 +72,22 @@ import {
   parseFloorRebarRoleStoredRecord,
 } from "@/lib/floor-rebar-role-storage";
 import {
+  applyFloorDock,
+  applyFloorMultiAlign,
+  describeFloorSlabSideRelations,
+  floorDockAlignmentLabel,
+  floorDockDirectionLabel,
+  FLOOR_DOCK_ALIGNMENTS,
+  previewFloorDock,
+  previewFloorMultiAlign,
+  suggestFloorDockFixes,
+  type FloorDockAlignment,
+  type FloorDockDirection,
+  type FloorDockPreview,
+  type FloorDockSuggestion,
+  type FloorMultiAlignKind,
+} from "@/lib/floor-docking";
+import {
   resolveFloorGeometryTolerance,
 } from "@/lib/floor-geometry-tolerance";
 import { getFloorPrintEligibility } from "@/lib/floor-print";
@@ -380,6 +396,7 @@ export default function FloorRebarCalculator() {
   const [selectedThroughPathId, setSelectedThroughPathId] = useState<string | null>(null);
   const [boundarySectionOpen, setBoundarySectionOpen] = useState(false);
   const [floorSectionOpen, setFloorSectionOpen] = useState(false);
+  const [positionSectionOpen, setPositionSectionOpen] = useState(false);
   const [navigatorOpen, setNavigatorOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [tabletInspectorExpanded, setTabletInspectorExpanded] = useState(true);
@@ -387,6 +404,14 @@ export default function FloorRebarCalculator() {
   const [detailsExpanded, setDetailsExpanded] = useState(false);
   const [highlightedRoleDomainId, setHighlightedRoleDomainId] = useState<string | null>(null);
   const [canvasFocusRequest, setCanvasFocusRequest] = useState<{ mode: "selection" | "domain"; key: string } | null>(null);
+  const [editMode, setEditMode] = useState<"move" | "dock" | "multi">("move");
+  const [dockSourceId, setDockSourceId] = useState<string | null>(null);
+  const [dockTargetId, setDockTargetId] = useState<string | null>(null);
+  const [dockHoverDirection, setDockHoverDirection] = useState<FloorDockDirection | null>(null);
+  const [dockPinned, setDockPinned] = useState(false);
+  const [dockAlignment, setDockAlignment] = useState<FloorDockAlignment>("preserve");
+  const [multiSelection, setMultiSelection] = useState<Set<string>>(new Set());
+  const [multiAlignKind, setMultiAlignKind] = useState<FloorMultiAlignKind | null>(null);
 
   useEffect(() => {
     try {
@@ -593,6 +618,27 @@ export default function FloorRebarCalculator() {
     bom: printEligibility.eligible ? "valid" : "invalid",
   };
 
+  const dockPreview: FloorDockPreview | null = useMemo(() => {
+    if (!dockSourceId || !dockTargetId || !dockHoverDirection) return null;
+    return previewFloorDock(state, {
+      sourceSlabId: dockSourceId,
+      targetSlabId: dockTargetId,
+      direction: dockHoverDirection,
+      alignment: dockAlignment,
+    });
+  }, [dockAlignment, dockHoverDirection, dockSourceId, dockTargetId, state]);
+  const dockSourceSlab = state.slabs.find((slab) => slab.id === dockSourceId) ?? null;
+  const dockTargetSlab = state.slabs.find((slab) => slab.id === dockTargetId) ?? null;
+  const multiAlignPreview = useMemo(
+    () => multiAlignKind ? previewFloorMultiAlign(state, [...multiSelection], multiAlignKind) : null,
+    [multiAlignKind, multiSelection, state],
+  );
+  const dockSuggestions = useMemo(() => suggestFloorDockFixes(canonicalPlan), [canonicalPlan]);
+  const sideRelations = useMemo(
+    () => selectedSlab ? describeFloorSlabSideRelations(canonicalPlan, selectedSlab.id) : [],
+    [canonicalPlan, selectedSlab],
+  );
+
   useEffect(() => {
     if (selectedThroughPathId && !topState.throughPaths.some((path) => path.id === selectedThroughPathId)) setSelectedThroughPathId(null);
   }, [selectedThroughPathId, topState.throughPaths]);
@@ -752,6 +798,95 @@ export default function FloorRebarCalculator() {
     setSelectedBoundaryId(segment.id);
   };
 
+  const changeEditMode = (mode: "move" | "dock" | "multi") => {
+    setEditMode(mode);
+    setDockSourceId(null);
+    setDockTargetId(null);
+    setDockHoverDirection(null);
+    setDockPinned(false);
+    setMultiSelection(new Set());
+    setMultiAlignKind(null);
+  };
+
+  const handleDockPick = (slabId: string) => {
+    setDockPinned(false);
+    if (!dockSourceId) {
+      setDockSourceId(slabId);
+      setDockTargetId(null);
+      setDockHoverDirection(null);
+      return;
+    }
+    if (slabId === dockSourceId) {
+      setDockSourceId(null);
+      setDockTargetId(null);
+      setDockHoverDirection(null);
+      return;
+    }
+    setDockTargetId(slabId);
+    setDockHoverDirection(null);
+  };
+
+  const handleDockHover = (direction: FloorDockDirection | null) => {
+    if (dockPinned) return;
+    setDockHoverDirection(direction);
+  };
+
+  const pinDockDirection = (direction: FloorDockDirection) => {
+    setDockHoverDirection(direction);
+    setDockPinned(true);
+  };
+
+  const cancelDock = () => {
+    setDockSourceId(null);
+    setDockTargetId(null);
+    setDockHoverDirection(null);
+    setDockPinned(false);
+    setDockAlignment("preserve");
+  };
+
+  const confirmDock = () => {
+    if (!dockSourceId || !dockTargetId || !dockHoverDirection || !dockPreview?.valid) return;
+    const request = {
+      sourceSlabId: dockSourceId,
+      targetSlabId: dockTargetId,
+      direction: dockHoverDirection,
+      alignment: dockAlignment,
+    };
+    setState((current) => applyFloorDock(current, request));
+    setDockSourceId(null);
+    setDockTargetId(null);
+    setDockHoverDirection(null);
+    setDockPinned(false);
+    setDockAlignment("preserve");
+  };
+
+  const applyDockSuggestion = (suggestion: FloorDockSuggestion) => {
+    setState((current) => applyFloorDock(current, {
+      sourceSlabId: suggestion.sourceSlabId,
+      targetSlabId: suggestion.targetSlabId,
+      direction: suggestion.direction,
+      alignment: suggestion.alignment,
+    }));
+    if (editMode !== "move") changeEditMode("move");
+  };
+
+  const toggleMultiSelect = (slabId: string) => {
+    setMultiSelection((current) => {
+      const next = new Set(current);
+      if (next.has(slabId)) next.delete(slabId);
+      else next.add(slabId);
+      return next;
+    });
+    setMultiAlignKind(null);
+  };
+
+  const confirmMultiAlign = () => {
+    if (!multiAlignKind || !multiAlignPreview?.valid) return;
+    setState((current) => applyFloorMultiAlign(current, [...multiSelection], multiAlignKind));
+    setMultiSelection(new Set());
+    setMultiAlignKind(null);
+  };
+
   const selectAtomicBoundary = (segment: FloorAtomicBoundarySegment) => {
     setSelectedBoundaryId(segment.id);
     if (segment.openingId) setSelection({ kind: "opening", id: segment.openingId });
@@ -886,6 +1021,21 @@ export default function FloorRebarCalculator() {
         <CollapsibleSection title="边界关系" open={boundarySectionOpen} onToggle={() => setBoundarySectionOpen((value) => !value)} testId="floor-boundary-section">
           <BoundaryPanel compact state={state} selection={selection} segments={selectedSegments} selectedBoundaryId={selectedBoundaryId} onSelectBoundary={setSelectedBoundaryId} onSetSupport={setSegmentSupport} />
         </CollapsibleSection>
+        {selectedSlab && (
+          <CollapsibleSection title="位置关系" open={positionSectionOpen} onToggle={() => setPositionSectionOpen((value) => !value)} testId="floor-position-relations">
+            <div className="space-y-2" data-testid="floor-position-relations-list">
+              {sideRelations.map((relation) => (
+                <div key={relation.side} className="flex min-h-11 items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3">
+                  <span className="text-sm text-slate-700"><strong className="mr-1 text-slate-900">{relation.side === "west" ? "西侧" : relation.side === "east" ? "东侧" : relation.side === "south" ? "南侧" : "北侧"}</strong>{relation.label}</span>
+                  {relation.otherSlabId && (
+                    <button type="button" onClick={() => { changeEditMode("dock"); setDockSourceId(selectedSlab.id); setDockTargetId(relation.otherSlabId); }} className="min-h-9 rounded-lg border border-orange-300 bg-white px-2.5 text-xs font-semibold text-orange-700">连接板区</button>
+                  )}
+                </div>
+              ))}
+              <p className="text-xs leading-5 text-slate-500">位置关系由板区坐标自动推导；“连接板区”将进入拼接模式并按选择的方向精确贴齐（0mm共边）。</p>
+            </div>
+          </CollapsibleSection>
+        )}
         <CollapsibleSection title="楼层设置" open={floorSectionOpen} onToggle={() => setFloorSectionOpen((value) => !value)} testId="floor-settings-section">
           <div className="space-y-5">
             <section className="space-y-4">
@@ -901,7 +1051,23 @@ export default function FloorRebarCalculator() {
               <h3 className="font-semibold text-slate-900">{errors.length > 0 || invalidDrafts.size > 0 ? "几何输入无效" : warnings.length > 0 ? "几何有效，但需要确认" : "几何与支承拓扑有效"}</h3>
               {invalidDrafts.size > 0 && <p className="mt-2 text-sm text-rose-800">有 {invalidDrafts.size} 个数字输入仍为空或非法，旧数值不会被当作当前输入提交。</p>}
               {toleranceResult.corrections.length > 0 && <p className="mt-2 rounded-lg bg-blue-50 p-2 text-xs leading-5 text-blue-800">已自动对齐 {toleranceResult.corrections.length} 处板区边缘：在 {formatMm(state.overlapToleranceMm)}mm 容差内的重叠/间隙已纠偏为精确共边。</p>}
-              <ul className="mt-2 space-y-1 text-xs leading-5">{issues.map((issue) => <li key={`${issue.code}:${issue.message}`} className={issue.level === "error" ? "text-rose-800" : "text-amber-900"}>• {issue.message}</li>)}</ul>
+              <ul className="mt-2 space-y-1 text-xs leading-5">
+                {issues.map((issue) => {
+                  const relatedSuggestions = issue.level === "error"
+                    ? dockSuggestions.filter((suggestion) =>
+                        issue.objectIds?.includes(suggestion.sourceSlabId)
+                        && issue.objectIds.includes(suggestion.targetSlabId))
+                    : [];
+                  return (
+                    <li key={`${issue.code}:${issue.message}`} className={issue.level === "error" ? "text-rose-800" : "text-amber-900"}>
+                      • {issue.message}
+                      {relatedSuggestions.map((suggestion) => (
+                        <button key={`${suggestion.kind}:${suggestion.sourceSlabId}:${suggestion.direction}`} type="button" onClick={() => applyDockSuggestion(suggestion)} className="ml-1 inline-block rounded-lg border border-orange-300 bg-white px-2 py-0.5 font-semibold text-orange-700" data-testid="dock-suggestion-button">{suggestion.label}</button>
+                      ))}
+                    </li>
+                  );
+                })}
+              </ul>
             </section>
           </div>
         </CollapsibleSection>
@@ -949,7 +1115,63 @@ export default function FloorRebarCalculator() {
           </aside>
 
           <section className="min-w-0 space-y-3 md:col-start-1 md:row-start-1 lg:col-start-1 lg:row-start-1 xl:col-start-2">
-            <FloorCanvas key={canvasFocusRequest?.key ?? "floor-canvas"} state={dragActive ? state : canonicalPlan} selection={selection} selectedBoundaryId={selectedBoundaryId} onSelect={(next) => { setSelection(next); setSelectedBoundaryId(null); setSelectedThroughPathId(null); setHighlightedRoleDomainId(null); }} onSelectBoundary={selectAtomicBoundary} onMove={moveObject} onDragStateChange={setDragActive} bottomCalculation={stage === "bottom" ? bottomCalculation : undefined} topCalculation={stage === "top" ? topCalculation : undefined} roleDomains={roleDomains} roleState={roleState} highlightedRoleDomainId={highlightedRoleDomainId} highlightedThroughPathId={selectedThroughPathId} initialFitMode={canvasFocusRequest?.mode} />
+            <FloorCanvas key={canvasFocusRequest?.key ?? "floor-canvas"} state={dragActive ? state : canonicalPlan} selection={selection} selectedBoundaryId={selectedBoundaryId} onSelect={(next) => { setSelection(next); setSelectedBoundaryId(null); setSelectedThroughPathId(null); setHighlightedRoleDomainId(null); }} onSelectBoundary={selectAtomicBoundary} onMove={moveObject} onDragStateChange={setDragActive} bottomCalculation={stage === "bottom" ? bottomCalculation : undefined} topCalculation={stage === "top" ? topCalculation : undefined} roleDomains={roleDomains} roleState={roleState} highlightedRoleDomainId={highlightedRoleDomainId} highlightedThroughPathId={selectedThroughPathId} initialFitMode={canvasFocusRequest?.mode} editMode={stage === "plan" ? editMode : "move"} onEditModeChange={changeEditMode} dockSourceId={dockSourceId} dockTargetId={dockTargetId} dockHoverDirection={dockHoverDirection} dockPreview={dockPreview} multiSelection={multiSelection} onDockPick={handleDockPick} onDockHoverDirection={handleDockHover} onDockConfirm={pinDockDirection} onMultiToggle={toggleMultiSelect} />
+            {stage === "plan" && editMode === "dock" && dockPinned && dockSourceSlab && dockTargetSlab && dockHoverDirection && dockPreview && (
+              <div className="rounded-2xl border border-orange-200 bg-orange-50 p-4" data-testid="dock-confirm-panel">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-sm text-slate-800">
+                    源板区：<strong>{dockSourceSlab.name}</strong>
+                    <span className="mx-1 text-slate-400">→</span>
+                    目标板区：<strong>{dockTargetSlab.name}</strong>
+                    <span className="mx-1 text-slate-400">·</span>
+                    方向：<strong>{floorDockDirectionLabel(dockHoverDirection)}</strong>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-slate-600">对齐：</span>
+                    {FLOOR_DOCK_ALIGNMENTS.map((alignment) => (
+                      <button key={alignment} type="button" onClick={() => setDockAlignment(alignment)} aria-pressed={dockAlignment === alignment} className={`min-h-9 rounded-lg border px-2.5 text-xs font-medium ${dockAlignment === alignment ? "border-orange-500 bg-white text-orange-700" : "border-slate-300 bg-white text-slate-600"}`}>{floorDockAlignmentLabel(alignment)}</button>
+                    ))}
+                  </div>
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-600">
+                  <span>移动：X {formatMm(Math.abs(dockPreview.moveXmm))}mm · Y {formatMm(Math.abs(dockPreview.moveYmm))}mm</span>
+                  {Math.max(Math.abs(dockPreview.moveXmm), Math.abs(dockPreview.moveYmm)) <= state.overlapToleranceMm && <span className="rounded-full bg-emerald-100 px-2 py-0.5 font-semibold text-emerald-700">微小位移，可直接确认</span>}
+                  {Math.max(Math.abs(dockPreview.moveXmm), Math.abs(dockPreview.moveYmm)) > state.snapDistanceMm && <span className="rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-700">该操作将移动板区{formatMm(Math.max(Math.abs(dockPreview.moveXmm), Math.abs(dockPreview.moveYmm)))}mm</span>}
+                </div>
+                {dockPreview.valid ? (
+                  <p className="mt-2 rounded-lg bg-emerald-50 p-2 text-xs leading-5 text-emerald-800">拼接后将形成精确 0mm 共享板边（Gap=0 / Overlap=0）。</p>
+                ) : (
+                  <p className="mt-2 rounded-lg bg-rose-50 p-2 text-xs leading-5 text-rose-800">无法拼接：{dockSourceSlab.name}移动到{dockTargetSlab.name}{floorDockDirectionLabel(dockHoverDirection)}后，将与{new Intl.ListFormat("zh-CN").format(dockPreview.conflicts)}发生面积重叠。</p>
+                )}
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button type="button" onClick={cancelDock} className="min-h-10 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700">取消</button>
+                  <button type="button" onClick={confirmDock} disabled={!dockPreview.valid} className="min-h-10 rounded-xl bg-orange-600 px-5 text-sm font-semibold text-white disabled:opacity-40">确认拼接</button>
+                </div>
+              </div>
+            )}
+            {stage === "plan" && editMode === "multi" && multiSelection.size >= 2 && (
+              <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4" data-testid="multi-align-bar">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-semibold text-slate-800">对齐 {multiSelection.size} 个板区：</span>
+                  {(["left", "right", "top", "bottom"] as FloorMultiAlignKind[]).map((kind) => (
+                    <button key={kind} type="button" onClick={() => setMultiAlignKind(kind)} aria-pressed={multiAlignKind === kind} className={`min-h-10 rounded-xl border px-3 text-xs font-semibold ${multiAlignKind === kind ? "border-violet-500 bg-white text-violet-700" : "border-slate-300 bg-white text-slate-700"}`}>{kind === "left" ? "左对齐" : kind === "right" ? "右对齐" : kind === "top" ? "上对齐" : "下对齐"}</button>
+                  ))}
+                </div>
+                {multiAlignPreview && (
+                  <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+                    {multiAlignPreview.valid ? (
+                      <p className="text-xs text-slate-700">将移动 {multiAlignPreview.movedSlabCount} 个板区，最大位移：{formatMm(multiAlignPreview.maxMoveMm)}mm</p>
+                    ) : (
+                      <p className="text-xs text-rose-700">对齐后{new Intl.ListFormat("zh-CN").format(multiAlignPreview.conflicts)}将发生面积重叠，禁止执行。</p>
+                    )}
+                    <div className="mt-2 flex gap-2">
+                      <button type="button" onClick={() => setMultiAlignKind(null)} className="min-h-9 rounded-xl border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-600">取消</button>
+                      <button type="button" onClick={confirmMultiAlign} disabled={!multiAlignPreview.valid} className="min-h-9 rounded-xl bg-violet-600 px-4 text-xs font-semibold text-white disabled:opacity-40">确认对齐</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
             {stage === "plan" && <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] text-slate-600 lg:hidden">{[["板区", state.slabs.length], ["洞口", state.openings.length], ["建筑外边", stats.exterior], ["内墙", stats.inner], ["连续板边", stats.continuous], ["洞口边", stats.opening]].map(([label, value]) => <span key={String(label)} className="rounded-full bg-slate-100 px-2.5 py-1"><strong className="text-slate-900">{value}</strong> {label}</span>)}</div>}
           </section>
 
