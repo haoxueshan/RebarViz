@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertTriangle, Check, ChevronLeft, ChevronRight, Circle, DoorOpen, Grid2X2, Menu, RotateCcw, Settings2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { FloorBottomResults, FloorBottomSettingsPanel } from "@/components/calculator/floor/FloorBottomPanel";
 import { FloorBomPanel } from "@/components/calculator/floor/FloorBomPanel";
 import { FloorCanvas, type FloorSelection } from "@/components/calculator/floor/FloorCanvas";
@@ -90,6 +90,13 @@ import {
 import {
   resolveFloorGeometryTolerance,
 } from "@/lib/floor-geometry-tolerance";
+import {
+  createFloorHistory,
+  pushFloorHistory,
+  redoFloorHistory,
+  undoFloorHistory,
+  type FloorHistoryState,
+} from "@/lib/floor-history";
 import { getFloorPrintEligibility } from "@/lib/floor-print";
 import { resolveFloorTopThroughPathGeometry } from "@/lib/floor-top-through";
 
@@ -403,7 +410,7 @@ export default function FloorRebarCalculator() {
   const [navigatorCollapsed, setNavigatorCollapsed] = useState(false);
   const [detailsExpanded, setDetailsExpanded] = useState(false);
   const [highlightedRoleDomainId, setHighlightedRoleDomainId] = useState<string | null>(null);
-  const [canvasFocusRequest, setCanvasFocusRequest] = useState<{ mode: "selection" | "domain"; key: string } | null>(null);
+  const [canvasFocusRequest, setCanvasFocusRequest] = useState<{ mode: "floor" | "selection" | "domain"; key: string } | null>(null);
   const [editMode, setEditMode] = useState<"move" | "dock" | "multi">("move");
   const [dockSourceId, setDockSourceId] = useState<string | null>(null);
   const [dockTargetId, setDockTargetId] = useState<string | null>(null);
@@ -412,6 +419,11 @@ export default function FloorRebarCalculator() {
   const [dockAlignment, setDockAlignment] = useState<FloorDockAlignment>("preserve");
   const [multiSelection, setMultiSelection] = useState<Set<string>>(new Set());
   const [multiAlignKind, setMultiAlignKind] = useState<FloorMultiAlignKind | null>(null);
+  const [workspaceFullscreen, setWorkspaceFullscreen] = useState(false);
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
+  const [history, setHistory] = useState<FloorHistoryState<FloorPlanState>>(() => createFloorHistory(cloneDefaultState()));
+  const stateRef = useRef<FloorPlanState>(cloneDefaultState());
+  stateRef.current = state;
 
   useEffect(() => {
     try {
@@ -427,6 +439,7 @@ export default function FloorRebarCalculator() {
         const record = parseFloorDraftRecord(JSON.parse(saved));
         if (record) {
           setState(record.state);
+          setHistory(createFloorHistory(record.state));
           const bottomSaved = window.localStorage.getItem(FLOOR_BOTTOM_STORAGE_KEY);
           if (bottomSaved) {
             const bottomRecord = parseFloorBottomStoredRecord(
@@ -482,7 +495,15 @@ export default function FloorRebarCalculator() {
     } finally {
       setHydrated(true);
     }
+    if (window.localStorage.getItem("floorInspectorCollapsed") === "true") {
+      setInspectorCollapsed(true);
+    }
   }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    window.localStorage.setItem("floorInspectorCollapsed", String(inspectorCollapsed));
+  }, [hydrated, inspectorCollapsed]);
 
   const toleranceResult = useMemo(() => resolveFloorGeometryTolerance(state), [state]);
   const canonicalPlan = toleranceResult.plan;
@@ -655,24 +676,26 @@ export default function FloorRebarCalculator() {
 
   const updateSlab = (patch: Partial<FloorSlab>) => {
     if (!selectedSlab) return;
-    setState((current) => resolveFloorGeometryTolerance({
-      ...current,
-      slabs: current.slabs.map((slab) => slab.id === selectedSlab.id ? { ...slab, ...patch } : slab),
-    }).plan);
+    const next = resolveFloorGeometryTolerance({
+      ...state,
+      slabs: state.slabs.map((slab) => slab.id === selectedSlab.id ? { ...slab, ...patch } : slab),
+    }).plan;
+    applyStateWithHistory(next);
   };
 
   const updateOpening = (patch: Partial<FloorOpening>) => {
     if (!selectedOpening) return;
-    setState((current) => resolveFloorGeometryTolerance({
-      ...current,
-      openings: current.openings.map((opening) => opening.id === selectedOpening.id ? { ...opening, ...patch } : opening),
-    }).plan);
+    const next = resolveFloorGeometryTolerance({
+      ...state,
+      openings: state.openings.map((opening) => opening.id === selectedOpening.id ? { ...opening, ...patch } : opening),
+    }).plan;
+    applyStateWithHistory(next);
   };
 
   const addSlab = () => {
     const bounds = floorPlanBounds(state.slabs);
     const next: FloorSlab = { id: nextObjectId("slab"), name: nextAvailableFloorName(state.slabs.map((slab) => slab.name), "板区"), type: "room", x: bounds.maxX, y: bounds.minY, width: 3600, height: 3600 };
-    setState((current) => ({ ...current, slabs: [...current.slabs, next] }));
+    applyStateWithHistory({ ...state, slabs: [...state.slabs, next] });
     setSelection({ kind: "slab", id: next.id });
     setSelectedBoundaryId(null);
   };
@@ -685,7 +708,7 @@ export default function FloorRebarCalculator() {
       id: nextObjectId("opening"), name: nextAvailableFloorName(state.openings.map((opening) => opening.name), "洞口"), type: "stair",
       x: host ? host.x + (host.width - width) / 2 : 0, y: host ? host.y + (host.height - height) / 2 : 0, width, height,
     };
-    setState((current) => ({ ...current, openings: [...current.openings, next] }));
+    applyStateWithHistory({ ...state, openings: [...state.openings, next] });
     setSelection({ kind: "opening", id: next.id });
     setSelectedBoundaryId(null);
   };
@@ -693,7 +716,7 @@ export default function FloorRebarCalculator() {
   const resetPlan = () => {
     if (!window.confirm("确定恢复Geometry V2默认数据吗？当前整层草稿将被替换。")) return;
     const next = cloneDefaultState();
-    setState(next);
+    applyStateWithHistory(next);
     setRoleState(cloneDefaultRoleState());
     setBottomState(cloneDefaultBottomState());
     setTopState(cloneDefaultTopState());
@@ -716,11 +739,11 @@ export default function FloorRebarCalculator() {
   const duplicateSelected = () => {
     if (selectedSlab) {
       const next = { ...selectedSlab, id: nextObjectId("slab"), name: nextAvailableFloorName(state.slabs.map((slab) => slab.name), "板区"), x: selectedSlab.x + selectedSlab.width };
-      setState((current) => ({ ...current, slabs: [...current.slabs, next] }));
+      applyStateWithHistory({ ...state, slabs: [...state.slabs, next] });
       setSelection({ kind: "slab", id: next.id });
     } else if (selectedOpening) {
       const next = { ...selectedOpening, id: nextObjectId("opening"), name: nextAvailableFloorName(state.openings.map((opening) => opening.name), "洞口"), x: selectedOpening.x + state.snapDistanceMm, y: selectedOpening.y + state.snapDistanceMm };
-      setState((current) => ({ ...current, openings: [...current.openings, next] }));
+      applyStateWithHistory({ ...state, openings: [...state.openings, next] });
       setSelection({ kind: "opening", id: next.id });
     }
   };
@@ -733,12 +756,12 @@ export default function FloorRebarCalculator() {
     const removedThroughPathIds = selection.kind === "slab"
       ? new Set(topState.throughPaths.filter((path) => path.slabIds.includes(selection.id)).map((path) => path.id))
       : new Set<string>();
-    setState((current) => ({
-      ...current,
-      slabs: selection.kind === "slab" ? current.slabs.filter((slab) => slab.id !== selection.id) : current.slabs,
-      openings: selection.kind === "opening" ? current.openings.filter((opening) => opening.id !== selection.id) : current.openings,
-      supportRules: current.supportRules.filter((rule) => rule.target.kind === "slab-edge" ? rule.target.slabId !== selection.id : rule.target.openingId !== selection.id),
-    }));
+    applyStateWithHistory({
+      ...state,
+      slabs: selection.kind === "slab" ? state.slabs.filter((slab) => slab.id !== selection.id) : state.slabs,
+      openings: selection.kind === "opening" ? state.openings.filter((opening) => opening.id !== selection.id) : state.openings,
+      supportRules: state.supportRules.filter((rule) => rule.target.kind === "slab-edge" ? rule.target.slabId !== selection.id : rule.target.openingId !== selection.id),
+    });
     if (selection.kind === "slab") {
       setTopState((current) => ({
         ...current,
@@ -763,40 +786,100 @@ export default function FloorRebarCalculator() {
   };
 
   const moveObject = (nextSelection: Exclude<FloorSelection, null>, x: number, y: number, finished: boolean) => {
-    setState((current) => {
-      if (nextSelection.kind === "slab") {
-        const object = current.slabs.find((slab) => slab.id === nextSelection.id);
-        if (!object) return current;
-        const moved = { ...object, x, y };
-        const finalObject = finished ? snapFloorSlab(moved, current.slabs.filter((slab) => slab.id !== object.id), current.snapDistanceMm) : moved;
-        const next = { ...current, slabs: current.slabs.map((slab) => slab.id === object.id ? finalObject : slab) };
-        return finished ? resolveFloorGeometryTolerance(next).plan : next;
-      }
-      const object = current.openings.find((opening) => opening.id === nextSelection.id);
-      if (!object) return current;
+    // PRD 40/41/43：拖动过程只更新Canvas本地预览，仅pointerup提交一次正式State。
+    if (!finished) return;
+    if (nextSelection.kind === "slab") {
+      const object = state.slabs.find((slab) => slab.id === nextSelection.id);
+      if (!object) return;
       const moved = { ...object, x, y };
-      const finalObject = finished ? snapFloorOpening(moved, current.slabs, current.openings.filter((opening) => opening.id !== object.id), current.snapDistanceMm) : moved;
-      const next = { ...current, openings: current.openings.map((opening) => opening.id === object.id ? finalObject : opening) };
-      return finished ? resolveFloorGeometryTolerance(next).plan : next;
-    });
+      const finalObject = snapFloorSlab(moved, state.slabs.filter((slab) => slab.id !== object.id), state.snapDistanceMm);
+      const next = { ...state, slabs: state.slabs.map((slab) => slab.id === object.id ? finalObject : slab) };
+      applyStateWithHistory(resolveFloorGeometryTolerance(next).plan);
+      return;
+    }
+    const object = state.openings.find((opening) => opening.id === nextSelection.id);
+    if (!object) return;
+    const moved = { ...object, x, y };
+    const finalObject = snapFloorOpening(moved, state.slabs, state.openings.filter((opening) => opening.id !== object.id), state.snapDistanceMm);
+    const next = { ...state, openings: state.openings.map((opening) => opening.id === object.id ? finalObject : opening) };
+    applyStateWithHistory(resolveFloorGeometryTolerance(next).plan);
   };
 
   const setSegmentSupport = (segment: FloorAtomicBoundarySegment, target: FloorSupportRuleTarget, support: FloorSupportRule["support"]) => {
     const key = targetKey(target);
-    setState((current) => {
+    const next = {
+      ...state,
       // 同一Atomic Segment可能同时由A东侧和B西侧稳定target描述。
       // UI写入时清除两侧所有重叠规则，避免制造互相冲突的双边状态。
-      return {
-        ...current,
-        supportRules: replaceFloorSupportRuleForAtomicSegment(current, segment, {
-          id: `support:${key}`,
-          target: structuredClone(target),
-          support,
-        }),
-      };
-    });
+      supportRules: replaceFloorSupportRuleForAtomicSegment(state, segment, {
+        id: `support:${key}`,
+        target: structuredClone(target),
+        support,
+      }),
+    };
+    applyStateWithHistory(next);
     setSelectedBoundaryId(segment.id);
   };
+
+  const commitHistory = (next: FloorPlanState) => {
+    setHistory((current) => pushFloorHistory({ ...current, present: stateRef.current }, next));
+  };
+
+  const applyStateWithHistory = (next: FloorPlanState) => {
+    commitHistory(next);
+    setState(next);
+  };
+
+  const undoHistory = () => {
+    if (history.past.length === 0) return;
+    const result = undoFloorHistory({ ...history, present: stateRef.current });
+    setState(result.value);
+    setHistory(result.history);
+    const firstSlab = result.value.slabs[0] ?? result.value.openings[0];
+    setSelection(firstSlab ? { kind: "slab", id: firstSlab.id } : null);
+    setSelectedBoundaryId(null);
+    setSelectedThroughPathId(null);
+  };
+
+  const redoHistory = () => {
+    if (history.future.length === 0) return;
+    const result = redoFloorHistory({ ...history, present: stateRef.current });
+    setState(result.value);
+    setHistory(result.history);
+    const firstSlab = result.value.slabs[0] ?? result.value.openings[0];
+    setSelection(firstSlab ? { kind: "slab", id: firstSlab.id } : null);
+    setSelectedBoundaryId(null);
+  };
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable)) return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        if (event.shiftKey) redoHistory();
+        else undoHistory();
+      } else if (event.key === "Delete") {
+        if (selection) {
+          event.preventDefault();
+          deleteSelected();
+        }
+      } else if (event.key === "Escape") {
+        setNavigatorOpen(false);
+        setDockSourceId(null);
+        setDockTargetId(null);
+        setDockHoverDirection(null);
+        setDockPinned(false);
+        setMultiSelection(new Set());
+        setMultiAlignKind(null);
+      } else if (event.key.toLowerCase() === "f") {
+        setCanvasFocusRequest({ mode: "floor", key: `fit:${Date.now()}` });
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [history, selection, state]);
 
   const changeEditMode = (mode: "move" | "dock" | "multi") => {
     setEditMode(mode);
@@ -852,7 +935,7 @@ export default function FloorRebarCalculator() {
       direction: dockHoverDirection,
       alignment: dockAlignment,
     };
-    setState((current) => applyFloorDock(current, request));
+    applyStateWithHistory(applyFloorDock(state, request));
     setDockSourceId(null);
     setDockTargetId(null);
     setDockHoverDirection(null);
@@ -861,7 +944,7 @@ export default function FloorRebarCalculator() {
   };
 
   const applyDockSuggestion = (suggestion: FloorDockSuggestion) => {
-    setState((current) => applyFloorDock(current, {
+    applyStateWithHistory(applyFloorDock(state, {
       sourceSlabId: suggestion.sourceSlabId,
       targetSlabId: suggestion.targetSlabId,
       direction: suggestion.direction,
@@ -882,7 +965,7 @@ export default function FloorRebarCalculator() {
 
   const confirmMultiAlign = () => {
     if (!multiAlignKind || !multiAlignPreview?.valid) return;
-    setState((current) => applyFloorMultiAlign(current, [...multiSelection], multiAlignKind));
+    applyStateWithHistory(applyFloorMultiAlign(state, [...multiSelection], multiAlignKind));
     setMultiSelection(new Set());
     setMultiAlignKind(null);
   };
@@ -1082,10 +1165,60 @@ export default function FloorRebarCalculator() {
   );
 
   const inspector = <FloorWorkspaceInspector title={inspectorTitle} subtitle={inspectorSubtitle} tabs={inspectorTabs} issueCount={inspectorIssueCount}>{inspectorContent}</FloorWorkspaceInspector>;
+  const canvasElement = (
+    <FloorCanvas
+      key={canvasFocusRequest?.key ?? "floor-canvas"}
+      state={canonicalPlan}
+      selection={selection}
+      selectedBoundaryId={selectedBoundaryId}
+      onSelect={(next) => { setSelection(next); setSelectedBoundaryId(null); setSelectedThroughPathId(null); setHighlightedRoleDomainId(null); }}
+      onSelectBoundary={selectAtomicBoundary}
+      onMove={moveObject}
+      onDragStateChange={setDragActive}
+      onDragCommit={() => commitHistory(state)}
+      bottomCalculation={stage === "bottom" ? bottomCalculation : undefined}
+      topCalculation={stage === "top" ? topCalculation : undefined}
+      roleDomains={roleDomains}
+      roleState={roleState}
+      highlightedRoleDomainId={highlightedRoleDomainId}
+      highlightedThroughPathId={selectedThroughPathId}
+      initialFitMode={canvasFocusRequest?.mode}
+      editMode={stage === "plan" ? editMode : "move"}
+      onEditModeChange={changeEditMode}
+      dockSourceId={dockSourceId}
+      dockTargetId={dockTargetId}
+      dockHoverDirection={dockHoverDirection}
+      dockPreview={dockPreview}
+      multiSelection={multiSelection}
+      onDockPick={handleDockPick}
+      onDockHoverDirection={handleDockHover}
+      onDockConfirm={pinDockDirection}
+      onMultiToggle={toggleMultiSelect}
+      fullscreen={workspaceFullscreen}
+      onToggleFullscreen={() => setWorkspaceFullscreen((value) => !value)}
+      canUndo={history.past.length > 0}
+      canRedo={history.future.length > 0}
+      onUndo={undoHistory}
+      onRedo={redoHistory}
+    />
+  );
   const navigator = <FloorWorkspaceNavigator stage={stage} plan={state} selection={selection} geometryIssues={issues} bottomOverrides={new Set(Object.keys(bottomState.slabOverrides))} topOverrides={new Set(Object.keys(topState.slabOverrides))} roleItems={roleItems} throughItems={throughItems} selectedThroughPathId={selectedThroughPathId} onSelect={selectWorkspaceObject} onSelectRole={selectRoleItem} onSelectThrough={selectThroughPath} onAddSlab={addSlab} onAddOpening={addOpening} onDuplicate={duplicateSelected} onDelete={deleteSelected} onAddThrough={addThroughPath} />;
+  const gridClass = navigatorCollapsed
+    ? (inspectorCollapsed
+      ? "lg:grid-cols-[minmax(0,1fr)_44px] xl:grid-cols-[52px_minmax(0,1fr)_44px]"
+      : "lg:grid-cols-[minmax(0,1fr)_370px] xl:grid-cols-[52px_minmax(0,1fr)_370px]")
+    : (inspectorCollapsed
+      ? "lg:grid-cols-[minmax(0,1fr)_44px] xl:grid-cols-[240px_minmax(0,1fr)_44px]"
+      : "lg:grid-cols-[minmax(0,1fr)_370px] xl:grid-cols-[240px_minmax(0,1fr)_370px]");
 
   return (
-    <main className="mx-auto max-w-[1500px] px-4 py-4 sm:px-6 lg:px-8 lg:py-5">
+    <main className={workspaceFullscreen ? "h-full" : "mx-auto max-w-[1500px] px-4 py-4 sm:px-6 lg:px-8 lg:py-5"}>
+      {workspaceFullscreen ? (
+        <div className="fixed inset-0 z-[90] bg-slate-50 p-3" data-testid="floor-fullscreen-canvas">
+          {canvasElement}
+        </div>
+      ) : (
+        <>
       <header className="mb-3">
         <h1 className="text-2xl font-bold tracking-tight text-slate-950 xl:text-3xl">整层楼板板筋系统</h1>
         <p className="mt-1 hidden truncate text-xs font-semibold text-blue-600 xl:block">FloorRebarCalculator · Multi-Block Workspace V1 + Tablet Workspace V1 · Geometry V2.1 + Floor 2D V2.2 + Bottom/Top/Through + BOM/Print V1</p>
@@ -1108,14 +1241,14 @@ export default function FloorRebarCalculator() {
           <button type="button" aria-expanded={tabletInspectorExpanded} onClick={() => setTabletInspectorExpanded((value) => !value)} className="hidden min-h-11 items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 md:inline-flex lg:hidden"><Settings2 size={17} />{tabletInspectorExpanded ? "收起编辑" : "展开编辑"}</button>
         </div>
 
-        <div className={`grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_370px] ${navigatorCollapsed ? "xl:grid-cols-[52px_minmax(0,1fr)_370px]" : "xl:grid-cols-[240px_minmax(0,1fr)_370px]"}`} data-testid="floor-workspace-grid">
+        <div className={`grid min-w-0 gap-4 ${gridClass}`} data-testid="floor-workspace-grid">
           <aside className="relative hidden min-h-[480px] overflow-hidden rounded-2xl border border-slate-200 bg-white xl:sticky xl:top-20 xl:col-start-1 xl:row-start-1 xl:block xl:h-[calc(100dvh-15rem)] xl:max-h-[calc(100dvh-15rem)]">
             <button type="button" aria-label={navigatorCollapsed ? "展开左侧导航" : "收起左侧导航"} onClick={() => setNavigatorCollapsed((value) => !value)} className="absolute right-1 top-1 z-10 flex size-10 items-center justify-center rounded-xl bg-white/90 text-slate-600 shadow-sm">{navigatorCollapsed ? <ChevronRight size={17} /> : <ChevronLeft size={17} />}</button>
             {navigatorCollapsed ? <FloorWorkspaceNavigator compact stage={stage} plan={state} selection={selection} geometryIssues={issues} bottomOverrides={new Set(Object.keys(bottomState.slabOverrides))} topOverrides={new Set(Object.keys(topState.slabOverrides))} roleItems={roleItems} throughItems={throughItems} selectedThroughPathId={selectedThroughPathId} onSelect={selectWorkspaceObject} onSelectRole={selectRoleItem} onSelectThrough={selectThroughPath} onAddSlab={addSlab} onAddOpening={addOpening} onDuplicate={duplicateSelected} onDelete={deleteSelected} onAddThrough={addThroughPath} /> : navigator}
           </aside>
 
           <section className="min-w-0 space-y-3 md:col-start-1 md:row-start-1 lg:col-start-1 lg:row-start-1 xl:col-start-2">
-            <FloorCanvas key={canvasFocusRequest?.key ?? "floor-canvas"} state={dragActive ? state : canonicalPlan} selection={selection} selectedBoundaryId={selectedBoundaryId} onSelect={(next) => { setSelection(next); setSelectedBoundaryId(null); setSelectedThroughPathId(null); setHighlightedRoleDomainId(null); }} onSelectBoundary={selectAtomicBoundary} onMove={moveObject} onDragStateChange={setDragActive} bottomCalculation={stage === "bottom" ? bottomCalculation : undefined} topCalculation={stage === "top" ? topCalculation : undefined} roleDomains={roleDomains} roleState={roleState} highlightedRoleDomainId={highlightedRoleDomainId} highlightedThroughPathId={selectedThroughPathId} initialFitMode={canvasFocusRequest?.mode} editMode={stage === "plan" ? editMode : "move"} onEditModeChange={changeEditMode} dockSourceId={dockSourceId} dockTargetId={dockTargetId} dockHoverDirection={dockHoverDirection} dockPreview={dockPreview} multiSelection={multiSelection} onDockPick={handleDockPick} onDockHoverDirection={handleDockHover} onDockConfirm={pinDockDirection} onMultiToggle={toggleMultiSelect} />
+            {canvasElement}
             {stage === "plan" && editMode === "dock" && dockPinned && dockSourceSlab && dockTargetSlab && dockHoverDirection && dockPreview && (
               <div className="rounded-2xl border border-orange-200 bg-orange-50 p-4" data-testid="dock-confirm-panel">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1176,10 +1309,14 @@ export default function FloorRebarCalculator() {
           </section>
 
           {inspectorOpen && <button type="button" aria-label="关闭属性面板遮罩" onClick={() => setInspectorOpen(false)} className="fixed inset-0 z-[60] bg-slate-950/40 md:hidden" />}
-          <aside className={`${inspectorOpen ? "fixed inset-x-0 bottom-0 z-[70] block max-h-[82dvh] overflow-hidden rounded-t-3xl" : "hidden"} ${tabletInspectorExpanded ? "md:block" : "md:hidden lg:block"} border border-slate-200 bg-white shadow-2xl md:relative md:top-auto md:z-auto md:col-start-1 md:row-start-2 md:rounded-2xl md:shadow-none lg:col-start-2 lg:row-start-1 lg:self-start xl:col-start-3`}>
+          {!inspectorCollapsed && <aside className={`${inspectorOpen ? "fixed inset-x-0 bottom-0 z-[70] block max-h-[82dvh] overflow-hidden rounded-t-3xl" : "hidden"} ${tabletInspectorExpanded ? "md:block" : "md:hidden lg:block"} border border-slate-200 bg-white shadow-2xl md:relative md:top-auto md:z-auto md:col-start-1 md:row-start-2 md:rounded-2xl md:shadow-none lg:col-start-2 lg:row-start-1 lg:self-start xl:col-start-3`}>
             <div className="flex min-h-14 items-center justify-between border-b border-slate-200 px-4 md:hidden"><strong className="text-sm text-slate-950">编辑：{inspectorTitle}</strong><button type="button" onClick={() => setInspectorOpen(false)} className="min-h-11 rounded-xl px-3 text-sm font-semibold text-slate-600">关闭</button></div>
+            <div className="hidden min-h-10 items-center justify-between border-b border-slate-200 px-3 lg:flex"><span className="text-xs font-semibold text-slate-500">参数面板</span><button type="button" onClick={() => setInspectorCollapsed(true)} aria-label="收起参数面板" data-testid="collapse-inspector-handle" className="inline-flex min-h-8 items-center gap-1 rounded-lg border border-slate-200 px-2 text-xs font-semibold text-slate-600">收起<ChevronRight size={13} /></button></div>
             <div className="max-h-[calc(82dvh-3.5rem)] overflow-y-auto pb-[max(16px,env(safe-area-inset-bottom))] md:max-h-none md:overflow-visible md:pb-0">{inspector}</div>
-          </aside>
+          </aside>}
+          {inspectorCollapsed && <aside className="hidden lg:col-start-2 lg:row-start-1 lg:block xl:col-start-3">
+            <button type="button" onClick={() => setInspectorCollapsed(false)} aria-label="打开参数面板" data-testid="open-inspector-handle" className="flex h-full min-h-24 w-full flex-col items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white text-xs font-semibold text-slate-600 hover:bg-slate-50"><ChevronLeft size={16} /><span className="[writing-mode:vertical-rl]">参数</span></button>
+          </aside>}
 
           <div className="min-w-0 md:col-start-1 md:row-start-3 lg:col-span-2 lg:row-start-2 xl:col-span-3">
             <FloorWorkspaceSummary stage={stage} bottom={bottomCalculation} top={topCalculation} geometryErrorCount={errors.length + invalidDrafts.size} onShowDetails={() => setDetailsExpanded((value) => !value)} onShowIssues={() => { if (stage === "plan") { setFloorSectionOpen(true); setInspectorOpen(true); setTabletInspectorExpanded(true); } else { setDetailsExpanded(true); } }} />
@@ -1192,6 +1329,8 @@ export default function FloorRebarCalculator() {
         <FloorWorkspaceDrawer open={navigatorOpen} title={stage === "plan" ? "楼层对象" : stage === "bottom" ? "地筋导航" : "面筋导航"} side="left" onClose={() => setNavigatorOpen(false)}>{navigator}</FloorWorkspaceDrawer>
       </>}
       <p className="mt-5 text-xs text-slate-500">当前显示边界 {displays.length} 段；正式板筋计算使用原子边界 {atomic.length} 段。显示段ID不会用于保存支承或钢筋业务规则。</p>
+        </>
+      )}
     </main>
   );
 }

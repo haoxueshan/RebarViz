@@ -132,10 +132,13 @@ test("pointercancel恢复拖动起点且不会把中间位置保存为草稿", a
   const startY = box!.y + box!.height / 2;
   await slab.dispatchEvent("pointerdown", { pointerId: 41, pointerType: "mouse", isPrimary: true, buttons: 1, clientX: startX, clientY: startY, bubbles: true });
   await svg.dispatchEvent("pointermove", { pointerId: 41, pointerType: "mouse", isPrimary: true, buttons: 1, clientX: startX + 80, clientY: startY + 20, bubbles: true });
-  await expect(page.getByLabel("西南角 X")).not.toHaveValue("0");
+  // PRD 40/41/81：拖动中只更新Canvas预览，正式坐标保持旧值。
+  await expect(page.locator("[data-drag-preview]")).toHaveCount(1);
+  await expect(page.getByLabel("西南角 X")).toHaveValue("0");
   await svg.dispatchEvent("pointercancel", { pointerId: 41, pointerType: "mouse", isPrimary: true, buttons: 0, clientX: startX + 80, clientY: startY + 20, bubbles: true });
   await expect(page.getByLabel("西南角 X")).toHaveValue("0");
   await expect(page.getByLabel("西南角 Y")).toHaveValue("0");
+  await expect(page.locator("[data-drag-preview]")).toHaveCount(0);
   await page.waitForTimeout(400);
   const saved = await page.evaluate((draftKey) => JSON.parse(localStorage.getItem(draftKey) ?? "null"), DRAFT_KEY);
   expect(saved.state.slabs[0]).toMatchObject({ x: 0, y: 0 });

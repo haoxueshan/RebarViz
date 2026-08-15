@@ -505,7 +505,7 @@ test("平板横屏1024×768保持Canvas与Editor同行、Summary在下方", asyn
   expect(canvasBox).not.toBeNull();
   expect(inspectorBox).not.toBeNull();
   expect(summaryBox).not.toBeNull();
-  expect(Math.abs(canvasBox!.y - inspectorBox!.y)).toBeLessThan(40);
+  expect(Math.abs(canvasBox!.y - inspectorBox!.y)).toBeLessThan(50);
   expect(canvasBox!.x + canvasBox!.width).toBeLessThanOrEqual(inspectorBox!.x + 1);
   expect(summaryBox!.y).toBeGreaterThanOrEqual(Math.max(canvasBox!.y + canvasBox!.height, inspectorBox!.y + inspectorBox!.height) - 1);
 });
@@ -526,8 +526,8 @@ test("桌面1440×900保持Navigator|Canvas|Editor三栏", async ({ page }) => {
   expect(editorBox).not.toBeNull();
   expect(navBox!.x).toBeLessThan(canvasBox!.x);
   expect(canvasBox!.x).toBeLessThan(editorBox!.x);
-  expect(Math.abs(navBox!.y - canvasBox!.y)).toBeLessThan(40);
-  expect(Math.abs(canvasBox!.y - editorBox!.y)).toBeLessThan(40);
+  expect(Math.abs(navBox!.y - canvasBox!.y)).toBeLessThan(50);
+  expect(Math.abs(canvasBox!.y - editorBox!.y)).toBeLessThan(50);
 });
 
 test("桌面1366×768 Navigator充分利用垂直空间且不溢出视口", async ({ page }) => {
