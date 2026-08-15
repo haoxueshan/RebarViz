@@ -46,12 +46,17 @@ test("Fullscreen：进入隐藏页面组件，退出恢复且FloorPlan不变", a
 
   const heading = page.getByRole("heading", { name: "整层楼板板筋系统" });
   await expect(heading).toBeVisible();
+  // 先放大到125%，验证Fullscreen进入/退出保持Viewport（PRD 70）。
+  await page.getByRole("button", { name: "放大" }).click();
+  await expect(page.getByTestId("canvas-zoom-percent")).toHaveText("125%");
   await page.getByRole("button", { name: "全屏画布" }).click();
   await expect(page.getByTestId("floor-fullscreen-canvas")).toBeVisible();
   await expect(heading).toHaveCount(0);
+  await expect(page.getByTestId("canvas-zoom-percent")).toHaveText("125%");
   await page.getByRole("button", { name: "退出全屏画布" }).click();
   await expect(page.getByTestId("floor-fullscreen-canvas")).toHaveCount(0);
   await expect(heading).toBeVisible();
+  await expect(page.getByTestId("canvas-zoom-percent")).toHaveText("125%");
   await page.waitForTimeout(400);
   const slabs = await savedSlabs(page);
   expect(slabs[0]).toMatchObject({ x: 0, y: 0 });
@@ -110,6 +115,8 @@ test("拖动只在松手提交一次正式坐标，Undo一步直接回到起点"
   const movedX = (await savedSlabs(page))[0]?.x;
   await page.getByRole("button", { name: "撤销" }).click();
   await expect.poll(async () => (await savedSlabs(page))[0]?.x ?? 0).toBe(0);
+  // PRD 26/75：一次拖动 = 一个Undo Step，撤销后不再有可撤销的历史。
+  await expect(page.getByRole("button", { name: "撤销" })).toBeDisabled();
   await page.getByRole("button", { name: "重做" }).click();
   await expect.poll(async () => (await savedSlabs(page))[0]?.x ?? 0).toBe(movedX);
 });
@@ -139,4 +146,313 @@ test("iPad横屏：工具栏与全屏可用且拖空白平移不修改几何", a
   await expect(page.getByTestId("floor-fullscreen-canvas")).toBeVisible();
   await page.getByRole("button", { name: "退出全屏画布" }).click();
   await expect(page.getByTestId("floor-fullscreen-canvas")).toHaveCount(0);
+});
+
+async function savedOpenings(page: import("@playwright/test").Page): Promise<Array<{ id: string; x: number; y: number }>> {
+  return page.evaluate((draftKey) => {
+    const record = JSON.parse(localStorage.getItem(draftKey) ?? "{}");
+    return record.state?.openings ?? [];
+  }, DRAFT_KEY);
+}
+
+/**
+ * 世界位移 → 屏幕位移的精确换算：
+ * 使用SVG属性几何（不含描边/letterbox污染），与FloorCanvas的pxPerWorld完全一致。
+ */
+async function worldDeltaToScreen(
+  page: import("@playwright/test").Page,
+  slab: import("@playwright/test").Locator,
+  worldWidthMm: number,
+  worldHeightMm: number,
+  dxWorld: number,
+  dyWorld: number,
+): Promise<{ dxPx: number; dyPx: number }> {
+  const geom = await slab.evaluate((element) => ({
+    viewWidth: Number(element.getAttribute("width")),
+    viewHeight: Number(element.getAttribute("height")),
+  }));
+  const svgBox = await page.locator("svg[data-floor-canvas-fit]").boundingBox();
+  const contentWidth = Math.min(svgBox!.width, svgBox!.height * 1000 / 650);
+  const contentHeight = Math.min(svgBox!.height, svgBox!.width * 650 / 1000);
+  return {
+    // 世界+X=屏幕右，世界+Y=屏幕上（SVG坐标Y向上）。
+    dxPx: dxWorld * (geom.viewWidth / worldWidthMm) * (contentWidth / 1000),
+    dyPx: -dyWorld * (geom.viewHeight / worldHeightMm) * (contentHeight / 650),
+  };
+}
+
+test("Pinch双指缩放：两指加入后缩放，抬起一指保留另一指Pan", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/calculator/floor");
+  await page.evaluate(({ draftKey, roleKey }) => {
+    localStorage.removeItem(draftKey);
+    localStorage.removeItem(roleKey);
+  }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
+  await page.reload();
+
+  const svg = page.locator("svg[data-floor-canvas-fit]");
+  const box = await svg.boundingBox();
+  expect(box).not.toBeNull();
+  const baseX = box!.x + 40;
+  const baseY = box!.y + 40;
+  const percent = page.getByTestId("canvas-zoom-percent");
+  await expect(percent).toHaveText("100%");
+  // 两根手指按下（不覆盖彼此，PRD 3-5）。
+  await svg.dispatchEvent("pointerdown", { pointerId: 71, pointerType: "touch", isPrimary: true, buttons: 1, clientX: baseX, clientY: baseY, bubbles: true });
+  await svg.dispatchEvent("pointerdown", { pointerId: 72, pointerType: "touch", isPrimary: false, buttons: 1, clientX: baseX + 80, clientY: baseY, bubbles: true });
+  // 双指张开。
+  await svg.dispatchEvent("pointermove", { pointerId: 71, pointerType: "touch", buttons: 1, clientX: baseX - 60, clientY: baseY, bubbles: true });
+  await svg.dispatchEvent("pointermove", { pointerId: 72, pointerType: "touch", buttons: 1, clientX: baseX + 140, clientY: baseY, bubbles: true });
+  await expect(percent).not.toHaveText("100%");
+  // 一根抬起后剩余指针继续Pan，zoom保持不变（PRD 8）。
+  await svg.dispatchEvent("pointerup", { pointerId: 72, pointerType: "touch", buttons: 0, clientX: baseX + 140, clientY: baseY, bubbles: true });
+  const zoomAfterLift = await percent.textContent();
+  const centerBefore = Number(await svg.getAttribute("data-viewport-center-x"));
+  await svg.dispatchEvent("pointermove", { pointerId: 71, pointerType: "touch", buttons: 1, clientX: baseX - 20, clientY: baseY, bubbles: true });
+  await expect.poll(async () => Number(await svg.getAttribute("data-viewport-center-x"))).not.toBe(centerBefore);
+  expect(await percent.textContent()).toBe(zoomAfterLift);
+  await svg.dispatchEvent("pointerup", { pointerId: 71, pointerType: "touch", buttons: 0, clientX: baseX - 20, clientY: baseY, bubbles: true });
+  await page.waitForTimeout(400);
+  const slabs = await savedSlabs(page);
+  expect(slabs[0]).toMatchObject({ x: 0, y: 0, width: 4200, height: 3600 });
+});
+
+test("单指Pan增量无漂移且不修改FloorPlan（PRD 68）", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/calculator/floor");
+  await page.evaluate(({ draftKey, roleKey }) => {
+    localStorage.removeItem(draftKey);
+    localStorage.removeItem(roleKey);
+  }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
+  await page.reload();
+
+  const svg = page.locator("svg[data-floor-canvas-fit]");
+  const box = await svg.boundingBox();
+  expect(box).not.toBeNull();
+  const cx = box!.x + 30;
+  const cy = box!.y + 30;
+  const readCenter = () => svg.getAttribute("data-viewport-center-x").then(Number);
+  const start = await readCenter();
+  // 手势A：两次30px增量。
+  await svg.dispatchEvent("pointerdown", { pointerId: 81, pointerType: "touch", isPrimary: true, buttons: 1, clientX: cx, clientY: cy, bubbles: true });
+  await svg.dispatchEvent("pointermove", { pointerId: 81, pointerType: "touch", buttons: 1, clientX: cx + 30, clientY: cy, bubbles: true });
+  await svg.dispatchEvent("pointermove", { pointerId: 81, pointerType: "touch", buttons: 1, clientX: cx + 60, clientY: cy, bubbles: true });
+  await expect.poll(async () => await readCenter()).not.toBe(start);
+  const afterTwo = await readCenter();
+  await svg.dispatchEvent("pointerup", { pointerId: 81, pointerType: "touch", buttons: 0, clientX: cx + 60, clientY: cy, bubbles: true });
+  // 手势B：单次60px，位移应与手势A一致（增量Pan无累计漂移）。
+  await svg.dispatchEvent("pointerdown", { pointerId: 82, pointerType: "touch", isPrimary: true, buttons: 1, clientX: cx, clientY: cy, bubbles: true });
+  await svg.dispatchEvent("pointermove", { pointerId: 82, pointerType: "touch", buttons: 1, clientX: cx + 60, clientY: cy, bubbles: true });
+  await expect.poll(async () => await readCenter()).not.toBe(afterTwo);
+  const afterSixty = await readCenter();
+  await svg.dispatchEvent("pointerup", { pointerId: 82, pointerType: "touch", buttons: 0, clientX: cx + 60, clientY: cy, bubbles: true });
+  const deltaA = start - afterTwo;
+  const deltaB = afterTwo - afterSixty;
+  expect(deltaA).toBeGreaterThan(0);
+  expect(deltaA).toBeCloseTo(deltaB, 6);
+  await expect(page.getByTestId("canvas-zoom-percent")).toHaveText("100%");
+  await page.waitForTimeout(400);
+  const slabs = await savedSlabs(page);
+  expect(slabs[0]).toMatchObject({ x: 0, y: 0, width: 4200, height: 3600 });
+});
+
+test("Quick Dock：拖近共边松手精确0mm、一次Undo回原点（PRD 72/75）", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/calculator/floor");
+  await page.evaluate(({ draftKey, roleKey }) => {
+    localStorage.setItem(draftKey, JSON.stringify({
+      schemaVersion: 2,
+      savedAt: new Date().toISOString(),
+      state: {
+        coordinateModel: "net-layout-v1",
+        slabs: [
+          { id: "a", name: "板区A", type: "room", x: 0, y: 0, width: 2000, height: 2000 },
+          { id: "b", name: "板区B", type: "room", x: 3000, y: 0, width: 2000, height: 2000 },
+        ],
+        openings: [],
+        supportRules: [],
+        innerWallThickness: 240,
+        outerWallThickness: 370,
+        snapDistanceMm: 150,
+      },
+    }));
+    localStorage.removeItem(roleKey);
+    localStorage.setItem("floorInspectorCollapsed", "false");
+  }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
+  await page.reload();
+
+  const slabA = page.locator('rect[aria-label="选择板区 板区A"]');
+  const svg = page.locator("svg[data-floor-canvas-fit]");
+  const boxA = await slabA.boundingBox();
+  expect(boxA).not.toBeNull();
+  // 目标：A西边 == B东边 → dock east → A.x = 5000（由floor-docking计算）。
+  const { dxPx, dyPx } = await worldDeltaToScreen(page, slabA, 2000, 2000, 5000, 0);
+  const startX = boxA!.x + boxA!.width / 2;
+  const startY = boxA!.y + boxA!.height / 2;
+  await slabA.dispatchEvent("pointerdown", { pointerId: 51, pointerType: "mouse", isPrimary: true, buttons: 1, clientX: startX, clientY: startY, bubbles: true });
+  await svg.dispatchEvent("pointermove", { pointerId: 51, pointerType: "mouse", buttons: 1, clientX: startX + dxPx, clientY: startY + dyPx, bubbles: true });
+  await expect(page.locator("[data-drag-guide]")).toHaveCount(1);
+  await expect(page.locator("[data-drag-guide]")).toContainText("精确共边");
+  await svg.dispatchEvent("pointerup", { pointerId: 51, pointerType: "mouse", buttons: 0, clientX: startX + dxPx, clientY: startY + dyPx, bubbles: true });
+  await expect.poll(async () => (await savedSlabs(page)).find((slab) => slab.id === "a")?.x ?? 0).toBe(5000);
+  await expect.poll(async () => (await savedSlabs(page)).find((slab) => slab.id === "a")?.y ?? 0).toBe(0);
+  await page.getByRole("button", { name: "撤销" }).click();
+  await expect.poll(async () => (await savedSlabs(page)).find((slab) => slab.id === "a")?.x ?? 0).toBe(0);
+  await expect(page.getByRole("button", { name: "撤销" })).toBeDisabled();
+  await page.getByRole("button", { name: "重做" }).click();
+  await expect.poll(async () => (await savedSlabs(page)).find((slab) => slab.id === "a")?.x ?? 0).toBe(5000);
+});
+
+test("Quick Dock不经过二次普通Snap：preserve的X保持自由拖动值（PRD 73）", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/calculator/floor");
+  await page.evaluate(({ draftKey, roleKey }) => {
+    localStorage.setItem(draftKey, JSON.stringify({
+      schemaVersion: 2,
+      savedAt: new Date().toISOString(),
+      state: {
+        coordinateModel: "net-layout-v1",
+        slabs: [
+          { id: "a", name: "板区A", type: "room", x: 1000, y: 0, width: 2000, height: 2000 },
+          { id: "b", name: "板区B", type: "room", x: 0, y: 3000, width: 2000, height: 2000 },
+          { id: "c", name: "板区C", type: "room", x: 1650, y: 7050, width: 2000, height: 2000 },
+        ],
+        openings: [],
+        supportRules: [],
+        innerWallThickness: 240,
+        outerWallThickness: 370,
+        snapDistanceMm: 150,
+      },
+    }));
+    localStorage.removeItem(roleKey);
+    localStorage.setItem("floorInspectorCollapsed", "false");
+  }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
+  await page.reload();
+
+  const slabA = page.locator('rect[aria-label="选择板区 板区A"]');
+  const svg = page.locator("svg[data-floor-canvas-fit]");
+  const boxA = await slabA.boundingBox();
+  expect(boxA).not.toBeNull();
+  // 拖到 free (x=1500, y=5000)：y方向dock到B北侧精确共边；
+  // 普通Snap会把x吸附到C的1650候选，Quick Dock必须保持1500。
+  const { dxPx, dyPx } = await worldDeltaToScreen(page, slabA, 2000, 2000, 500, 5000);
+  const startX = boxA!.x + boxA!.width / 2;
+  const startY = boxA!.y + boxA!.height / 2;
+  await slabA.dispatchEvent("pointerdown", { pointerId: 52, pointerType: "mouse", isPrimary: true, buttons: 1, clientX: startX, clientY: startY, bubbles: true });
+  await svg.dispatchEvent("pointermove", { pointerId: 52, pointerType: "mouse", buttons: 1, clientX: startX + dxPx, clientY: startY + dyPx, bubbles: true });
+  await expect(page.locator("[data-drag-guide]")).toHaveCount(1);
+  await svg.dispatchEvent("pointerup", { pointerId: 52, pointerType: "mouse", buttons: 0, clientX: startX + dxPx, clientY: startY + dyPx, bubbles: true });
+  await expect.poll(async () => (await savedSlabs(page)).find((slab) => slab.id === "a")?.x ?? 0).toBe(1500);
+  await expect.poll(async () => (await savedSlabs(page)).find((slab) => slab.id === "a")?.y ?? 0).toBe(5000);
+});
+
+test("仅洞口的Undo/Redo恢复Selection为opening类型（PRD 76）", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/calculator/floor");
+  await page.evaluate(({ draftKey, roleKey }) => {
+    localStorage.setItem(draftKey, JSON.stringify({
+      schemaVersion: 2,
+      savedAt: new Date().toISOString(),
+      state: {
+        coordinateModel: "net-layout-v1",
+        slabs: [],
+        openings: [{ id: "o1", name: "楼梯间", type: "stair", x: 0, y: 0, width: 900, height: 900 }],
+        supportRules: [],
+        innerWallThickness: 240,
+        outerWallThickness: 370,
+        snapDistanceMm: 150,
+      },
+    }));
+    localStorage.removeItem(roleKey);
+    localStorage.setItem("floorInspectorCollapsed", "false");
+  }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
+  await page.reload();
+
+  const opening = page.locator('rect[aria-label="选择洞口 楼梯间"]');
+  const svg = page.locator("svg[data-floor-canvas-fit]");
+  const box = await opening.boundingBox();
+  expect(box).not.toBeNull();
+  const startX = box!.x + box!.width / 2;
+  const startY = box!.y + box!.height / 2;
+  await opening.dispatchEvent("pointerdown", { pointerId: 53, pointerType: "mouse", isPrimary: true, buttons: 1, clientX: startX, clientY: startY, bubbles: true });
+  await svg.dispatchEvent("pointermove", { pointerId: 53, pointerType: "mouse", buttons: 1, clientX: startX + 80, clientY: startY, bubbles: true });
+  await svg.dispatchEvent("pointerup", { pointerId: 53, pointerType: "mouse", buttons: 0, clientX: startX + 80, clientY: startY, bubbles: true });
+  await expect.poll(async () => (await savedOpenings(page))[0]?.x ?? 0).toBeGreaterThan(0);
+  await page.getByRole("button", { name: "撤销" }).click();
+  await expect.poll(async () => (await savedOpenings(page))[0]?.x ?? 0).toBe(0);
+  // Selection kind 必须恢复为 opening，Inspector显示洞口编辑器。
+  await expect(page.getByTestId("floor-workspace-inspector")).toContainText("楼梯间");
+  await expect(page.getByTestId("floor-size-editor")).toBeVisible();
+});
+
+test("平板首次访问默认Canvas First，展开编辑为Overlay且不压缩Canvas（PRD 29-33）", async ({ page }) => {
+  await page.setViewportSize({ width: 1180, height: 820 });
+  await page.goto("/calculator/floor");
+  await page.evaluate(({ draftKey, roleKey }) => {
+    localStorage.removeItem(draftKey);
+    localStorage.removeItem(roleKey);
+    localStorage.removeItem("floorInspectorCollapsed");
+  }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
+  await page.reload();
+
+  // 无用户设置时平板默认收起Inspector（Canvas First）。
+  const inspector = page.getByTestId("floor-workspace-inspector");
+  await expect(inspector).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("floorInspectorCollapsed"))).toBe("true");
+  const canvas = page.getByTestId("floor-canvas-card");
+  const grid = page.getByTestId("floor-workspace-grid");
+  const svg = page.locator("svg[data-floor-canvas-fit]");
+  const before = await canvas.boundingBox();
+  const gridBox = await grid.boundingBox();
+  const svgBox = await svg.boundingBox();
+  expect(before).not.toBeNull();
+  expect(gridBox).not.toBeNull();
+  expect(svgBox).not.toBeNull();
+  expect(before!.width).toBeGreaterThan(gridBox!.width * 0.9);
+  // PRD 79：平板画布高度明显提升（≥540px）。
+  expect(svgBox!.height).toBeGreaterThanOrEqual(540);
+  // 展开编辑 → Overlay Drawer，Canvas宽度不变。
+  await page.getByRole("button", { name: "展开编辑" }).click();
+  await expect(inspector).toBeVisible();
+  const after = await canvas.boundingBox();
+  expect(after).not.toBeNull();
+  expect(Math.abs(after!.width - before!.width)).toBeLessThan(1);
+});
+
+test("平板工具栏主要按钮触摸尺寸≥44px（PRD 80）", async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await page.goto("/calculator/floor");
+  await page.evaluate(({ draftKey, roleKey }) => {
+    localStorage.removeItem(draftKey);
+    localStorage.removeItem(roleKey);
+  }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
+  await page.reload();
+  const box = await page.getByRole("button", { name: "移动" }).boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.height).toBeGreaterThanOrEqual(44);
+});
+
+test.describe("触摸设备", () => {
+  test.use({ hasTouch: true, isMobile: true });
+
+  test("Atomic Boundary触摸命中宽度≥32px且点击边界不触发Pan/拖板（PRD 81）", async ({ page }) => {
+    await page.setViewportSize({ width: 820, height: 1180 });
+    await page.goto("/calculator/floor");
+    await page.evaluate(({ draftKey, roleKey }) => {
+      localStorage.removeItem(draftKey);
+      localStorage.removeItem(roleKey);
+    }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
+    await page.reload();
+
+    const boundary = page.locator("[data-atomic-boundary-id]").first();
+    await expect(boundary).toHaveCount(1);
+    const hitWidth = Number(await boundary.getAttribute("data-atomic-hit-width"));
+    expect(hitWidth).toBeGreaterThanOrEqual(32);
+    await boundary.dispatchEvent("pointerdown", { pointerId: 91, pointerType: "touch", isPrimary: true, buttons: 1, bubbles: true });
+    await expect(page.locator("[data-selected-atomic-id]")).toHaveCount(1);
+    await boundary.dispatchEvent("pointerup", { pointerId: 91, pointerType: "touch", buttons: 0, bubbles: true });
+    await page.waitForTimeout(400);
+    const slabs = await savedSlabs(page);
+    expect(slabs[0]).toMatchObject({ x: 0, y: 0 });
+  });
 });

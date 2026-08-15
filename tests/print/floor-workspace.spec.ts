@@ -67,6 +67,8 @@ async function installMultiBlockWorkspace(page: import("@playwright/test").Page)
       },
     }));
     localStorage.removeItem(roleKey);
+    // 显式用户设置：平板也展开 Inspector（Canvas First 首访默认由专用用例验证）。
+    localStorage.setItem("floorInspectorCollapsed", "false");
   }, { draftKey: DRAFT_KEY, bottomKey: BOTTOM_KEY, topKey: TOP_KEY, roleKey: ROLE_KEY });
   await page.reload();
 }
@@ -283,7 +285,7 @@ test("Tablet Through板区选择器容纳20板区并在内部滚动", async ({ p
   expect(size.clientHeight).toBeLessThanOrEqual(0.45 * 768 + 2);
 });
 
-test("Tablet竖屏768×1024保持Canvas在上、Editor在下且页面整体自然滚动", async ({ page }) => {
+test("Tablet竖屏768×1024保持Canvas在上、Editor为右侧Overlay且页面整体自然滚动", async ({ page }) => {
   await page.setViewportSize({ width: 768, height: 1024 });
   await installMultiBlockWorkspace(page);
   const canvas = page.locator('svg[aria-label*="正式钢筋Piece"]');
@@ -293,11 +295,13 @@ test("Tablet竖屏768×1024保持Canvas在上、Editor在下且页面整体自�
   const inspectorBox = await inspector.boundingBox();
   expect(canvasBox).not.toBeNull();
   expect(inspectorBox).not.toBeNull();
-  expect(canvasBox!.y).toBeLessThan(inspectorBox!.y);
+  // Editor为固定Overlay：位于顶部导航下方，覆盖Canvas右侧区域（PRD 16/32）。
+  expect(inspectorBox!.y).toBeGreaterThanOrEqual(100);
+  expect(inspectorBox!.y).toBeLessThan(canvasBox!.y + canvasBox!.height);
+  expect(inspectorBox!.x).toBeGreaterThanOrEqual(canvasBox!.x);
+  expect(canvasBox!.width).toBeGreaterThan(768 * 0.8);
   const scroll = await page.evaluate(() => ({ clientHeight: document.documentElement.clientHeight, scrollHeight: document.documentElement.scrollHeight }));
   expect(scroll.scrollHeight).toBeGreaterThan(scroll.clientHeight);
-  const innerScroll = await inspector.evaluate((element) => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight }));
-  expect(innerScroll.scrollHeight).toBeLessThanOrEqual(innerScroll.clientHeight + 2);
 });
 
 test("楼层阶段选中板区直接看到净尺寸，修改后Canvas实时变化", async ({ page }) => {
@@ -323,6 +327,7 @@ test("楼层阶段选中板区直接看到净尺寸，修改后Canvas实时变�
     localStorage.removeItem(bottomKey);
     localStorage.removeItem(topKey);
     localStorage.removeItem(roleKey);
+    localStorage.setItem("floorInspectorCollapsed", "false");
   }, { draftKey: DRAFT_KEY, bottomKey: BOTTOM_KEY, topKey: TOP_KEY, roleKey: ROLE_KEY });
   await page.reload();
   const editor = page.getByTestId("floor-size-editor");
@@ -354,6 +359,7 @@ test("正方形板区进入地筋即可直接点击主筋方向按钮", async ({
     localStorage.removeItem(bottomKey);
     localStorage.removeItem(topKey);
     localStorage.removeItem(roleKey);
+    localStorage.setItem("floorInspectorCollapsed", "false");
   }, { draftKey: DRAFT_KEY, bottomKey: BOTTOM_KEY, topKey: TOP_KEY, roleKey: ROLE_KEY });
   await page.reload();
   await page.getByRole("button", { name: /2\. 地筋/ }).click();
@@ -473,7 +479,7 @@ test("异常洞口伸出很远时适合楼层仍以楼板主体取景，显示�
   expect(allBox!.width).toBeLessThan(floorBox!.width);
 });
 
-test("平板竖屏768×1024顺序为Canvas→Editor→Summary", async ({ page }) => {
+test("平板竖屏768×1024 Canvas全宽、Editor为右侧Overlay且Summary在Canvas下方", async ({ page }) => {
   await page.setViewportSize({ width: 768, height: 1024 });
   await installMultiBlockWorkspace(page);
   const canvas = page.locator('svg[aria-label*="正式钢筋Piece"]');
@@ -488,26 +494,33 @@ test("平板竖屏768×1024顺序为Canvas→Editor→Summary", async ({ page })
   expect(canvasBox).not.toBeNull();
   expect(inspectorBox).not.toBeNull();
   expect(summaryBox).not.toBeNull();
-  expect(canvasBox!.y + canvasBox!.height).toBeLessThanOrEqual(inspectorBox!.y + 1);
-  expect(inspectorBox!.y + inspectorBox!.height).toBeLessThanOrEqual(summaryBox!.y + 1);
+  // Canvas全宽；Editor Overlay贴在Canvas右侧上方；Summary在Canvas下方。
+  expect(canvasBox!.width).toBeGreaterThan(768 * 0.8);
+  expect(inspectorBox!.x).toBeGreaterThanOrEqual(canvasBox!.x);
+  expect(summaryBox!.y).toBeGreaterThanOrEqual(canvasBox!.y + canvasBox!.height - 1);
 });
 
-test("平板横屏1024×768保持Canvas与Editor同行、Summary在下方", async ({ page }) => {
+test("平板横屏1024×768 Canvas全宽，Editor Overlay收起/展开不改变Canvas宽度", async ({ page }) => {
   await page.setViewportSize({ width: 1024, height: 768 });
   await installMultiBlockWorkspace(page);
   const canvas = page.getByTestId("floor-canvas-card");
   const inspector = page.getByTestId("floor-workspace-inspector");
   const summary = page.getByTestId("floor-live-summary");
   await expect(inspector).toBeVisible();
-  const canvasBox = await canvas.boundingBox();
-  const inspectorBox = await inspector.boundingBox();
+  const canvasWithInspector = await canvas.boundingBox();
   const summaryBox = await summary.boundingBox();
-  expect(canvasBox).not.toBeNull();
-  expect(inspectorBox).not.toBeNull();
+  expect(canvasWithInspector).not.toBeNull();
   expect(summaryBox).not.toBeNull();
-  expect(Math.abs(canvasBox!.y - inspectorBox!.y)).toBeLessThan(50);
-  expect(canvasBox!.x + canvasBox!.width).toBeLessThanOrEqual(inspectorBox!.x + 1);
-  expect(summaryBox!.y).toBeGreaterThanOrEqual(Math.max(canvasBox!.y + canvasBox!.height, inspectorBox!.y + inspectorBox!.height) - 1);
+  expect(canvasWithInspector!.width).toBeGreaterThan(1024 * 0.8);
+  expect(summaryBox!.y).toBeGreaterThanOrEqual(canvasWithInspector!.y + canvasWithInspector!.height - 1);
+  // Overlay收起：Canvas宽度不变（PRD 77），不重新Fit。
+  await page.getByRole("button", { name: "收起编辑" }).click();
+  await expect(inspector).not.toBeVisible();
+  const canvasWithoutInspector = await canvas.boundingBox();
+  expect(canvasWithoutInspector).not.toBeNull();
+  expect(Math.abs(canvasWithoutInspector!.width - canvasWithInspector!.width)).toBeLessThan(1);
+  await page.getByRole("button", { name: "展开编辑" }).click();
+  await expect(inspector).toBeVisible();
 });
 
 test("桌面1440×900保持Navigator|Canvas|Editor三栏", async ({ page }) => {
