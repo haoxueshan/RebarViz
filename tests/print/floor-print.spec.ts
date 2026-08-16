@@ -208,17 +208,9 @@ test.describe("Floor Print V1整层冻结快照打印", () => {
       localStorage.removeItem("rebarviz:floor-rebar:bottom:v1");
       localStorage.removeItem("rebarviz:floor-rebar:top:v1");
       localStorage.removeItem("rebarviz:floor-rebar:role:v1");
+      localStorage.setItem("floorWorkspaceInspectorOpen", "true");
+      localStorage.setItem("floorNavigatorCollapsed", "false");
       sessionStorage.clear();
-    });
-    // UI V3.1：Inspector 为 Overlay，本用例需展开 Inspector 与 Navigator。
-    await page.evaluate(() => {
-      localStorage.setItem("floorWorkspaceInspectorOpen", "true");
-      localStorage.setItem("floorNavigatorCollapsed", "false");
-    });
-    await page.waitForTimeout(250);
-    await page.evaluate(() => {
-      localStorage.setItem("floorWorkspaceInspectorOpen", "true");
-      localStorage.setItem("floorNavigatorCollapsed", "false");
     });
     await page.reload();
     await page.getByRole("button", { name: /3\. 面筋/ }).click();
@@ -230,11 +222,12 @@ test.describe("Floor Print V1整层冻结快照打印", () => {
     await pathCard.getByRole("button", { name: "完成选择" }).click();
     await pathCard.getByRole("button", { name: "使用最大共同范围" }).click();
     await pathCard.getByLabel("启用", { exact: true }).check();
-    await expect(page.getByText("正式面筋结果有效")).toBeVisible();
-    await page.getByRole("button", { name: /详细料单/ }).click();
-    await expect(page.getByText("13.220m").first()).toBeVisible();
-    await expect(page.getByText("T01", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("通墙面筋 · 通墙01", { exact: true }).first()).toBeVisible();
+    await expect(page.getByTestId("floor-live-summary")).toContainText("面筋有效");
+    await page.getByTestId("floor-live-summary").getByRole("button", { name: "查看料单" }).click();
+    const throughRow = page.locator('tr[data-source="through"]').first();
+    await expect(throughRow.getByRole("cell", { name: "13,220 mm", exact: true })).toBeVisible();
+    await expect(throughRow).toContainText("T01");
+    await expect(throughRow).toContainText("通墙面筋 · 通墙01");
 
     await page.waitForTimeout(450);
     const storedTop = await page.evaluate(() => JSON.parse(localStorage.getItem("rebarviz:floor-rebar:top:v1") ?? "null"));

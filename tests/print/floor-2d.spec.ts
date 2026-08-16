@@ -71,12 +71,14 @@ test("容差内0.5mm间隙自动对齐为精确共边并生成正式Piece", asyn
   await page.reload();
 
   await page.getByRole("button", { name: "编辑", exact: true }).click();
-  await page.getByRole("button", { name: "楼层设置" }).click();
-  await expect(page.getByText(/已自动对齐/)).toBeVisible();
   await expect(page.locator("[data-near-miss]")).toHaveCount(0);
+  await expect.poll(async () => {
+    const stored = await page.evaluate((draftKey) => JSON.parse(localStorage.getItem(draftKey) ?? "null"), DRAFT_KEY);
+    return stored.state.slabs.find((slab: { id: string; x: number }) => slab.id === "b")?.x;
+  }).toBe(4200);
   await page.getByRole("button", { name: "关闭", exact: true }).click();
   await page.getByRole("button", { name: "地筋", exact: true }).click();
-  await expect(page.getByText("正式地筋结果有效")).toBeVisible();
+  await expect(page.getByTestId("floor-live-summary")).toContainText("地筋有效");
   await expect(page.locator("[data-piece-id]")).not.toHaveCount(0);
 });
 
@@ -189,7 +191,7 @@ test("正式普通Piece和Through Piece均可点击检查，远端洞口不压�
   await page.getByRole("button", { name: "适合楼层" }).click();
 
   await page.getByRole("button", { name: /3\. 面筋/ }).click();
-  await expect(page.getByText("正式面筋结果有效")).toBeVisible();
+  await expect(page.getByTestId("floor-live-summary")).toContainText("面筋有效");
   const normalPiece = page.locator('[data-piece-source="normal"]').first();
   await normalPiece.dispatchEvent("pointerdown", { pointerId: 10, bubbles: true });
   await expect(page.getByTestId("floor-piece-inspector")).toContainText("普通面筋");

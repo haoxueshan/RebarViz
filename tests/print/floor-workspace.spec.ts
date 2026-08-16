@@ -67,18 +67,8 @@ async function installMultiBlockWorkspace(page: import("@playwright/test").Page)
       },
     }));
     localStorage.removeItem(roleKey);
-    // 显式用户设置：非手机展开 Inspector Overlay 与完整 Navigator（Canvas First 首访默认由专用用例验证）。
-    // 手机不预开 Inspector：bottom sheet 会遮罩全屏阻塞后续操作。
-    localStorage.removeItem("floorWorkspaceInspectorOpen");
-    localStorage.setItem("floorNavigatorCollapsed", "false");
     if (window.innerWidth >= 640) localStorage.setItem("floorWorkspaceInspectorOpen", "true");
   }, { draftKey: DRAFT_KEY, bottomKey: BOTTOM_KEY, topKey: TOP_KEY, roleKey: ROLE_KEY });
-  // 等待页面首轮 hydrate/persist 完成后再写一次，避免被初始状态覆盖。
-  await page.waitForTimeout(250);
-  await page.evaluate(() => {
-    localStorage.setItem("floorNavigatorCollapsed", "false");
-    if (window.innerWidth >= 640) localStorage.setItem("floorWorkspaceInspectorOpen", "true");
-  });
   await page.reload();
 }
 
@@ -86,16 +76,20 @@ test("12板区工作台保持Navigator、Canvas与Inspector双向同步并实时
   await page.setViewportSize({ width: 1440, height: 900 });
   await installMultiBlockWorkspace(page);
   await expect(page.getByTestId("floor-workspace-grid")).toBeVisible();
+  await page.getByRole("button", { name: "导航-对象" }).click();
   await expect(page.locator('[data-navigator-object-id^="s"]')).toHaveCount(12);
 
   await page.locator('[data-navigator-object-id="s10"]').click();
   await expect(page.locator('[data-navigator-object-id="s10"]')).toHaveAttribute("data-selected", "true");
+  await page.getByTestId("open-inspector-handle").click();
   await expect(page.getByTestId("floor-workspace-inspector")).toContainText("板区10");
   await expect(page.getByRole("button", { name: "选择板区 板区10" })).toHaveAttribute("stroke", "#2563eb");
 
+  await page.getByRole("button", { name: "关闭对象浏览器" }).click();
   await page.getByRole("button", { name: "视图" }).click();
   await page.getByRole("button", { name: "适合楼层" }).click();
   await page.getByRole("button", { name: "选择板区 板区03" }).click();
+  await page.getByRole("button", { name: "导航-对象" }).click();
   await expect(page.locator('[data-navigator-object-id="s03"]')).toHaveAttribute("data-selected", "true");
   await expect(page.getByTestId("floor-workspace-inspector")).toContainText("板区03");
 
@@ -116,6 +110,7 @@ test("Through Navigator区分有效、错误与停用，新路径只继承当前
   await page.setViewportSize({ width: 1440, height: 900 });
   await installMultiBlockWorkspace(page);
   await page.getByRole("button", { name: /3\. 面筋/ }).click();
+  await page.getByRole("button", { name: "导航-通墙" }).click();
   await expect(page.locator('[data-navigator-through-id="p-valid"]')).toContainText("正常");
   await expect(page.locator('[data-navigator-through-id="p-invalid"]')).toContainText("异常");
   await expect(page.locator('[data-navigator-through-id="p-disabled"]')).toContainText("未启用");
@@ -123,7 +118,9 @@ test("Through Navigator区分有效、错误与停用，新路径只继承当前
   await expect(page.getByTestId("floor-workspace-inspector")).toContainText("通墙有效");
   await expect(page.locator('[data-through-path-id="p-valid"]')).toContainText("板区01 → 板区02");
 
+  await page.getByRole("button", { name: "导航-板区" }).click();
   await page.locator('[data-navigator-object-id="s10"]').click();
+  await page.getByRole("button", { name: "导航-通墙" }).click();
   await page.getByRole("button", { name: "新建通墙路径" }).click();
   await expect(page.locator("[data-through-path-id]").last()).toBeVisible();
   await page.waitForTimeout(400);
@@ -177,17 +174,10 @@ test("正方形和不规则Role区域在Navigator定位并共享人工主筋方�
       },
     }));
     localStorage.removeItem(roleKey);
-    // UI V3.1：Navigator 完整展开 + Inspector Overlay 打开，本用例需两者。
-    localStorage.setItem("floorWorkspaceInspectorOpen", "true");
-    localStorage.setItem("floorNavigatorCollapsed", "false");
   }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
-  await page.waitForTimeout(250);
-  await page.evaluate(() => {
-    localStorage.setItem("floorWorkspaceInspectorOpen", "true");
-    localStorage.setItem("floorNavigatorCollapsed", "false");
-  });
   await page.reload();
   await page.getByRole("button", { name: /2\. 地筋/ }).click();
+  await page.getByRole("button", { name: "导航-主副筋" }).click();
   const roleRows = page.locator("[data-navigator-role-id]");
   await expect(roleRows).toHaveCount(3);
   await expect(roleRows.filter({ hasText: "自动判断" })).toHaveCount(1);
@@ -216,19 +206,19 @@ test("Tablet四档断点保持Workflow可用、无横向溢出并按设备切换
 
   for (const viewport of viewports) {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
-    await expect(page.locator('[aria-label="整层计算步骤"] button')).toHaveCount(4);
+    await expect(page.locator('[data-workflow-stage]')).toHaveCount(4);
     const metrics = await page.evaluate(() => {
       const visible = (selector: string) => [...document.querySelectorAll<HTMLElement>(selector)]
         .some((element) => getComputedStyle(element).display !== "none" && element.getBoundingClientRect().width > 0);
       const grid = document.querySelector<HTMLElement>('[data-testid="floor-workspace-grid"]');
       const canvas = document.querySelector<SVGElement>('svg[aria-label*="正式钢筋Piece"]');
-      const summary = document.querySelector<HTMLElement>('[data-testid="floor-live-summary"]');
+      const status = document.querySelector<HTMLElement>('[data-testid="floor-workspace-status-bar"]');
       return {
         overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
         inspector: visible('[data-testid="floor-workspace-inspector"]'),
-        navigator: visible('[data-testid="floor-workspace-navigator"]'),
+        navigator: visible('[aria-label="工作台对象快捷导航"]'),
         canvasRatio: grid && canvas ? canvas.getBoundingClientRect().width / grid.getBoundingClientRect().width : 0,
-        summaryRendered: Boolean(summary && summary.getBoundingClientRect().height > 0),
+        summaryRendered: Boolean(status && status.getBoundingClientRect().height > 0),
       };
     });
     expect(metrics.overflow).toBeLessThanOrEqual(0);
@@ -249,8 +239,8 @@ test("Tablet竖横屏切换保持stage、selection和数字输入，并支持Esc
   await expect(page.getByTestId("floor-workspace-left-drawer")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("floor-workspace-left-drawer")).toHaveCount(0);
-  // UI V3.1：Escape 统一关闭全部浮层（含 Inspector），此处重新展开编辑。
-  await page.getByRole("button", { name: "展开编辑" }).click();
+  // V4：Esc一次只关闭最上层Navigator；已打开的Properties保持。
+  await expect(page.getByTestId("floor-workspace-inspector")).toBeVisible();
 
   await currentObject.click();
   const drawer = page.getByTestId("floor-workspace-left-drawer");
@@ -321,7 +311,7 @@ test("Tablet竖屏768×1024保持Canvas在上、Editor为右侧Overlay且页面�
   expect(inspectorBox!.x).toBeGreaterThanOrEqual(canvasBox!.x);
   expect(canvasBox!.width).toBeGreaterThan(768 * 0.8);
   const scroll = await page.evaluate(() => ({ clientHeight: document.documentElement.clientHeight, scrollHeight: document.documentElement.scrollHeight }));
-  expect(scroll.scrollHeight).toBeGreaterThan(scroll.clientHeight);
+  expect(scroll.scrollHeight).toBeLessThanOrEqual(scroll.clientHeight + 8);
 });
 
 test("楼层阶段选中板区直接看到净尺寸，修改后Canvas实时变化", async ({ page }) => {
@@ -385,6 +375,7 @@ test("正方形板区进入地筋即可直接点击主筋方向按钮", async ({
   await page.evaluate(() => localStorage.setItem("floorWorkspaceInspectorOpen", "true"));
   await page.reload();
   await page.getByRole("button", { name: /2\. 地筋/ }).click();
+  await page.getByTestId("floor-workspace-inspector").getByRole("tab", { name: "主副筋" }).click();
   const xButton = page.getByTestId("floor-workspace-inspector").getByRole("button", { name: "东西向主筋" });
   const yButton = page.getByTestId("floor-workspace-inspector").getByRole("button", { name: "南北向主筋" });
   await expect(xButton).toBeVisible();
@@ -393,8 +384,9 @@ test("正方形板区进入地筋即可直接点击主筋方向按钮", async ({
   expect(xBox).not.toBeNull();
   expect(xBox!.height).toBeGreaterThanOrEqual(56);
   await xButton.click();
-  await expect(page.getByText("正式地筋结果有效")).toBeVisible();
+  await expect(page.getByTestId("floor-live-summary")).toContainText("地筋有效");
   await page.getByRole("button", { name: /3\. 面筋/ }).click();
+  await page.getByTestId("floor-workspace-inspector").getByRole("tab", { name: "主副筋" }).click();
   await expect(page.getByTestId("floor-workspace-inspector").getByRole("button", { name: "东西向主筋" })).toHaveAttribute("aria-pressed", "true");
 });
 
@@ -416,7 +408,6 @@ test("重置平面同步清理局部规格、通墙路径和关联状态", async
   await page.setViewportSize({ width: 1024, height: 768 });
   await installMultiBlockWorkspace(page);
   await page.getByRole("button", { name: /1\. 楼层/ }).click();
-  await page.getByTestId("floor-settings-section").getByRole("button", { name: "楼层设置" }).click();
   page.on("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "重置平面" }).click();
   await page.waitForTimeout(600);
@@ -502,12 +493,12 @@ test("异常洞口伸出很远时适合楼层仍以楼板主体取景，显示�
   expect(allBox!.width).toBeLessThan(floorBox!.width);
 });
 
-test("平板竖屏768×1024 Canvas全宽、Editor为右侧Overlay且Summary在Canvas下方", async ({ page }) => {
+test("平板竖屏768×1024 Canvas全宽、Editor为右侧Overlay且Status Bar常驻", async ({ page }) => {
   await page.setViewportSize({ width: 768, height: 1024 });
   await installMultiBlockWorkspace(page);
   const canvas = page.locator('svg[aria-label*="正式钢筋Piece"]');
   const inspector = page.getByTestId("floor-workspace-inspector");
-  const summary = page.getByTestId("floor-live-summary");
+  const summary = page.getByTestId("floor-workspace-status-bar");
   await expect(canvas).toBeVisible();
   await expect(inspector).toBeVisible();
   await expect(summary).toBeVisible();
@@ -528,7 +519,7 @@ test("平板横屏1024×768 Canvas全宽，Editor Overlay收起/展开不改变C
   await installMultiBlockWorkspace(page);
   const canvas = page.getByTestId("floor-canvas-card");
   const inspector = page.getByTestId("floor-workspace-inspector");
-  const summary = page.getByTestId("floor-live-summary");
+  const summary = page.getByTestId("floor-workspace-status-bar");
   await expect(inspector).toBeVisible();
   const canvasWithInspector = await canvas.boundingBox();
   const summaryBox = await summary.boundingBox();
@@ -546,10 +537,11 @@ test("平板横屏1024×768 Canvas全宽，Editor Overlay收起/展开不改变C
   await expect(inspector).toBeVisible();
 });
 
-test("桌面1440×900保持Navigator|Canvas列与Inspector Overlay（V3.1）", async ({ page }) => {
+test("桌面1440×900保持Rail、非模态Navigator Palette与Inspector Overlay（V4）", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await installMultiBlockWorkspace(page);
-  const navigator = page.getByTestId("floor-workspace-navigator");
+  await page.getByRole("button", { name: "导航-对象" }).click();
+  const navigator = page.getByTestId("floor-navigator-palette");
   const canvas = page.getByTestId("floor-canvas-card");
   const inspector = page.getByTestId("floor-workspace-inspector");
   await expect(navigator).toBeVisible();
@@ -560,16 +552,17 @@ test("桌面1440×900保持Navigator|Canvas列与Inspector Overlay（V3.1）", a
   expect(navBox).not.toBeNull();
   expect(canvasBox).not.toBeNull();
   expect(editorBox).not.toBeNull();
-  // Navigator 列在 Canvas 左侧；Inspector 为 Overlay 覆盖 Canvas 右侧且不压缩 Canvas。
+  // 非模态Palette从Rail展开；Inspector覆盖Canvas右侧，两者都不改Canvas列宽。
   expect(navBox!.x).toBeLessThan(canvasBox!.x);
   expect(editorBox!.x).toBeGreaterThan(canvasBox!.x + canvasBox!.width - 500);
   expect(editorBox!.y).toBeGreaterThanOrEqual(canvasBox!.y);
 });
 
-test("桌面1366×768 Navigator充分利用垂直空间且不溢出视口", async ({ page }) => {
+test("桌面1366×768 Navigator Palette充分利用垂直空间且不溢出视口", async ({ page }) => {
   await page.setViewportSize({ width: 1366, height: 768 });
   await installMultiBlockWorkspace(page);
-  const navigator = page.getByTestId("floor-workspace-navigator");
+  await page.getByRole("button", { name: "导航-对象" }).click();
+  const navigator = page.getByTestId("floor-navigator-palette");
   await expect(navigator).toBeVisible();
   const box = await navigator.boundingBox();
   expect(box).not.toBeNull();
@@ -612,8 +605,51 @@ test("430×932与1280×800无横向溢出且工作区可用", async ({ page }) =
   for (const viewport of [{ width: 430, height: 932 }, { width: 1280, height: 800 }]) {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await installMultiBlockWorkspace(page);
-    await expect(page.locator('[aria-label="整层计算步骤"] button')).toHaveCount(4);
+    await expect(page.locator('[data-workflow-stage]')).toHaveCount(4);
     const dimensions = await page.evaluate(() => ({ clientWidth: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth }));
     expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
   }
+});
+
+test("V4地筋Result Strip进入唯一BOM Workspace并应用地筋筛选", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await installMultiBlockWorkspace(page);
+  await page.evaluate((topKey) => {
+    const stored = JSON.parse(localStorage.getItem(topKey) ?? "null");
+    stored.state.throughPaths = stored.state.throughPaths.map((path: { id: string; enabled: boolean }) => path.id === "p-invalid" ? { ...path, enabled: false } : path);
+    localStorage.setItem(topKey, JSON.stringify(stored));
+  }, TOP_KEY);
+  await page.reload();
+  await page.getByRole("button", { name: /2\. 地筋/ }).click();
+  const resultStrip = page.getByTestId("floor-live-summary");
+  await expect(resultStrip).toContainText("地筋有效");
+  await expect(page.getByRole("heading", { name: "整层地筋料单" })).toHaveCount(0);
+  await resultStrip.getByRole("button", { name: "查看料单" }).click();
+  await expect(page.locator('[data-workflow-stage="bom"]')).toHaveAttribute("aria-current", "step");
+  await expect(page.getByTestId("floor-bom-workspace")).toBeVisible();
+  await expect(page.getByRole("button", { name: "地筋", exact: true }).last()).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: /3\. 面筋/ }).click();
+  await expect(page.getByTestId("floor-live-summary")).toContainText("面筋有效");
+  await page.getByTestId("floor-live-summary").getByRole("button", { name: "查看料单" }).click();
+  await expect(page.getByRole("button", { name: "面筋", exact: true }).last()).toHaveAttribute("aria-pressed", "true");
+});
+
+test("V4 Status Bar与Workflow共用Issue Center并可定位工程对象", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await installMultiBlockWorkspace(page);
+  await page.evaluate((draftKey) => {
+    const record = JSON.parse(localStorage.getItem(draftKey) ?? "null");
+    record.state.slabs[1].x = 2500;
+    localStorage.setItem(draftKey, JSON.stringify(record));
+  }, DRAFT_KEY);
+  await page.reload();
+  await expect(page.getByTestId("floor-workspace-status-bar")).toContainText("问题");
+  await page.getByTestId("status-issues-button").click();
+  const center = page.getByTestId("floor-issue-center");
+  await expect(center).toBeVisible();
+  await expect(center).toContainText("重叠");
+  await center.getByRole("button", { name: "定位" }).first().click();
+  await expect(center).toHaveCount(0);
+  await expect(page.getByTestId("floor-workspace-inspector")).toBeVisible();
+  await expect(page.getByTestId("selection-breadcrumb")).toContainText("楼层");
 });

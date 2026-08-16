@@ -9,7 +9,21 @@ export type FloorInspectorTab =
   | "role"
   | "defaults"
   | "slab"
-  | "through";
+  | "through"
+  | "diagnostics";
+
+export type FloorWorkspaceIssue = {
+  id: string;
+  code: string;
+  severity: "error" | "warning";
+  stage: "plan" | "bottom" | "top";
+  title: string;
+  detail?: string;
+  objectId?: string;
+  boundaryId?: string;
+  domainId?: string;
+  throughPathId?: string;
+};
 
 export type FloorWorkspaceRoleItem = {
   id: string;

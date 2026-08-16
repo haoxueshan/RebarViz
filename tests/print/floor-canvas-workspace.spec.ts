@@ -10,7 +10,7 @@ async function savedSlabs(page: import("@playwright/test").Page): Promise<Array<
   }, DRAFT_KEY);
 }
 
-test("桌面默认Canvas First：Inspector Overlay打开/关闭持久化且不压缩Canvas（V3.1）", async ({ page }) => {
+test("桌面默认Canvas First：Inspector Overlay打开/关闭不压缩Canvas且不写业务Storage（V4）", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/calculator/floor");
   await page.evaluate(({ draftKey, roleKey }) => {
@@ -27,20 +27,20 @@ test("桌面默认Canvas First：Inspector Overlay打开/关闭持久化且不�
   await expect(page.getByTestId("floor-workspace-inspector")).toHaveCount(0);
   const before = await canvas.boundingBox();
   expect(before).not.toBeNull();
-  await expect.poll(() => page.evaluate(() => localStorage.getItem("floorWorkspaceInspectorOpen"))).toBe("false");
-  // 打开 Inspector → Overlay，Canvas 宽度不变（V3.1 不再 Split 压缩）。
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("floorWorkspaceInspectorOpen"))).toBeNull();
+  // 打开 Inspector → Overlay，Canvas 宽度不变，UI状态不写入正式Storage。
   await page.getByTestId("open-inspector-handle").click();
   await expect(page.getByTestId("floor-workspace-inspector")).toBeVisible();
   const after = await canvas.boundingBox();
   expect(after).not.toBeNull();
   expect(Math.abs(after!.width - before!.width)).toBeLessThan(1);
-  await expect.poll(() => page.evaluate(() => localStorage.getItem("floorWorkspaceInspectorOpen"))).toBe("true");
-  await page.reload();
-  await expect(page.getByTestId("floor-workspace-inspector")).toBeVisible();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("floorWorkspaceInspectorOpen"))).toBeNull();
   await page.getByRole("button", { name: "关闭参数面板" }).click();
   await expect(page.getByTestId("floor-workspace-inspector")).toHaveCount(0);
   await expect(page.getByTestId("open-inspector-handle")).toBeVisible();
-  await expect.poll(() => page.evaluate(() => localStorage.getItem("floorWorkspaceInspectorOpen"))).toBe("false");
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("floorWorkspaceInspectorOpen"))).toBeNull();
+  await page.reload();
+  await expect(page.getByTestId("floor-workspace-inspector")).toHaveCount(0);
 });
 
 test("Fullscreen：进入隐藏页面组件，退出恢复且FloorPlan不变", async ({ page }) => {
@@ -52,18 +52,18 @@ test("Fullscreen：进入隐藏页面组件，退出恢复且FloorPlan不变", a
   }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
   await page.reload();
 
-  const heading = page.getByRole("heading", { name: "整层楼板板筋系统" });
-  await expect(heading).toBeVisible();
+  const appBar = page.getByTestId("floor-workspace-app-bar");
+  await expect(appBar).toBeVisible();
   // 先放大到125%，验证Fullscreen进入/退出保持Viewport（PRD 70）。
   await page.getByRole("button", { name: "放大" }).click();
   await expect(page.getByTestId("canvas-zoom-percent")).toHaveText("125%");
   await page.getByRole("button", { name: "全屏画布" }).click();
   await expect(page.getByTestId("floor-fullscreen-canvas")).toBeVisible();
-  await expect(heading).toHaveCount(0);
+  await expect(appBar).toHaveCount(0);
   await expect(page.getByTestId("canvas-zoom-percent")).toHaveText("125%");
   await page.getByRole("button", { name: "退出全屏画布" }).click();
   await expect(page.getByTestId("floor-fullscreen-canvas")).toHaveCount(0);
-  await expect(heading).toBeVisible();
+  await expect(page.getByTestId("floor-workspace-app-bar")).toBeVisible();
   await expect(page.getByTestId("canvas-zoom-percent")).toHaveText("125%");
   await page.waitForTimeout(400);
   const slabs = await savedSlabs(page);
@@ -412,7 +412,7 @@ test("平板首次访问默认Canvas First，展开编辑为Overlay且不压缩C
   // 无用户设置时平板默认收起Inspector（Canvas First）。
   const inspector = page.getByTestId("floor-workspace-inspector");
   await expect(inspector).toHaveCount(0);
-  await expect.poll(() => page.evaluate(() => localStorage.getItem("floorWorkspaceInspectorOpen"))).toBe("false");
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("floorWorkspaceInspectorOpen"))).toBeNull();
   const canvas = page.getByTestId("floor-canvas-card");
   const grid = page.getByTestId("floor-workspace-grid");
   const svg = page.locator("svg[data-floor-canvas-fit]");
@@ -423,8 +423,8 @@ test("平板首次访问默认Canvas First，展开编辑为Overlay且不压缩C
   expect(gridBox).not.toBeNull();
   expect(svgBox).not.toBeNull();
   expect(before!.width).toBeGreaterThan(gridBox!.width * 0.9);
-  // PRD 79：平板画布高度明显提升（≥540px）。
-  expect(svgBox!.height).toBeGreaterThanOrEqual(540);
+  // V4：Workflow / Current Object / Status 常驻后，Canvas仍占横屏主体。
+  expect(svgBox!.height).toBeGreaterThanOrEqual(460);
   // 展开编辑 → Overlay Drawer，Canvas宽度不变。
   await page.getByRole("button", { name: "展开编辑" }).click();
   await expect(inspector).toBeVisible();
@@ -750,16 +750,16 @@ test("Compact Navigator Rail不丢对象：12板区+3洞口均可通过Overlay�
   // 默认 Rail：不再渲染第9块以后的截断列表，而是功能按钮。
   await expect(page.getByRole("button", { name: "导航-对象" })).toBeVisible();
   await page.getByRole("button", { name: "导航-对象" }).click();
-  const drawer = page.getByTestId("floor-workspace-left-drawer");
-  await expect(drawer).toBeVisible();
-  await expect(drawer.locator('[data-navigator-object-id^="s"]')).toHaveCount(12);
-  await expect(drawer.locator('[data-navigator-object-id="s12"]')).toBeVisible();
-  await drawer.locator('[data-navigator-object-id="s12"]').click();
+  const palette = page.getByTestId("floor-navigator-palette");
+  await expect(palette).toBeVisible();
+  await expect(palette.locator('[data-navigator-object-id^="s"]')).toHaveCount(12);
+  await expect(palette.locator('[data-navigator-object-id="s12"]')).toBeVisible();
+  await palette.locator('[data-navigator-object-id="s12"]').click();
   await expect(page.getByRole("button", { name: "选择板区 板区12" })).toHaveAttribute("stroke", "#2563eb");
   // 洞口经Rail→Overlay访问。
   await page.getByRole("button", { name: "导航-洞口" }).click();
-  await expect(drawer).toBeVisible();
-  await expect(drawer.locator('[data-navigator-object-id="o3"]')).toBeVisible();
+  await expect(palette).toBeVisible();
+  await expect(palette.locator('[data-navigator-object-id="o3"]')).toBeVisible();
 });
 
 test("PLOT有效面积扩大：宽≥90% SVG、高≥85% SVG（PRD 113）", async ({ page }) => {
@@ -820,12 +820,12 @@ test.describe("UI V3.1 Layout Logic Finalization", () => {
     const box = await svg.boundingBox();
     expect(box).not.toBeNull();
     // 短横屏不再强制600px最小高度。
-    expect(box!.height).toBeGreaterThanOrEqual(420);
+    expect(box!.height).toBeGreaterThanOrEqual(400);
     expect(box!.height).toBeLessThanOrEqual(600);
-    // 页面整体不超高：无需滚动很远即可看到 Summary。
-    const summary = await page.getByTestId("floor-live-summary").boundingBox();
-    expect(summary).not.toBeNull();
-    expect(summary!.y).toBeLessThan(768 + 300);
+    // 页面整体不超高：常驻 Status Bar 在首屏附近。
+    const status = await page.getByTestId("floor-workspace-status-bar").boundingBox();
+    expect(status).not.toBeNull();
+    expect(status!.y).toBeLessThan(768 + 300);
   });
 
   test("Touch Inspector为Overlay：Canvas宽度不变且Body可滚动（PRD 45）", async ({ page }) => {
@@ -937,9 +937,9 @@ test("Navigator选择不Remount Canvas：实例ID与轴锁保持（PRD 53）", a
     await page.getByRole("button", { name: "水平移动" }).click();
     // Navigator Rail 选择板区04。
     await page.getByRole("button", { name: "导航-对象" }).click();
-    const drawer = page.getByTestId("floor-workspace-left-drawer");
-    await drawer.locator('[data-navigator-object-id="s04"]').click();
-    await expect(drawer).toHaveCount(0);
+    const palette = page.getByTestId("floor-navigator-palette");
+    await palette.locator('[data-navigator-object-id="s04"]').click();
+    await expect(palette).toBeVisible();
     const instanceAfter = await canvasCard.getAttribute("data-canvas-instance-id");
     expect(instanceBefore).not.toBeNull();
     expect(instanceAfter).toBe(instanceBefore);
@@ -968,23 +968,23 @@ test("Navigator选择不Remount Canvas：实例ID与轴锁保持（PRD 53）", a
 
     // 洞口分类：只显示洞口 Section，板区 Section 不出现。
     await page.getByRole("button", { name: "导航-洞口" }).click();
-    const drawer = page.getByTestId("floor-workspace-left-drawer");
-    await expect(drawer).toBeVisible();
-    await expect(drawer.getByRole("heading", { name: "洞口导航" })).toBeVisible();
-    await expect(drawer.locator('[data-navigator-section="openings"]')).toBeVisible();
-    await expect(drawer.locator('[data-navigator-section="slabs"]')).toHaveCount(0);
-    await expect(drawer.locator('[data-navigator-object-id="o1"]')).toBeVisible();
+    const palette = page.getByTestId("floor-navigator-palette");
+    await expect(palette).toBeVisible();
+    await expect(palette.getByText("洞口导航", { exact: true })).toBeVisible();
+    await expect(palette.locator('[data-navigator-section="openings"]')).toBeVisible();
+    await expect(palette.locator('[data-navigator-section="slabs"]')).toHaveCount(0);
+    await expect(palette.locator('[data-navigator-object-id="o1"]')).toBeVisible();
     await page.keyboard.press("Escape");
-    await expect(drawer).toHaveCount(0);
+    await expect(palette).toHaveCount(0);
 
     // 对象分类：只显示板区 Section。
     await page.getByRole("button", { name: "导航-对象" }).click();
-    await expect(drawer.locator('[data-navigator-section="slabs"]')).toBeVisible();
-    await expect(drawer.locator('[data-navigator-section="openings"]')).toHaveCount(0);
+    await expect(palette.locator('[data-navigator-section="slabs"]')).toBeVisible();
+    await expect(palette.locator('[data-navigator-section="openings"]')).toHaveCount(0);
   });
 
 // —— Desktop-only V3.1 用例（Rail 交互需要 Desktop Workspace）——
-test("查看问题必定打开Inspector并显示问题区（PRD 46）", async ({ page }) => {
+test("查看问题统一打开Issue Center并可定位（V4）", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto("/calculator/floor");
     await page.evaluate(({ draftKey, roleKey }) => {
@@ -1006,11 +1006,11 @@ test("查看问题必定打开Inspector并显示问题区（PRD 46）", async ({
 
     // 首次进入 Inspector 关闭（Canvas First）。
     await expect(page.getByTestId("floor-workspace-inspector")).toHaveCount(0);
-    const showIssues = page.getByRole("button", { name: "查看问题" });
+    const showIssues = page.getByRole("button", { name: /个问题$/ }).last();
     await expect(showIssues).toBeVisible();
     await showIssues.click();
-    await expect(page.getByTestId("floor-workspace-inspector")).toBeVisible();
-    await expect(page.getByTestId("floor-settings-section")).toBeVisible();
+    await expect(page.getByTestId("floor-issue-center")).toBeVisible();
+    await expect(page.getByTestId("floor-issue-center").getByRole("button", { name: "定位" }).first()).toBeVisible();
   });
 
   test("View Popover在多个宽度完整显示且可点6项（PRD 48）", async ({ page }) => {
@@ -1060,7 +1060,7 @@ test("Desktop Inspector Overlay不压缩Canvas（PRD 54）", async ({ page }) =>
   expect(Math.abs(after!.width - before!.width)).toBeLessThan(1);
 });
 
-test("Detailed Results属于Canvas Main Column（PRD 56）", async ({ page }) => {
+test("Result Strip进入唯一BOM Workspace且主工作台不渲染完整表格（V4）", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/calculator/floor");
   await page.evaluate(({ draftKey, roleKey }) => {
@@ -1073,20 +1073,14 @@ test("Detailed Results属于Canvas Main Column（PRD 56）", async ({ page }) =>
     localStorage.setItem("floorWorkspaceInspectorOpen", "true");
     localStorage.setItem("floorNavigatorCollapsed", "false");
   }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
-  await page.waitForTimeout(250);
-  await page.evaluate(() => localStorage.setItem("floorWorkspaceInspectorOpen", "true"));
   await page.reload();
 
   await page.getByRole("button", { name: /2\. 地筋/ }).click();
-  await page.getByRole("button", { name: /详细料单/ }).click();
-  await expect(page.getByRole("heading", { name: "整层地筋料单" })).toBeVisible();
-  const canvas = await page.getByTestId("floor-canvas-card").boundingBox();
-  const results = await page.getByRole("heading", { name: "整层地筋料单" }).locator("..").locator("..").boundingBox();
-  expect(canvas).not.toBeNull();
-  expect(results).not.toBeNull();
-  // Results 与 Canvas 同列：水平起点接近（Main Column 左侧），不横跨三栏。
-  expect(Math.abs(results!.x - canvas!.x)).toBeLessThan(80);
-  expect(results!.width).toBeLessThan(1440 * 0.9);
+  await expect(page.getByTestId("floor-live-summary")).toContainText("地筋有效");
+  await expect(page.getByRole("heading", { name: "地筋料单" })).toHaveCount(0);
+  await page.getByTestId("floor-live-summary").getByRole("button", { name: "查看料单" }).click();
+  await expect(page.getByTestId("floor-bom-workspace")).toBeVisible();
+  await expect(page.getByRole("button", { name: "地筋", exact: true }).last()).toHaveAttribute("aria-pressed", "true");
 });
 
 test("Command Bar底部考虑Safe Area且出现后主要图纸不被完全遮挡（PRD 49-50）", async ({ page }) => {

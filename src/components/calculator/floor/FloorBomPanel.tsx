@@ -60,6 +60,7 @@ export function FloorBomPanel({
   bottomRoleReviewRequired,
   topRoleReviewRequired,
   invalidDraftCount,
+  initialFilter = "all",
 }: {
   plan: FloorPlanState;
   bottom: FloorBottomCalculation;
@@ -67,11 +68,12 @@ export function FloorBomPanel({
   bottomRoleReviewRequired: boolean;
   topRoleReviewRequired: boolean;
   invalidDraftCount: number;
+  initialFilter?: "all" | "bottom" | "top" | "through";
 }) {
   const router = useRouter();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [buildError, setBuildError] = useState<string | null>(null);
-  const [previewFilter, setPreviewFilter] = useState<"all" | "bottom" | "top-normal" | "top-through">("all");
+  const [previewFilter, setPreviewFilter] = useState<"all" | "bottom" | "top" | "through">(initialFilter);
   const [previewQuery, setPreviewQuery] = useState("");
   const eligibility = useMemo(() => getFloorPrintEligibility({
     plan,
@@ -95,8 +97,8 @@ export function FloorBomPanel({
     return content.combinedRows.filter((row) => {
       const typeMatches = previewFilter === "all"
         || (previewFilter === "bottom" && row.layer === "bottom")
-        || (previewFilter === "top-normal" && row.layer === "top" && row.source === "normal")
-        || (previewFilter === "top-through" && row.layer === "top" && row.source === "through");
+        || (previewFilter === "top" && row.layer === "top")
+        || (previewFilter === "through" && row.layer === "top" && row.source === "through");
       return typeMatches && (!query || `${row.mark} ${row.slabNames.join(" ")} ${row.throughPathName ?? ""}`.toLocaleLowerCase("zh-CN").includes(query));
     });
   }, [content, previewFilter, previewQuery]);
@@ -158,9 +160,9 @@ export function FloorBomPanel({
             <div className="rounded-2xl border border-blue-200 bg-white p-5 shadow-sm"><span className="text-xs text-blue-700">通墙面筋</span><strong className="mt-1 block text-2xl text-slate-950">{content.summary.topThroughPieceCount} 件</strong><span className="mt-2 block text-sm text-slate-600">已替换对应普通Piece</span></div>
             <div className="rounded-2xl border border-blue-200 bg-blue-50 p-5 shadow-sm"><span className="text-xs text-blue-700">整层合计</span><strong className="mt-1 block text-2xl text-slate-950">{content.summary.totalPieceCount} 件</strong><span className="mt-2 block text-sm text-slate-700">{formatNumber(content.summary.totalLengthM)} m · {formatNumber(content.summary.totalWeightKg)} kg</span></div>
           </section>
-          <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between"><div className="flex flex-wrap gap-2" aria-label="料单预览筛选">{[["all", "全部"], ["bottom", "地筋"], ["top-normal", "普通面筋"], ["top-through", "通墙面筋"]].map(([value, label]) => <button key={value} type="button" aria-pressed={previewFilter === value} onClick={() => setPreviewFilter(value as typeof previewFilter)} className={`min-h-11 rounded-xl px-4 text-xs font-semibold ${previewFilter === value ? "bg-blue-600 text-white" : "border border-slate-300 text-slate-700"}`}>{label}</button>)}</div><label className="block min-w-0 lg:w-72"><span className="sr-only">搜索料单编号或板区</span><input value={previewQuery} onChange={(event) => setPreviewQuery(event.target.value)} placeholder="搜索编号/板区" className="h-11 w-full rounded-xl border border-slate-300 px-3 text-sm" /></label></div></section>
+          <section className="rounded-xl border border-slate-200 bg-white p-3"><div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between"><div className="flex flex-wrap gap-2" aria-label="料单预览筛选">{[["all", "全部"], ["bottom", "地筋"], ["top", "面筋"], ["through", "通墙"]].map(([value, label]) => <button key={value} type="button" aria-pressed={previewFilter === value} onClick={() => setPreviewFilter(value as typeof previewFilter)} className={`min-h-11 rounded-lg px-4 text-xs font-semibold ${previewFilter === value ? "bg-blue-600 text-white" : "border border-slate-300 text-slate-700"}`}>{label}</button>)}</div><label className="block min-w-0 lg:w-72"><span className="sr-only">搜索料单编号或板区</span><input value={previewQuery} onChange={(event) => setPreviewQuery(event.target.value)} placeholder="搜索编号/板区" className="h-11 w-full rounded-lg border border-slate-300 px-3 text-sm" /></label></div></section>
           {(previewFilter === "all" || previewFilter === "bottom") && <PreviewTable title="地筋料单" rows={filteredRows.filter((row) => row.layer === "bottom")} />}
-          {(previewFilter === "all" || previewFilter === "top-normal" || previewFilter === "top-through") && <PreviewTable title="面筋料单（普通 + 通墙）" rows={filteredRows.filter((row) => row.layer === "top")} />}
+          {(previewFilter === "all" || previewFilter === "top" || previewFilter === "through") && <PreviewTable title="面筋料单（普通 + 通墙）" rows={filteredRows.filter((row) => row.layer === "top")} />}
           <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
             <h3 className="font-bold text-slate-950">按直径汇总</h3>
             <div className="mt-4 overflow-x-auto"><table className="min-w-[560px] w-full border-collapse text-sm"><thead><tr className="bg-slate-100"><th className="border border-slate-300 px-3 py-2">直径</th><th className="border border-slate-300 px-3 py-2">实际件数</th><th className="border border-slate-300 px-3 py-2">总长度</th><th className="border border-slate-300 px-3 py-2">理论重量</th></tr></thead><tbody>{content.diameterSummary.map((row) => <tr key={row.diameter}><td className="border border-slate-300 px-3 py-2 text-center font-bold">Φ{row.diameter}</td><td className="border border-slate-300 px-3 py-2 text-center">{row.pieceCount}</td><td className="border border-slate-300 px-3 py-2 text-center">{formatNumber(row.totalLengthM)} m</td><td className="border border-slate-300 px-3 py-2 text-center">{formatNumber(row.weightKg)} kg</td></tr>)}</tbody></table></div>

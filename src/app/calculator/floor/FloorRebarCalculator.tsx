@@ -2,18 +2,25 @@
 
 import { AlertTriangle, Check, ChevronLeft, ChevronRight, Circle, DoorOpen, Grid2X2, Menu, RotateCcw, Settings2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FloorBottomResults, FloorBottomSettingsPanel } from "@/components/calculator/floor/FloorBottomPanel";
+import { FloorBottomSettingsPanel } from "@/components/calculator/floor/FloorBottomPanel";
 import { FloorBomPanel } from "@/components/calculator/floor/FloorBomPanel";
 import { FloorCanvas, type FloorSelection } from "@/components/calculator/floor/FloorCanvas";
-import { FloorTopResults, FloorTopSettingsPanel } from "@/components/calculator/floor/FloorTopPanel";
+import { FloorCanvasCommandBar } from "@/components/calculator/floor/FloorCanvasCommandBar";
+import { FloorTopSettingsPanel } from "@/components/calculator/floor/FloorTopPanel";
+import { FloorIssueCenter } from "@/components/calculator/floor/FloorIssueCenter";
+import { FloorNavigatorPalette } from "@/components/calculator/floor/FloorNavigatorPalette";
 import { FloorWorkspaceDrawer } from "@/components/calculator/floor/FloorWorkspaceDrawer";
 import { FloorWorkspaceInspector, type FloorWorkspaceInspectorTab } from "@/components/calculator/floor/FloorWorkspaceInspector";
 import { FloorWorkspaceNavigator, FLOOR_NAVIGATOR_SECTION_LABELS, type FloorNavigatorSection } from "@/components/calculator/floor/FloorWorkspaceNavigator";
-import { FloorWorkspaceSummary } from "@/components/calculator/floor/FloorWorkspaceSummary";
+import { FloorWorkspaceResultStrip } from "@/components/calculator/floor/FloorWorkspaceResultStrip";
+import { FloorWorkspaceShell } from "@/components/calculator/floor/FloorWorkspaceShell";
+import { FloorWorkspaceStatusBar } from "@/components/calculator/floor/FloorWorkspaceStatusBar";
 import { useFloorWorkspaceProfile } from "@/components/calculator/floor/useFloorWorkspaceProfile";
 import type {
   FloorWorkflowStage,
   FloorWorkflowStatus,
+  FloorInspectorTab,
+  FloorWorkspaceIssue,
   FloorWorkspaceRoleItem,
   FloorWorkspaceThroughItem,
 } from "@/components/calculator/floor/floor-workspace-types";
@@ -41,7 +48,6 @@ import {
 } from "@/lib/floor-top-storage";
 import {
   buildFloorAtomicBoundarySegments,
-  buildFloorDisplayBoundarySegments,
   DEFAULT_FLOOR_PLAN_STATE,
   floorPlanBounds,
   nextAvailableFloorName,
@@ -283,7 +289,7 @@ function DraftNumberField({
   );
 }
 
-function WorkflowTabs({ stage, statuses, onChange }: { stage: FloorWorkflowStage; statuses: Record<FloorWorkflowStage, FloorWorkflowStatus>; onChange: (stage: FloorWorkflowStage) => void }) {
+function WorkflowTabs({ stage, statuses, issueCounts, onChange, onOpenIssues }: { stage: FloorWorkflowStage; statuses: Record<FloorWorkflowStage, FloorWorkflowStatus>; issueCounts: Record<FloorWorkflowStage, number>; onChange: (stage: FloorWorkflowStage) => void; onOpenIssues: (stage: FloorWorkflowStage) => void }) {
   const tabs: Array<{ stage: FloorWorkflowStage; label: string }> = [
     { stage: "plan", label: "楼层" },
     { stage: "bottom", label: "地筋" },
@@ -291,42 +297,16 @@ function WorkflowTabs({ stage, statuses, onChange }: { stage: FloorWorkflowStage
     { stage: "bom", label: "料单" },
   ];
   return (
-    <div className="sticky top-0 z-40 mb-3 grid grid-cols-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm md:static xl:mb-4" aria-label="整层计算步骤">
+    <div className="sticky top-0 z-40 grid h-11 grid-cols-4 bg-white md:static" aria-label="整层计算步骤" data-testid="floor-workflow-bar">
       {tabs.map((tab, index) => (
-        <button key={tab.stage} type="button" onClick={() => onChange(tab.stage)} className={`min-h-12 min-w-0 px-1 py-3 text-center text-xs font-semibold sm:text-sm ${stage === tab.stage ? "bg-blue-600 text-white" : "border-l border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`} aria-current={stage === tab.stage ? "step" : undefined}>
-          <span className="inline-flex items-center justify-center gap-1">{statuses[tab.stage] === "valid" ? <Check size={14} /> : statuses[tab.stage] === "invalid" || statuses[tab.stage] === "warning" ? <AlertTriangle size={14} /> : <Circle size={11} />}<span className="hidden sm:inline">{index + 1}. </span>{tab.label}</span>
-        </button>
+        <div key={tab.stage} className={`relative flex min-w-0 items-stretch border-l border-slate-200 first:border-l-0 ${stage === tab.stage ? "bg-blue-600 text-white" : "bg-white text-slate-700"}`}>
+          <button type="button" data-workflow-stage={tab.stage} onClick={() => onChange(tab.stage)} className="min-w-0 flex-1 px-1 text-center text-xs font-semibold hover:bg-black/5 sm:text-sm" aria-current={stage === tab.stage ? "step" : undefined}>
+            <span className="inline-flex items-center justify-center gap-1">{statuses[tab.stage] === "valid" ? <Check size={14} /> : statuses[tab.stage] === "invalid" || statuses[tab.stage] === "warning" ? <AlertTriangle size={14} /> : <Circle size={11} />}<span className="hidden sm:inline">{index + 1}. </span>{tab.label}</span>
+          </button>
+          {issueCounts[tab.stage] > 0 && <button type="button" aria-label={`查看${tab.label}问题`} onClick={() => onOpenIssues(tab.stage)} className={`mr-1 self-center rounded-md px-1.5 py-0.5 text-[10px] font-bold ${stage === tab.stage ? "bg-white/20 text-white" : "bg-rose-100 text-rose-700"}`}>{issueCounts[tab.stage]}</button>}
+        </div>
       ))}
     </div>
-  );
-}
-
-function CollapsibleSection({
-  title,
-  badge,
-  open,
-  onToggle,
-  testId,
-  children,
-}: {
-  title: string;
-  badge?: React.ReactNode;
-  open: boolean;
-  onToggle: () => void;
-  testId?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="rounded-2xl border border-slate-200 bg-white shadow-sm" data-testid={testId}>
-      <button type="button" aria-expanded={open} onClick={onToggle} className="flex min-h-12 w-full items-center justify-between gap-2 px-4 py-3 text-left">
-        <span className="flex min-w-0 items-center gap-2">
-          <ChevronRight size={16} className={`shrink-0 text-slate-400 transition-transform ${open ? "rotate-90" : ""}`} />
-          <span className="text-sm font-semibold text-slate-900">{title}</span>
-          {badge}
-        </span>
-      </button>
-      {open && <div className="border-t border-slate-100 p-4">{children}</div>}
-    </section>
   );
 }
 
@@ -403,17 +383,16 @@ export default function FloorRebarCalculator() {
   const [dragActive, setDragActive] = useState(false);
   const [inputRevision, setInputRevision] = useState(0);
   const [selectedThroughPathId, setSelectedThroughPathId] = useState<string | null>(null);
-  const [boundarySectionOpen, setBoundarySectionOpen] = useState(false);
-  const [floorSectionOpen, setFloorSectionOpen] = useState(false);
-  const [positionSectionOpen, setPositionSectionOpen] = useState(false);
   const [navigatorOpen, setNavigatorOpen] = useState(false);
   // UI V3.1：Inspector 状态收敛为单一 overlay 状态（Touch/Desktop 统一 Overlay，不压缩 Canvas）。
   const [inspectorOpen, setInspectorOpen] = useState(false);
   // UI V3.1（PRD 20）：Rail 分类导航的当前 Section。
   const [navigatorSection, setNavigatorSection] = useState<FloorNavigatorSection | null>(null);
-  // UI V3（PRD 12-14）：Desktop 默认 Canvas First——Navigator 52px Rail。
-  const [navigatorCollapsed, setNavigatorCollapsed] = useState(true);
-  const [detailsExpanded, setDetailsExpanded] = useState(false);
+  const [activeInspectorTab, setActiveInspectorTab] = useState<FloorInspectorTab>("object");
+  const [issueCenterOpen, setIssueCenterOpen] = useState(false);
+  const [issueStageFilter, setIssueStageFilter] = useState<FloorWorkflowStage | null>(null);
+  const [bomFilter, setBomFilter] = useState<"all" | "bottom" | "top" | "through">("all");
+  const [canvasZoomPercent, setCanvasZoomPercent] = useState(100);
   const [highlightedRoleDomainId, setHighlightedRoleDomainId] = useState<string | null>(null);
   const [canvasFocusRequest, setCanvasFocusRequest] = useState<{ id: number; mode: "floor" | "selection" | "domain" } | null>(null);
   const [editMode, setEditMode] = useState<"move" | "dock" | "multi">("move");
@@ -501,18 +480,10 @@ export default function FloorRebarCalculator() {
     } finally {
       setHydrated(true);
     }
-    // UI V3.1（PRD 11）：Inspector 收敛为 overlay 打开状态；navigatorCollapsed 控制 Desktop Rail/展开。
-    const savedNavigatorCollapsed = window.localStorage.getItem("floorNavigatorCollapsed");
-    if (savedNavigatorCollapsed !== null) setNavigatorCollapsed(savedNavigatorCollapsed === "true");
-    const savedInspectorOpen = window.localStorage.getItem("floorWorkspaceInspectorOpen");
-    if (savedInspectorOpen !== null) setInspectorOpen(savedInspectorOpen === "true");
+    // V4不再持久化Workspace UI；仅一次性兼容V3.1遗留偏好，后续刷新不会回写。
+    if (window.innerWidth >= 1280 && window.localStorage.getItem("floorNavigatorCollapsed") === "false") setNavigatorOpen(true);
+    if (window.innerWidth >= 640 && window.localStorage.getItem("floorWorkspaceInspectorOpen") === "true") setInspectorOpen(true);
   }, []);
-
-  useEffect(() => {
-    if (!hydrated) return;
-    window.localStorage.setItem("floorWorkspaceInspectorOpen", String(inspectorOpen));
-    window.localStorage.setItem("floorNavigatorCollapsed", String(navigatorCollapsed));
-  }, [hydrated, inspectorOpen, navigatorCollapsed]);
 
   const toleranceResult = useMemo(() => resolveFloorGeometryTolerance(state), [state]);
   const canonicalPlan = toleranceResult.plan;
@@ -582,7 +553,6 @@ export default function FloorRebarCalculator() {
   }, [hydrated, roleDomains, roleState]);
 
   const atomic = useMemo(() => buildFloorAtomicBoundarySegments(canonicalPlan), [canonicalPlan]);
-  const displays = useMemo(() => buildFloorDisplayBoundarySegments(canonicalPlan), [canonicalPlan]);
   const issues = useMemo(() => validateFloorPlanV2(canonicalPlan), [canonicalPlan]);
   const errors = issues.filter((issue) => issue.level === "error");
   const warnings = issues.filter((issue) => issue.level === "warning");
@@ -647,6 +617,31 @@ export default function FloorRebarCalculator() {
     top: topCalculation.isValid && !topRoleReviewRequired && invalidDrafts.size + invalidTopDrafts.size === 0 ? "valid" : "invalid",
     bom: printEligibility.eligible ? "valid" : "invalid",
   };
+  const workspaceIssues = useMemo<FloorWorkspaceIssue[]>(() => {
+    const result: FloorWorkspaceIssue[] = [];
+    issues.forEach((issue, index) => result.push({
+      id: `plan:${issue.code}:${index}`,
+      code: issue.code,
+      severity: issue.level,
+      stage: "plan",
+      title: issue.message,
+      objectId: issue.objectIds?.find((id) => canonicalPlan.slabs.some((slab) => slab.id === id) || canonicalPlan.openings.some((opening) => opening.id === id)),
+    }));
+    bottomCalculation.errors.forEach((issue, index) => result.push({ id: `bottom:error:${issue.code}:${index}`, code: issue.code, severity: "error", stage: "bottom", title: issue.message, objectId: issue.objectIds?.find((id) => canonicalPlan.slabs.some((slab) => slab.id === id)), domainId: issue.objectIds?.find((id) => roleDomains.some((domain) => domain.id === id)) }));
+    bottomCalculation.warnings.forEach((issue, index) => result.push({ id: `bottom:warning:${issue.code}:${index}`, code: issue.code, severity: "warning", stage: "bottom", title: issue.message, objectId: issue.objectIds?.find((id) => canonicalPlan.slabs.some((slab) => slab.id === id)), domainId: issue.objectIds?.find((id) => roleDomains.some((domain) => domain.id === id)) }));
+    topCalculation.errors.forEach((issue, index) => result.push({ id: `top:error:${issue.code}:${index}`, code: issue.code, severity: "error", stage: "top", title: issue.message, objectId: issue.objectIds?.find((id) => canonicalPlan.slabs.some((slab) => slab.id === id)), domainId: issue.objectIds?.find((id) => roleDomains.some((domain) => domain.id === id)), throughPathId: issue.objectIds?.find((id) => topState.throughPaths.some((path) => path.id === id)) }));
+    topCalculation.warnings.forEach((issue, index) => result.push({ id: `top:warning:${issue.code}:${index}`, code: issue.code, severity: "warning", stage: "top", title: issue.message, objectId: issue.objectIds?.find((id) => canonicalPlan.slabs.some((slab) => slab.id === id)), domainId: issue.objectIds?.find((id) => roleDomains.some((domain) => domain.id === id)), throughPathId: issue.objectIds?.find((id) => topState.throughPaths.some((path) => path.id === id)) }));
+    if (invalidDrafts.size > 0) result.push({ id: "plan:invalid-drafts", code: "invalid-draft", severity: "error", stage: "plan", title: `有 ${invalidDrafts.size} 个几何数字输入为空或非法。` });
+    if (invalidBottomDrafts.size > 0) result.push({ id: "bottom:invalid-drafts", code: "invalid-draft", severity: "error", stage: "bottom", title: `有 ${invalidBottomDrafts.size} 个地筋数字输入为空或非法。` });
+    if (invalidTopDrafts.size > 0) result.push({ id: "top:invalid-drafts", code: "invalid-draft", severity: "error", stage: "top", title: `有 ${invalidTopDrafts.size} 个面筋数字输入为空或非法。` });
+    return result;
+  }, [bottomCalculation.errors, bottomCalculation.warnings, canonicalPlan.openings, canonicalPlan.slabs, invalidBottomDrafts.size, invalidDrafts.size, invalidTopDrafts.size, issues, roleDomains, topCalculation.errors, topCalculation.warnings, topState.throughPaths]);
+  const workflowIssueCounts: Record<FloorWorkflowStage, number> = {
+    plan: workspaceIssues.filter((issue) => issue.stage === "plan").length,
+    bottom: workspaceIssues.filter((issue) => issue.stage === "bottom").length,
+    top: workspaceIssues.filter((issue) => issue.stage === "top").length,
+    bom: printEligibility.eligible ? 0 : printEligibility.errors.length,
+  };
 
   const dockPreview: FloorDockPreview | null = useMemo(() => {
     if (!dockSourceId || !dockTargetId || !dockHoverDirection) return null;
@@ -707,6 +702,8 @@ export default function FloorRebarCalculator() {
     applyStateWithHistory({ ...state, slabs: [...state.slabs, next] });
     setSelection({ kind: "slab", id: next.id });
     setSelectedBoundaryId(null);
+    setActiveInspectorTab("object");
+    setInspectorOpen(true);
   };
 
   const addOpening = () => {
@@ -720,6 +717,8 @@ export default function FloorRebarCalculator() {
     applyStateWithHistory({ ...state, openings: [...state.openings, next] });
     setSelection({ kind: "opening", id: next.id });
     setSelectedBoundaryId(null);
+    setActiveInspectorTab("object");
+    setInspectorOpen(true);
   };
 
   const resetPlan = () => {
@@ -895,22 +894,29 @@ export default function FloorRebarCalculator() {
           deleteSelected();
         }
       } else if (event.key === "Escape") {
-        setNavigatorOpen(false);
-        setInspectorOpen(false);
-        setDockSourceId(null);
-        setDockTargetId(null);
-        setDockHoverDirection(null);
-        setDockPinned(false);
-        setMultiSelection(new Set());
-        setMultiAlignKind(null);
+        event.preventDefault();
+        if (issueCenterOpen) { setIssueCenterOpen(false); return; }
+        if (inspectorOpen) { closeInspector(); return; }
+        if (navigatorOpen) { closeNavigatorOverlay(); return; }
+        if (editMode === "dock" && (dockSourceId || dockTargetId || dockPinned)) { cancelDock(); return; }
+        if (editMode === "multi" && (multiSelection.size > 0 || multiAlignKind)) { setMultiSelection(new Set()); setMultiAlignKind(null); return; }
+        if (workspaceFullscreen) { setWorkspaceFullscreen(false); return; }
+        if (selection) { setSelection(null); setSelectedBoundaryId(null); }
+      } else if (event.key === "Enter") {
+        if (editMode === "dock" && dockPinned && dockPreview?.valid) { event.preventDefault(); confirmDock(); }
+        else if (editMode === "multi" && multiAlignPreview?.valid) { event.preventDefault(); confirmMultiAlign(); }
       } else if (event.key.toLowerCase() === "f") {
-        setCanvasFocusRequest({ id: Date.now(), mode: "floor" });
+        event.preventDefault();
+        setCanvasFocusRequest({ id: Date.now(), mode: event.shiftKey && selection ? "selection" : "floor" });
+      } else if (stage === "plan" && ["v", "d", "m"].includes(event.key.toLowerCase())) {
+        event.preventDefault();
+        changeEditMode(event.key.toLowerCase() === "d" ? "dock" : event.key.toLowerCase() === "m" ? "multi" : "move");
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [history, selection, state]);
+  }, [history, selection, state, issueCenterOpen, inspectorOpen, navigatorOpen, editMode, dockSourceId, dockTargetId, dockPinned, dockPreview, multiSelection, multiAlignKind, multiAlignPreview, workspaceFullscreen, stage]);
 
   const changeEditMode = (mode: "move" | "dock" | "multi") => {
     setEditMode(mode);
@@ -1017,17 +1023,17 @@ export default function FloorRebarCalculator() {
     setSelectedBoundaryId(segment.id);
     if (segment.openingId) setSelection({ kind: "opening", id: segment.openingId });
     else if (segment.slabIds[0]) setSelection({ kind: "slab", id: segment.slabIds[0] });
-    setBoundarySectionOpen(true);
+    setActiveInspectorTab("boundary");
     openInspector();
   };
 
   const changeStage = (nextStage: FloorWorkflowStage) => {
     setStage(nextStage);
-    setDetailsExpanded(false);
-    setNavigatorOpen(false);
+    if (touchInput || profile.viewport === "phone" || profile.viewport === "tablet") setNavigatorOpen(false);
     // UI V3.1：切换阶段保持 Inspector 打开状态，不打断编辑连续性。
     setHighlightedRoleDomainId(null);
     if (nextStage !== "top") setSelectedThroughPathId(null);
+    setActiveInspectorTab(nextStage === "plan" ? "object" : nextStage === "bottom" || nextStage === "top" ? "defaults" : "object");
   };
 
   const selectWorkspaceObject = (nextSelection: Exclude<FloorSelection, null>) => {
@@ -1036,7 +1042,8 @@ export default function FloorRebarCalculator() {
     setSelectedThroughPathId(null);
     setHighlightedRoleDomainId(null);
     requestCanvasFocus("selection");
-    setNavigatorOpen(false);
+    if (stage === "plan") setActiveInspectorTab("object");
+    if (touchInput || profile.viewport === "phone" || profile.viewport === "tablet") setNavigatorOpen(false);
   };
 
   const selectRoleItem = (item: FloorWorkspaceRoleItem) => {
@@ -1046,14 +1053,16 @@ export default function FloorRebarCalculator() {
     setSelectedThroughPathId(null);
     setHighlightedRoleDomainId(item.id);
     requestCanvasFocus("domain");
-    setNavigatorOpen(false);
+    setActiveInspectorTab("role");
+    if (touchInput || profile.viewport === "phone" || profile.viewport === "tablet") setNavigatorOpen(false);
     openInspector();
   };
 
   const selectThroughPath = (id: string) => {
     setSelectedThroughPathId(id);
     setHighlightedRoleDomainId(null);
-    setNavigatorOpen(false);
+    if (touchInput || profile.viewport === "phone" || profile.viewport === "tablet") setNavigatorOpen(false);
+    setActiveInspectorTab("through");
     openInspector();
   };
 
@@ -1069,7 +1078,40 @@ export default function FloorRebarCalculator() {
     };
     setTopState((current) => ({ ...current, throughPaths: [...current.throughPaths, next] }));
     setSelectedThroughPathId(next.id);
-    setNavigatorOpen(false);
+    setActiveInspectorTab("through");
+    if (touchInput || profile.viewport === "phone" || profile.viewport === "tablet") setNavigatorOpen(false);
+    openInspector();
+  };
+
+  const openIssueCenter = (filter: FloorWorkflowStage | null = null) => {
+    setIssueStageFilter(filter);
+    setIssueCenterOpen(true);
+  };
+
+  const locateWorkspaceIssue = (issue: FloorWorkspaceIssue) => {
+    changeStage(issue.stage);
+    if (issue.throughPathId) {
+      setSelectedThroughPathId(issue.throughPathId);
+      setActiveInspectorTab("through");
+    } else if (issue.domainId) {
+      const domain = roleDomains.find((candidate) => candidate.id === issue.domainId);
+      const slabId = domain?.slabIds[0];
+      if (slabId) setSelection({ kind: "slab", id: slabId });
+      setHighlightedRoleDomainId(issue.domainId);
+      setActiveInspectorTab("role");
+      requestCanvasFocus("domain");
+    } else if (issue.objectId) {
+      const nextSelection: Exclude<FloorSelection, null> = canonicalPlan.openings.some((opening) => opening.id === issue.objectId)
+        ? { kind: "opening", id: issue.objectId }
+        : { kind: "slab", id: issue.objectId };
+      setSelection(nextSelection);
+      setActiveInspectorTab("diagnostics");
+      requestCanvasFocus("selection");
+    } else {
+      setActiveInspectorTab("diagnostics");
+      requestCanvasFocus("floor");
+    }
+    setIssueCenterOpen(false);
     openInspector();
   };
 
@@ -1086,16 +1128,15 @@ export default function FloorRebarCalculator() {
   const field = (key: string, label: string, value: number, onChange: (value: number) => void, min?: number, max?: number) => (
     <DraftNumberField key={`${inputRevision}:${key}`} fieldKey={key} label={label} value={value} onChange={onChange} onValidityChange={setDraftValidity} min={min} max={max} />
   );
-  const stats = {
-    exterior: atomic.filter((segment) => segment.geometryKind === "building-exterior").length,
-    inner: atomic.filter((segment) => segment.support === "inner-wall").length,
-    continuous: atomic.filter((segment) => segment.support === "continuous").length,
-    opening: atomic.filter((segment) => segment.geometryKind === "opening-edge").length,
-  };
   const selectedThroughPath = selectedThroughPathId
     ? topState.throughPaths.find((path) => path.id === selectedThroughPathId) ?? null
     : null;
-  const inspectorTabs: FloorWorkspaceInspectorTab[] = [];
+  const inspectorTabs: FloorWorkspaceInspectorTab[] = stage === "plan"
+    ? [{ id: "object", label: "属性" }, { id: "boundary", label: "边界" }, { id: "diagnostics", label: "诊断" }]
+    : stage === "bottom"
+      ? [{ id: "defaults", label: "规格" }, { id: "role", label: "主副筋" }, { id: "diagnostics", label: "诊断" }]
+      : [{ id: "defaults", label: "规格" }, { id: "role", label: "主副筋" }, { id: "through", label: "通墙" }, { id: "diagnostics", label: "诊断" }];
+  const effectiveInspectorTab = inspectorTabs.some((tab) => tab.id === activeInspectorTab) ? activeInspectorTab : inspectorTabs[0].id;
   const inspectorTitle = selectedThroughPath
     ? selectedThroughPath.name
     : selectedSlab?.name ?? selectedOpening?.name ?? "未选择对象";
@@ -1111,102 +1152,79 @@ export default function FloorRebarCalculator() {
     : stage === "bottom"
       ? bottomCalculation.errors.length
       : topCalculation.errors.length;
-
-  const inspectorContent = stage === "plan" ? (
-    !selection ? (
-      <p className="text-sm text-slate-500">请从左侧Navigator或Canvas选择板区/洞口。</p>
-    ) : (
-      <div className="space-y-4">
-        {selectedSlab ? (
-          <section className="rounded-2xl border border-blue-100 bg-white p-5 shadow-sm" data-testid="floor-size-editor">
-            <div className="flex items-center gap-2"><Grid2X2 size={18} className="text-blue-600" /><h3 className="font-semibold text-slate-900">当前板区参数</h3></div>
-            <div className="mt-4 space-y-4">
-              <label className="block"><span className="mb-1.5 block text-xs font-medium text-slate-600">板区名称</span><input value={selectedSlab.name} onChange={(event) => updateSlab({ name: event.target.value })} className="h-11 w-full rounded-xl border border-slate-300 px-3 text-sm" /></label>
-              <label className="block"><span className="mb-1.5 block text-xs font-medium text-slate-600">板区类型</span><select value={selectedSlab.type} onChange={(event) => updateSlab({ type: event.target.value as FloorSlabType })} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm">{SLAB_TYPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-              <div><span className="mb-1.5 block text-xs font-medium text-slate-600">位置</span><div className="grid grid-cols-2 gap-3">{field(`${selectedSlab.id}:x`, "西南角 X", selectedSlab.x, (value) => updateSlab({ x: value }))}{field(`${selectedSlab.id}:y`, "西南角 Y", selectedSlab.y, (value) => updateSlab({ y: value }))}</div></div>
-              <div><span className="mb-1.5 block text-xs font-medium text-slate-600">净尺寸</span><div className="grid grid-cols-2 gap-3">{field(`${selectedSlab.id}:w`, "东西向净尺寸", selectedSlab.width, (value) => updateSlab({ width: value }), 1)}{field(`${selectedSlab.id}:h`, "南北向净尺寸", selectedSlab.height, (value) => updateSlab({ height: value }), 1)}</div></div>
-            </div>
-          </section>
-        ) : selectedOpening ? (
-          <section className="rounded-2xl border border-rose-100 bg-white p-5 shadow-sm" data-testid="floor-size-editor">
-            <div className="flex items-center gap-2"><DoorOpen size={18} className="text-rose-600" /><h3 className="font-semibold text-slate-900">洞口精确参数</h3></div>
-            <div className="mt-4 space-y-4">
-              <label className="block"><span className="mb-1.5 block text-xs font-medium text-slate-600">洞口名称</span><input value={selectedOpening.name} onChange={(event) => updateOpening({ name: event.target.value })} className="h-11 w-full rounded-xl border border-slate-300 px-3 text-sm" /></label>
-              <label className="block"><span className="mb-1.5 block text-xs font-medium text-slate-600">洞口类型</span><select value={selectedOpening.type} onChange={(event) => updateOpening({ type: event.target.value as FloorOpeningType })} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm">{OPENING_TYPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-              <div><span className="mb-1.5 block text-xs font-medium text-slate-600">位置</span><div className="grid grid-cols-2 gap-3">{field(`${selectedOpening.id}:x`, "西南角 X", selectedOpening.x, (value) => updateOpening({ x: value }))}{field(`${selectedOpening.id}:y`, "西南角 Y", selectedOpening.y, (value) => updateOpening({ y: value }))}</div></div>
-              <div><span className="mb-1.5 block text-xs font-medium text-slate-600">净尺寸</span><div className="grid grid-cols-2 gap-3">{field(`${selectedOpening.id}:w`, "东西向尺寸", selectedOpening.width, (value) => updateOpening({ width: value }), 1)}{field(`${selectedOpening.id}:h`, "南北向尺寸", selectedOpening.height, (value) => updateOpening({ height: value }), 1)}</div></div>
-              <p className="rounded-xl bg-rose-50 p-3 text-xs leading-5 text-rose-800">洞口会从与其重叠的板区中扣除。楼梯间仅表示无普通水平楼板区域。</p>
-            </div>
-          </section>
-        ) : null}
-        <CollapsibleSection title="边界关系" open={boundarySectionOpen} onToggle={() => setBoundarySectionOpen((value) => !value)} testId="floor-boundary-section">
-          <BoundaryPanel compact state={state} selection={selection} segments={selectedSegments} selectedBoundaryId={selectedBoundaryId} onSelectBoundary={setSelectedBoundaryId} onSetSupport={setSegmentSupport} />
-        </CollapsibleSection>
-        {selectedSlab && (
-          <CollapsibleSection title="位置关系" open={positionSectionOpen} onToggle={() => setPositionSectionOpen((value) => !value)} testId="floor-position-relations">
-            <div className="space-y-2" data-testid="floor-position-relations-list">
-              {sideRelations.map((relation) => (
-                <div key={relation.side} className="flex min-h-11 items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3">
-                  <span className="text-sm text-slate-700"><strong className="mr-1 text-slate-900">{relation.side === "west" ? "西侧" : relation.side === "east" ? "东侧" : relation.side === "south" ? "南侧" : "北侧"}</strong>{relation.label}</span>
-                  {relation.otherSlabId && (
-                    <button type="button" onClick={() => { changeEditMode("dock"); setDockSourceId(selectedSlab.id); setDockTargetId(relation.otherSlabId); }} className="min-h-9 rounded-lg border border-orange-300 bg-white px-2.5 text-xs font-semibold text-orange-700">连接板区</button>
-                  )}
-                </div>
-              ))}
-              <p className="text-xs leading-5 text-slate-500">位置关系由板区坐标自动推导；“连接板区”将进入拼接模式并按选择的方向精确贴齐（0mm共边）。</p>
-            </div>
-          </CollapsibleSection>
-        )}
-        <CollapsibleSection title="楼层设置" open={floorSectionOpen} onToggle={() => setFloorSectionOpen((value) => !value)} testId="floor-settings-section">
-          <div className="space-y-5">
-            <section className="space-y-4">
-              <div><h3 className="font-semibold text-slate-900">净跨拓扑设置</h3><p className="mt-1 text-xs leading-5 text-slate-500">X/Y仅表达板区净跨拼接，不含墙厚；墙厚通过支承拓扑单独保存。</p></div>
-              {field("inner-wall", "内墙厚度", state.innerWallThickness, (value) => setState((current) => ({ ...current, innerWallThickness: value })), 1)}
-              {field("outer-wall", "外墙厚度", state.outerWallThickness, (value) => setState((current) => ({ ...current, outerWallThickness: value })), 1)}
-              {field("snap", "自动吸附距离", state.snapDistanceMm, (value) => setState((current) => ({ ...current, snapDistanceMm: value })), 0)}
-              {field("overlap-tolerance", "几何对齐容差", state.overlapToleranceMm, (value) => setState((current) => ({ ...current, overlapToleranceMm: value })), 0, 30)}
-              <p className="rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-600">几何对齐容差：边缘重叠/间隙在该范围内时自动纠偏为精确共边；设为 0 时关闭自动纠偏（严格模式）。</p>
-              <button type="button" onClick={resetPlan} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-slate-300 text-sm font-semibold text-slate-700"><RotateCcw size={16} />重置平面</button>
-            </section>
-            <section className={`rounded-xl border p-4 ${errors.length > 0 || invalidDrafts.size > 0 ? "border-rose-200 bg-rose-50" : warnings.length > 0 ? "border-amber-200 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}>
-              <h3 className="font-semibold text-slate-900">{errors.length > 0 || invalidDrafts.size > 0 ? "几何输入无效" : warnings.length > 0 ? "几何有效，但需要确认" : "几何与支承拓扑有效"}</h3>
-              {invalidDrafts.size > 0 && <p className="mt-2 text-sm text-rose-800">有 {invalidDrafts.size} 个数字输入仍为空或非法，旧数值不会被当作当前输入提交。</p>}
-              {toleranceResult.corrections.length > 0 && <p className="mt-2 rounded-lg bg-blue-50 p-2 text-xs leading-5 text-blue-800">已自动对齐 {toleranceResult.corrections.length} 处板区边缘：在 {formatMm(state.overlapToleranceMm)}mm 容差内的重叠/间隙已纠偏为精确共边。</p>}
-              <ul className="mt-2 space-y-1 text-xs leading-5">
-                {issues.map((issue) => {
-                  const relatedSuggestions = issue.level === "error"
-                    ? dockSuggestions.filter((suggestion) =>
-                        issue.objectIds?.includes(suggestion.sourceSlabId)
-                        && issue.objectIds.includes(suggestion.targetSlabId))
-                    : [];
-                  return (
-                    <li key={`${issue.code}:${issue.message}`} className={issue.level === "error" ? "text-rose-800" : "text-amber-900"}>
-                      • {issue.message}
-                      {relatedSuggestions.map((suggestion) => (
-                        <button key={`${suggestion.kind}:${suggestion.sourceSlabId}:${suggestion.direction}`} type="button" onClick={() => applyDockSuggestion(suggestion)} className="ml-1 inline-block rounded-lg border border-orange-300 bg-white px-2 py-0.5 font-semibold text-orange-700" data-testid="dock-suggestion-button">{suggestion.label}</button>
-                      ))}
-                    </li>
-                  );
-                })}
-              </ul>
-            </section>
-          </div>
-        </CollapsibleSection>
-      </div>
-    )
-  ) : selection?.kind === "opening" ? (
-    <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">洞口不设置普通{stage === "bottom" ? "地筋" : "面筋"}规格。<button type="button" onClick={() => changeStage("plan")} className="mt-3 block min-h-11 w-full rounded-xl border border-amber-300 bg-white font-semibold">返回楼层编辑洞口</button></div>
-  ) : stage === "bottom" ? (
-    <div className="space-y-4">{bottomCalculation.errors.length > 0 && <section className="rounded-xl border border-rose-200 bg-rose-50 p-3"><strong className="text-sm text-rose-900">地筋问题</strong><ul className="mt-2 space-y-1 text-xs leading-5 text-rose-800">{bottomCalculation.errors.map((issue) => <li key={`${issue.code}:${issue.message}`}>• {issue.message}</li>)}</ul></section>}<FloorBottomSettingsPanel plan={state} bottom={bottomState} selectedSlab={selectedSlab} selectedRoleDomain={selectedRoleDomain} roleState={roleState} roleReviewRequired={bottomRoleReviewRequired} onChange={setBottomState} onRoleStateChange={setRoleState} onConfirmRoleReview={() => setBottomRoleReviewRequired(false)} onValidityChange={setBottomDraftValidity} section="all" /></div>
-  ) : (
-    <div className="space-y-4">{topCalculation.errors.length > 0 && <section className="rounded-xl border border-rose-200 bg-rose-50 p-3"><strong className="text-sm text-rose-900">面筋问题</strong><ul className="mt-2 space-y-1 text-xs leading-5 text-rose-800">{topCalculation.errors.map((issue) => <li key={`${issue.code}:${issue.message}`}>• {issue.message}</li>)}</ul></section>}<FloorTopSettingsPanel plan={state} top={topState} selectedSlab={selectedSlab} selectedRoleDomain={selectedRoleDomain} roleState={roleState} roleReviewRequired={topRoleReviewRequired} calculation={topCalculation} onChange={setTopState} onRoleStateChange={setRoleState} onConfirmRoleReview={() => setTopRoleReviewRequired(false)} onValidityChange={setTopDraftValidity} section="all" selectedThroughPathId={selectedThroughPathId} onSelectThroughPath={setSelectedThroughPathId} /></div>
+  const inspectorBreadcrumb = selectedBoundaryId
+    ? `${selectedSlab?.name ?? selectedOpening?.name ?? "对象"} > Atomic ${selectedBoundaryId}`
+    : highlightedRoleDomainId
+      ? `${stage === "top" ? "面筋" : "地筋"} > ${roleItems.find((item) => item.id === highlightedRoleDomainId)?.label ?? highlightedRoleDomainId}`
+      : selectedThroughPath
+        ? `面筋 > ${selectedThroughPath.name}`
+        : `${stage === "plan" ? "楼层" : stage === "bottom" ? "地筋" : "面筋"} > ${inspectorTitle}`;
+  const stageIssues = workspaceIssues.filter((issue) => issue.stage === stage);
+  const diagnosticsContent = (
+    <div className="space-y-2" data-testid="inspector-diagnostics">
+      {stageIssues.length === 0 ? <p className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">当前阶段没有需要处理的问题。</p> : stageIssues.map((issue) => (
+        <button key={issue.id} type="button" onClick={() => locateWorkspaceIssue(issue)} className={`block min-h-11 w-full border-b px-1 py-3 text-left ${issue.severity === "error" ? "border-rose-100" : "border-amber-100"}`}>
+          <strong className={issue.severity === "error" ? "text-sm text-rose-800" : "text-sm text-amber-800"}>{issue.title}</strong>
+          <span className="mt-1 block text-[10px] uppercase tracking-wide text-slate-400">{issue.code} · 点击定位</span>
+        </button>
+      ))}
+      {stage === "plan" && dockSuggestions.length > 0 && <section className="border-t border-slate-200 pt-3"><h3 className="text-xs font-bold text-slate-700">可用几何修复</h3><div className="mt-2 space-y-2">{dockSuggestions.map((suggestion) => <button key={`${suggestion.kind}:${suggestion.sourceSlabId}:${suggestion.direction}`} type="button" onClick={() => applyDockSuggestion(suggestion)} className="min-h-10 w-full rounded-lg border border-orange-300 bg-white px-3 text-left text-xs font-semibold text-orange-700" data-testid="dock-suggestion-button">{suggestion.label}</button>)}</div></section>}
+    </div>
   );
 
-  const inspector = <FloorWorkspaceInspector title={inspectorTitle} subtitle={inspectorSubtitle} tabs={inspectorTabs} issueCount={inspectorIssueCount}>{inspectorContent}</FloorWorkspaceInspector>;
+  const planObjectContent = !selection ? (
+    <p className="text-sm text-slate-500">请从对象浏览器或Canvas选择板区/洞口。</p>
+  ) : (
+    <div className="space-y-5">
+      {selectedSlab ? (
+        <section className="space-y-4" data-testid="floor-size-editor">
+          <div className="flex items-center gap-2 border-b border-slate-200 pb-2"><Grid2X2 size={17} className="text-blue-600" /><h3 className="text-sm font-semibold text-slate-900">板区属性</h3></div>
+          <label className="block"><span className="mb-1.5 block text-xs font-medium text-slate-600">板区名称</span><input value={selectedSlab.name} onChange={(event) => updateSlab({ name: event.target.value })} className="h-10 w-full rounded-lg border border-slate-300 px-3 text-sm" /></label>
+          <label className="block"><span className="mb-1.5 block text-xs font-medium text-slate-600">板区类型</span><select value={selectedSlab.type} onChange={(event) => updateSlab({ type: event.target.value as FloorSlabType })} className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm">{SLAB_TYPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+          <div className="grid grid-cols-2 gap-3">{field(`${selectedSlab.id}:x`, "西南角 X", selectedSlab.x, (value) => updateSlab({ x: value }))}{field(`${selectedSlab.id}:y`, "西南角 Y", selectedSlab.y, (value) => updateSlab({ y: value }))}{field(`${selectedSlab.id}:w`, "东西向净尺寸", selectedSlab.width, (value) => updateSlab({ width: value }), 1)}{field(`${selectedSlab.id}:h`, "南北向净尺寸", selectedSlab.height, (value) => updateSlab({ height: value }), 1)}</div>
+          <section className="border-t border-slate-200 pt-3"><h3 className="text-xs font-bold text-slate-700">位置关系</h3><div className="mt-2 space-y-1">{sideRelations.map((relation) => <div key={relation.side} className="flex min-h-10 items-center justify-between gap-2 border-b border-slate-100 px-1 text-xs"><span><strong>{relation.side === "west" ? "西侧" : relation.side === "east" ? "东侧" : relation.side === "south" ? "南侧" : "北侧"}</strong> · {relation.label}</span>{relation.otherSlabId && <button type="button" onClick={() => { changeEditMode("dock"); setDockSourceId(selectedSlab.id); setDockTargetId(relation.otherSlabId); }} className="min-h-9 rounded-lg border border-orange-300 px-2 font-semibold text-orange-700">拼接</button>}</div>)}</div></section>
+        </section>
+      ) : selectedOpening ? (
+        <section className="space-y-4" data-testid="floor-size-editor">
+          <div className="flex items-center gap-2 border-b border-slate-200 pb-2"><DoorOpen size={17} className="text-rose-600" /><h3 className="text-sm font-semibold text-slate-900">洞口属性</h3></div>
+          <label className="block"><span className="mb-1.5 block text-xs font-medium text-slate-600">洞口名称</span><input value={selectedOpening.name} onChange={(event) => updateOpening({ name: event.target.value })} className="h-10 w-full rounded-lg border border-slate-300 px-3 text-sm" /></label>
+          <label className="block"><span className="mb-1.5 block text-xs font-medium text-slate-600">洞口类型</span><select value={selectedOpening.type} onChange={(event) => updateOpening({ type: event.target.value as FloorOpeningType })} className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm">{OPENING_TYPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+          <div className="grid grid-cols-2 gap-3">{field(`${selectedOpening.id}:x`, "西南角 X", selectedOpening.x, (value) => updateOpening({ x: value }))}{field(`${selectedOpening.id}:y`, "西南角 Y", selectedOpening.y, (value) => updateOpening({ y: value }))}{field(`${selectedOpening.id}:w`, "东西向尺寸", selectedOpening.width, (value) => updateOpening({ width: value }), 1)}{field(`${selectedOpening.id}:h`, "南北向尺寸", selectedOpening.height, (value) => updateOpening({ height: value }), 1)}</div>
+        </section>
+      ) : null}
+      <section className="space-y-3 border-t border-slate-200 pt-4">
+        <h3 className="text-sm font-semibold text-slate-900">楼层设置</h3>
+        {field("inner-wall", "内墙厚度", state.innerWallThickness, (value) => setState((current) => ({ ...current, innerWallThickness: value })), 1)}
+        {field("outer-wall", "外墙厚度", state.outerWallThickness, (value) => setState((current) => ({ ...current, outerWallThickness: value })), 1)}
+        {field("snap", "自动吸附距离", state.snapDistanceMm, (value) => setState((current) => ({ ...current, snapDistanceMm: value })), 0)}
+        {field("overlap-tolerance", "几何对齐容差", state.overlapToleranceMm, (value) => setState((current) => ({ ...current, overlapToleranceMm: value })), 0, 30)}
+        <button type="button" onClick={resetPlan} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-slate-300 text-sm font-semibold text-slate-700"><RotateCcw size={16} />重置平面</button>
+      </section>
+    </div>
+  );
+
+  const inspectorContent = stage === "plan" ? (
+    effectiveInspectorTab === "diagnostics" ? diagnosticsContent : effectiveInspectorTab === "boundary" ? (
+      selection ? <BoundaryPanel compact state={state} selection={selection} segments={selectedSegments} selectedBoundaryId={selectedBoundaryId} onSelectBoundary={setSelectedBoundaryId} onSetSupport={setSegmentSupport} /> : <p className="text-sm text-slate-500">请先选择板区或洞口。</p>
+    ) : planObjectContent
+  ) : selection?.kind === "opening" ? (
+    <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">洞口不设置普通{stage === "bottom" ? "地筋" : "面筋"}规格。<button type="button" onClick={() => changeStage("plan")} className="mt-3 block min-h-11 w-full rounded-lg border border-amber-300 bg-white font-semibold">返回楼层编辑洞口</button></div>
+  ) : effectiveInspectorTab === "diagnostics" ? diagnosticsContent : stage === "bottom" ? (
+    <div className="space-y-5">
+      {effectiveInspectorTab === "role" ? <FloorBottomSettingsPanel plan={state} bottom={bottomState} selectedSlab={selectedSlab} selectedRoleDomain={selectedRoleDomain} roleState={roleState} roleReviewRequired={bottomRoleReviewRequired} onChange={setBottomState} onRoleStateChange={setRoleState} onConfirmRoleReview={() => setBottomRoleReviewRequired(false)} onValidityChange={setBottomDraftValidity} section="role" /> : <><FloorBottomSettingsPanel plan={state} bottom={bottomState} selectedSlab={selectedSlab} selectedRoleDomain={selectedRoleDomain} roleState={roleState} roleReviewRequired={bottomRoleReviewRequired} onChange={setBottomState} onRoleStateChange={setRoleState} onConfirmRoleReview={() => setBottomRoleReviewRequired(false)} onValidityChange={setBottomDraftValidity} section="defaults" /><section className="border-t border-slate-200 pt-4"><FloorBottomSettingsPanel plan={state} bottom={bottomState} selectedSlab={selectedSlab} selectedRoleDomain={selectedRoleDomain} roleState={roleState} roleReviewRequired={bottomRoleReviewRequired} onChange={setBottomState} onRoleStateChange={setRoleState} onConfirmRoleReview={() => setBottomRoleReviewRequired(false)} onValidityChange={setBottomDraftValidity} section="slab" /></section></>}
+    </div>
+  ) : (
+    <div className="space-y-5">
+      {effectiveInspectorTab === "role" ? <FloorTopSettingsPanel plan={state} top={topState} selectedSlab={selectedSlab} selectedRoleDomain={selectedRoleDomain} roleState={roleState} roleReviewRequired={topRoleReviewRequired} calculation={topCalculation} onChange={setTopState} onRoleStateChange={setRoleState} onConfirmRoleReview={() => setTopRoleReviewRequired(false)} onValidityChange={setTopDraftValidity} section="role" selectedThroughPathId={selectedThroughPathId} onSelectThroughPath={setSelectedThroughPathId} /> : effectiveInspectorTab === "through" ? <FloorTopSettingsPanel plan={state} top={topState} selectedSlab={selectedSlab} selectedRoleDomain={selectedRoleDomain} roleState={roleState} roleReviewRequired={topRoleReviewRequired} calculation={topCalculation} onChange={setTopState} onRoleStateChange={setRoleState} onConfirmRoleReview={() => setTopRoleReviewRequired(false)} onValidityChange={setTopDraftValidity} section="through" selectedThroughPathId={selectedThroughPathId} onSelectThroughPath={setSelectedThroughPathId} /> : <><FloorTopSettingsPanel plan={state} top={topState} selectedSlab={selectedSlab} selectedRoleDomain={selectedRoleDomain} roleState={roleState} roleReviewRequired={topRoleReviewRequired} calculation={topCalculation} onChange={setTopState} onRoleStateChange={setRoleState} onConfirmRoleReview={() => setTopRoleReviewRequired(false)} onValidityChange={setTopDraftValidity} section="defaults" selectedThroughPathId={selectedThroughPathId} onSelectThroughPath={setSelectedThroughPathId} /><section className="border-t border-slate-200 pt-4"><FloorTopSettingsPanel plan={state} top={topState} selectedSlab={selectedSlab} selectedRoleDomain={selectedRoleDomain} roleState={roleState} roleReviewRequired={topRoleReviewRequired} calculation={topCalculation} onChange={setTopState} onRoleStateChange={setRoleState} onConfirmRoleReview={() => setTopRoleReviewRequired(false)} onValidityChange={setTopDraftValidity} section="slab" selectedThroughPathId={selectedThroughPathId} onSelectThroughPath={setSelectedThroughPathId} /></section></>}
+    </div>
+  );
+
+  const inspector = <FloorWorkspaceInspector title={inspectorTitle} subtitle={inspectorSubtitle} breadcrumb={inspectorBreadcrumb} tabs={inspectorTabs} activeTab={effectiveInspectorTab} onTabChange={setActiveInspectorTab} issueCount={inspectorIssueCount}>{inspectorContent}</FloorWorkspaceInspector>;
+
 
   // UI V3（PRD 47-57）：Dock确认与Multi对齐统一进入 Canvas 内部底部 Command Bar。
   const canvasCommandBar = stage === "plan" && editMode === "dock" && dockPinned && dockSourceSlab && dockTargetSlab && dockHoverDirection && dockPreview ? (
-    <div className="pointer-events-auto w-[min(94%,720px)] rounded-2xl border border-orange-200 bg-orange-50/95 p-3 shadow-xl shadow-slate-900/10 backdrop-blur" data-testid="dock-confirm-panel">
+    <FloorCanvasCommandBar tone="dock" testId="dock-confirm-panel">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-sm text-slate-800">
           源板区：<strong>{dockSourceSlab.name}</strong>
@@ -1236,9 +1254,9 @@ export default function FloorRebarCalculator() {
         <button type="button" onClick={cancelDock} className={`rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 ${touchInput ? "min-h-11" : "min-h-10"}`}>取消</button>
         <button type="button" onClick={confirmDock} disabled={!dockPreview.valid} className={`rounded-xl bg-orange-600 px-5 text-sm font-semibold text-white disabled:opacity-40 ${touchInput ? "min-h-11" : "min-h-10"}`}>确认拼接</button>
       </div>
-    </div>
+    </FloorCanvasCommandBar>
   ) : stage === "plan" && editMode === "multi" && multiSelection.size >= 2 ? (
-    <div className="pointer-events-auto w-[min(94%,680px)] rounded-2xl border border-violet-200 bg-violet-50/95 p-3 shadow-xl shadow-slate-900/10 backdrop-blur" data-testid="multi-align-bar">
+    <FloorCanvasCommandBar tone="multi" testId="multi-align-bar">
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm font-semibold text-slate-800">对齐 {multiSelection.size} 个板区：</span>
         {(["left", "right", "top", "bottom"] as FloorMultiAlignKind[]).map((kind) => (
@@ -1258,7 +1276,7 @@ export default function FloorRebarCalculator() {
           </div>
         </div>
       )}
-    </div>
+    </FloorCanvasCommandBar>
   ) : null;
 
   const canvasElement = (
@@ -1299,85 +1317,79 @@ export default function FloorRebarCalculator() {
       onRedo={redoHistory}
       inputProfile={profile.input}
       commandBar={canvasCommandBar}
+      onZoomChange={setCanvasZoomPercent}
     />
   );
-  const navigator = <FloorWorkspaceNavigator stage={stage} plan={state} selection={selection} geometryIssues={issues} bottomOverrides={new Set(Object.keys(bottomState.slabOverrides))} topOverrides={new Set(Object.keys(topState.slabOverrides))} roleItems={roleItems} throughItems={throughItems} selectedThroughPathId={selectedThroughPathId} onSelect={selectWorkspaceObject} onSelectRole={selectRoleItem} onSelectThrough={selectThroughPath} onAddSlab={addSlab} onAddOpening={addOpening} onDuplicate={duplicateSelected} onDelete={deleteSelected} onAddThrough={addThroughPath} />;
-  // UI V3.1：Overlay/Drawer 按 Rail 分类只显示对应 Section。
   const overlayNavigator = <FloorWorkspaceNavigator activeSection={navigatorSection} stage={stage} plan={state} selection={selection} geometryIssues={issues} bottomOverrides={new Set(Object.keys(bottomState.slabOverrides))} topOverrides={new Set(Object.keys(topState.slabOverrides))} roleItems={roleItems} throughItems={throughItems} selectedThroughPathId={selectedThroughPathId} onSelect={selectWorkspaceObject} onSelectRole={selectRoleItem} onSelectThrough={selectThroughPath} onAddSlab={addSlab} onAddOpening={addOpening} onDuplicate={duplicateSelected} onDelete={deleteSelected} onAddThrough={addThroughPath} />;
-  // UI V3.1（PRD 4/30/40）：业务布局只由 profile.input 决定；Inspector 统一 Overlay 不再占列。
-  // Desktop：52px Rail | Canvas | 44px Inspector Handle；navigatorCollapsed=false 时 Rail 展开为 240px。
-  const gridClass = touchInput
-    ? ""
-    : navigatorCollapsed
-      ? "xl:grid-cols-[52px_minmax(0,1fr)_44px]"
-      : "xl:grid-cols-[240px_minmax(0,1fr)_44px]";
+  const gridClass = touchInput ? "" : "xl:grid-cols-[52px_minmax(0,1fr)_44px]";
   const desktopNavigatorClass = touchInput ? "hidden" : "hidden xl:block xl:col-start-1";
   const canvasColumnClass = touchInput ? "relative min-w-0" : "relative min-w-0 xl:col-start-2";
+  const useSheetNavigation = touchInput || profile.viewport === "phone" || profile.viewport === "tablet";
+  const currentSelectionLabel = editMode === "dock" && dockSourceSlab
+    ? `${dockSourceSlab.name}${dockTargetSlab ? ` → ${dockTargetSlab.name}` : " → 请选择目标"}`
+    : editMode === "multi" && multiSelection.size > 0
+      ? `已选 ${multiSelection.size} 个板区`
+      : selectedThroughPath?.name ?? selectedSlab?.name ?? selectedOpening?.name ?? "未选择对象";
+  const currentStageIssueCount = stage === "bom" ? printEligibility.errors.length : workspaceIssues.filter((issue) => issue.stage === stage).length;
+  const commandModeLabel = stage !== "plan" ? (stage === "bottom" ? "地筋预览" : stage === "top" ? "面筋预览" : "正式结果") : editMode === "dock" ? "拼接" : editMode === "multi" ? "多选" : "移动";
+  const statusDetail = stage === "plan"
+    ? editMode === "dock" && dockHoverDirection
+      ? `${floorDockDirectionLabel(dockHoverDirection)} · Gap ${dockPreview?.valid ? "0" : "--"}mm · Snap ${formatMm(state.snapDistanceMm)}mm`
+      : `Snap ${formatMm(state.snapDistanceMm)}mm · ${state.slabs.length}板区 · ${state.openings.length}洞口`
+    : stage === "bottom"
+      ? `${bottomCalculation.totalPieces} Piece · ${bottomCalculation.totalLengthM.toFixed(3)}m`
+      : stage === "top"
+        ? `${topCalculation.totalPieces} Piece · Through ${topCalculation.throughPieceCount}`
+        : `${bottomCalculation.totalPieces + topCalculation.totalPieces} Piece`;
+  const paletteTitle = navigatorSection ? FLOOR_NAVIGATOR_SECTION_LABELS[navigatorSection] : stage === "plan" ? "对象浏览器" : stage === "bottom" ? "地筋对象" : "面筋对象";
+  const filteredIssueCenterItems = issueStageFilter && issueStageFilter !== "bom" ? workspaceIssues.filter((issue) => issue.stage === issueStageFilter) : workspaceIssues;
+
+  const workflow = <WorkflowTabs stage={stage} statuses={workflowStatuses} issueCounts={workflowIssueCounts} onChange={changeStage} onOpenIssues={(nextStage) => openIssueCenter(nextStage)} />;
+  const statusBar = <FloorWorkspaceStatusBar stage={stage} mode={commandModeLabel} selectionLabel={currentSelectionLabel} detail={statusDetail} issueCount={currentStageIssueCount} zoomPercent={canvasZoomPercent} onOpenIssues={() => openIssueCenter(stage)} />;
+
+  const workspaceBody = stage === "bom" ? (
+    <div className="h-full overflow-y-auto bg-slate-100 p-3 sm:p-4" data-testid="floor-bom-workspace">
+      <FloorBomPanel plan={state} bottom={bottomCalculation} top={topCalculation} bottomRoleReviewRequired={bottomRoleReviewRequired} topRoleReviewRequired={topRoleReviewRequired} invalidDraftCount={invalidDrafts.size + invalidBottomDrafts.size + invalidTopDrafts.size} initialFilter={bomFilter} />
+    </div>
+  ) : (
+    <div className="flex h-full min-h-0 flex-col">
+      {!workspaceFullscreen && <div className={`flex items-center gap-2 border-b border-slate-200 bg-white p-2 ${touchInput ? "" : "xl:hidden"}`}>
+        <button type="button" onClick={() => openNavigatorOverlay(null)} className="inline-flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-left text-sm font-semibold text-slate-800"><Menu size={17} /><span className="min-w-0 flex-1 truncate">当前：{currentSelectionLabel}</span><ChevronRight size={16} /></button>
+        <button type="button" aria-expanded={inspectorOpen} onClick={() => { if (inspectorOpen) closeInspector(); else openInspector(); }} className={`inline-flex min-h-11 items-center gap-2 rounded-lg px-4 text-sm font-semibold ${inspectorOpen ? "border border-slate-300 bg-white text-slate-700" : "bg-blue-600 text-white"}`}><Settings2 size={17} />{profile.viewport === "phone" ? "编辑" : inspectorOpen ? "收起编辑" : "展开编辑"}</button>
+      </div>}
+      <div className={`relative grid min-h-0 min-w-0 flex-1 gap-2 bg-slate-100 p-2 ${workspaceFullscreen ? "h-full" : gridClass}`} data-testid="floor-workspace-grid">
+        <aside className={`min-h-0 overflow-hidden border-r border-slate-200 bg-white ${desktopNavigatorClass} ${workspaceFullscreen ? "xl:hidden" : ""}`}>
+          <FloorWorkspaceNavigator compact onOpenOverlay={openNavigatorOverlay} stage={stage} plan={state} selection={selection} geometryIssues={issues} bottomOverrides={new Set(Object.keys(bottomState.slabOverrides))} topOverrides={new Set(Object.keys(topState.slabOverrides))} roleItems={roleItems} throughItems={throughItems} selectedThroughPathId={selectedThroughPathId} onSelect={selectWorkspaceObject} onSelectRole={selectRoleItem} onSelectThrough={selectThroughPath} onAddSlab={addSlab} onAddOpening={addOpening} onDuplicate={duplicateSelected} onDelete={deleteSelected} onAddThrough={addThroughPath} />
+        </aside>
+        <section className={`${canvasColumnClass} flex min-h-0 flex-col`}>
+          <div className="min-h-0 flex-1">{canvasElement}</div>
+          {!workspaceFullscreen && stage === "bottom" && <FloorWorkspaceResultStrip layer="bottom" bottom={bottomCalculation} top={topCalculation} onOpenBom={() => { setBomFilter("bottom"); changeStage("bom"); }} onOpenIssues={() => openIssueCenter("bottom")} />}
+          {!workspaceFullscreen && stage === "top" && <FloorWorkspaceResultStrip layer="top" bottom={bottomCalculation} top={topCalculation} onOpenBom={() => { setBomFilter("top"); changeStage("bom"); }} onOpenIssues={() => openIssueCenter("top")} />}
+        </section>
+
+        {!workspaceFullscreen && <FloorNavigatorPalette open={navigatorOpen && !useSheetNavigation} title={paletteTitle} onClose={closeNavigatorOverlay}>{overlayNavigator}</FloorNavigatorPalette>}
+        {!workspaceFullscreen && inspectorOpen && profile.viewport === "phone" && <button type="button" aria-label="关闭属性面板遮罩" onClick={closeInspector} className="fixed inset-0 z-[60] bg-slate-950/35" />}
+        {!workspaceFullscreen && inspectorOpen && (
+          <aside className={[
+            "flex flex-col overflow-hidden border border-slate-200 bg-white shadow-xl",
+            profile.viewport === "phone"
+              ? "fixed inset-x-0 bottom-0 z-[70] max-h-[82dvh] rounded-t-2xl"
+              : `absolute right-[52px] top-2 z-[70] w-[min(390px,88vw)] rounded-xl ${stage === "bottom" || stage === "top" ? "bottom-16" : "bottom-2"}`,
+          ].join(" ")}>
+            <div className="flex min-h-12 items-center justify-between border-b border-slate-200 px-3"><strong className="text-sm text-slate-950">属性面板</strong><button type="button" onClick={closeInspector} aria-label={profile.viewport === "phone" ? "关闭" : "关闭参数面板"} className="inline-flex min-h-10 items-center rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-600">关闭</button></div>
+            <div className="min-h-0 flex-1 overflow-y-auto pb-[max(16px,env(safe-area-inset-bottom))]">{inspector}</div>
+          </aside>
+        )}
+        {!workspaceFullscreen && !touchInput && <aside className="hidden xl:block xl:col-start-3"><button type="button" onClick={openInspector} aria-label="打开参数面板" data-testid="open-inspector-handle" className="flex h-full min-h-14 w-full flex-col items-center justify-center gap-2 border border-slate-200 bg-white text-xs font-semibold text-slate-600 hover:bg-slate-50"><ChevronLeft size={16} /><span className="[writing-mode:vertical-rl]">属性</span></button></aside>}
+      </div>
+      {!workspaceFullscreen && useSheetNavigation && <FloorWorkspaceDrawer open={navigatorOpen} title={paletteTitle} side="left" onClose={closeNavigatorOverlay}>{overlayNavigator}</FloorWorkspaceDrawer>}
+    </div>
+  );
 
   return (
-    <main className={workspaceFullscreen ? "h-full" : "w-full max-w-none px-3 py-3 sm:px-4 lg:px-5 lg:py-4"}>
-      <div className={workspaceFullscreen ? "fixed inset-0 z-[90] overflow-hidden bg-slate-50 p-3" : ""} data-testid={workspaceFullscreen ? "floor-fullscreen-canvas" : undefined}>
-      <header className={`mb-3 ${workspaceFullscreen ? "hidden" : ""}`}>
-        <h1 className="text-xl font-bold tracking-tight text-slate-950 xl:text-2xl">整层楼板板筋系统</h1>
-      </header>
-      <div className={workspaceFullscreen ? "hidden" : ""}><WorkflowTabs stage={stage} statuses={workflowStatuses} onChange={changeStage} /></div>
-
-      {stage === "bom" ? (workspaceFullscreen ? null : (
-        <FloorBomPanel
-          plan={state}
-          bottom={bottomCalculation}
-          top={topCalculation}
-          bottomRoleReviewRequired={bottomRoleReviewRequired}
-          topRoleReviewRequired={topRoleReviewRequired}
-          invalidDraftCount={invalidDrafts.size + invalidBottomDrafts.size + invalidTopDrafts.size}
-        />
-      )) : <>
-        <div className={`mb-2 flex items-center gap-2 ${touchInput ? "" : "xl:hidden"} ${workspaceFullscreen ? "hidden" : ""}`}>
-          <button type="button" onClick={() => openNavigatorOverlay(null)} className="inline-flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 text-left text-sm font-semibold text-slate-800"><Menu size={17} /><span className="min-w-0 flex-1 truncate">当前：{selectedSlab?.name ?? selectedOpening?.name ?? selectedThroughPath?.name ?? "请选择对象"}</span><ChevronRight size={16} /></button>
-          <button type="button" onClick={openInspector} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white md:hidden"><Settings2 size={17} />编辑</button>
-          <button type="button" aria-expanded={inspectorOpen} onClick={() => { if (inspectorOpen) closeInspector(); else openInspector(); }} className={`hidden min-h-11 items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 md:inline-flex ${touchInput ? "" : "xl:hidden"}`}><Settings2 size={17} />{inspectorOpen ? "收起编辑" : "展开编辑"}</button>
-        </div>
-
-        <div className={`relative grid min-w-0 gap-4 ${workspaceFullscreen ? "h-full" : gridClass}`} data-testid="floor-workspace-grid">
-          <aside className={`relative min-h-[480px] overflow-hidden rounded-2xl border border-slate-200 bg-white xl:sticky xl:top-20 xl:row-start-1 xl:h-[calc(100dvh-15rem)] xl:max-h-[calc(100dvh-15rem)] ${desktopNavigatorClass} ${workspaceFullscreen ? "xl:hidden" : ""}`}>
-            <button type="button" aria-label={navigatorCollapsed ? "展开左侧导航" : "收起左侧导航"} onClick={() => setNavigatorCollapsed((value) => !value)} className={`absolute right-1 top-1 z-10 flex size-10 items-center justify-center rounded-xl bg-white/90 text-slate-600 shadow-sm ${navigatorCollapsed ? "xl:static xl:mb-1 xl:size-8 xl:bg-transparent xl:shadow-none xl:hover:bg-slate-100" : ""}`}>{navigatorCollapsed ? <ChevronRight size={17} /> : <ChevronLeft size={17} />}</button>
-            {navigatorCollapsed ? <FloorWorkspaceNavigator compact onOpenOverlay={openNavigatorOverlay} stage={stage} plan={state} selection={selection} geometryIssues={issues} bottomOverrides={new Set(Object.keys(bottomState.slabOverrides))} topOverrides={new Set(Object.keys(topState.slabOverrides))} roleItems={roleItems} throughItems={throughItems} selectedThroughPathId={selectedThroughPathId} onSelect={selectWorkspaceObject} onSelectRole={selectRoleItem} onSelectThrough={selectThroughPath} onAddSlab={addSlab} onAddOpening={addOpening} onDuplicate={duplicateSelected} onDelete={deleteSelected} onAddThrough={addThroughPath} /> : navigator}
-          </aside>
-
-          <section className={workspaceFullscreen ? "h-full" : `${canvasColumnClass} space-y-3`}>
-            {canvasElement}
-            {stage === "plan" && !workspaceFullscreen && <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] text-slate-600 lg:hidden">{[["板区", state.slabs.length], ["洞口", state.openings.length], ["建筑外边", stats.exterior], ["内墙", stats.inner], ["连续板边", stats.continuous], ["洞口边", stats.opening]].map(([label, value]) => <span key={String(label)} className="rounded-full bg-slate-100 px-2.5 py-1"><strong className="text-slate-900">{value}</strong> {label}</span>)}</div>}
-            {/* UI V3（PRD 70-73）：Summary 属于 Canvas 列，不再横跨三栏。 */}
-            {!workspaceFullscreen && <FloorWorkspaceSummary stage={stage} bottom={bottomCalculation} top={topCalculation} geometryErrorCount={errors.length + invalidDrafts.size} onShowDetails={() => setDetailsExpanded((value) => !value)} onShowIssues={() => { if (stage === "plan") { openInspector(); setFloorSectionOpen(true); } else { setDetailsExpanded(true); } }} />}
-            {/* UI V3.1（PRD 36）：Detailed Results 也属于 Canvas Main Column。 */}
-            {!workspaceFullscreen && detailsExpanded && stage === "bottom" && <FloorBottomResults plan={state} calculation={bottomCalculation} invalidDraftCount={invalidDrafts.size + invalidBottomDrafts.size} />}
-            {!workspaceFullscreen && detailsExpanded && stage === "top" && <FloorTopResults plan={state} calculation={topCalculation} invalidDraftCount={invalidDrafts.size + invalidTopDrafts.size} />}
-          </section>
-
-          {!workspaceFullscreen && inspectorOpen && profile.viewport === "phone" && <button type="button" aria-label="关闭属性面板遮罩" onClick={closeInspector} className="fixed inset-0 z-[60] bg-slate-950/40" />}
-          {!workspaceFullscreen && inspectorOpen && touchInput && profile.viewport !== "phone" && <button type="button" aria-label="关闭属性面板遮罩" onClick={closeInspector} className="fixed inset-0 z-[60] bg-slate-950/10" />}
-          {!workspaceFullscreen && inspectorOpen && (
-            <aside className={[
-              "flex flex-col border border-slate-200 bg-white",
-              profile.viewport === "phone"
-                ? "fixed inset-x-0 bottom-0 z-[70] block max-h-[82dvh] overflow-hidden rounded-t-3xl"
-                : "absolute right-[56px] top-24 z-[70] block max-h-[min(560px,calc(100dvh-13rem))] w-[min(400px,88vw)] overflow-hidden rounded-2xl shadow-2xl",
-            ].join(" ")}>
-              <div className="flex min-h-14 items-center justify-between border-b border-slate-200 px-4"><strong className="text-sm text-slate-950">{profile.viewport === "phone" ? `编辑：${inspectorTitle}` : "参数面板"}</strong><button type="button" onClick={closeInspector} aria-label={profile.viewport === "phone" ? "关闭" : "关闭参数面板"} className="inline-flex min-h-11 items-center gap-1 rounded-lg border border-slate-200 px-3 text-sm font-semibold text-slate-600">关闭</button></div>
-              <div className="min-h-0 flex-1 overflow-y-auto pb-[max(16px,env(safe-area-inset-bottom))]">{inspector}</div>
-            </aside>
-          )}
-          {!workspaceFullscreen && !touchInput && (
-            <aside className="hidden xl:block xl:col-start-3">
-              <button type="button" onClick={openInspector} aria-label="打开参数面板" data-testid="open-inspector-handle" className="flex h-full min-h-14 w-full flex-col items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white text-xs font-semibold text-slate-600 hover:bg-slate-50"><ChevronLeft size={16} /><span className="[writing-mode:vertical-rl]">参数</span></button>
-            </aside>
-          )}
-        </div>
-
-        {!workspaceFullscreen && <FloorWorkspaceDrawer open={navigatorOpen} title={navigatorSection ? FLOOR_NAVIGATOR_SECTION_LABELS[navigatorSection] : stage === "plan" ? "楼层对象" : stage === "bottom" ? "地筋导航" : "面筋导航"} side="left" onClose={closeNavigatorOverlay}>{overlayNavigator}</FloorWorkspaceDrawer>}
-      </>}
-      {process.env.NODE_ENV === "development" && !workspaceFullscreen && <p className="mt-5 text-xs text-slate-500">当前显示边界 {displays.length} 段；正式板筋计算使用原子边界 {atomic.length} 段。显示段ID不会用于保存支承或钢筋业务规则。</p>}
-      </div>
-    </main>
+    <>
+      <FloorWorkspaceShell workflow={workflow} body={workspaceBody} status={statusBar} fullscreen={workspaceFullscreen} showAppBar={!touchInput && profile.viewport === "desktop"} />
+      <FloorIssueCenter open={issueCenterOpen} issues={filteredIssueCenterItems} onClose={() => setIssueCenterOpen(false)} onLocate={locateWorkspaceIssue} />
+    </>
   );
 }

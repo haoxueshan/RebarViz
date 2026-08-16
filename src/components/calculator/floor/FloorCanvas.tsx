@@ -215,6 +215,7 @@ export function FloorCanvas({
   onQuickDock,
   inputProfile = "desktop",
   commandBar = null,
+  onZoomChange,
 }: {
   state: FloorPlanState;
   selection: FloorSelection;
@@ -258,6 +259,8 @@ export function FloorCanvas({
   inputProfile?: "touch" | "desktop";
   /** UI V3：Dock确认/Multi对齐等Command Bar渲染在Canvas内部底部（PRD 47-57）。 */
   commandBar?: React.ReactNode;
+  /** 仅把Viewport缩放反馈给Workspace Status Bar，不进入工程State/History。 */
+  onZoomChange?: (zoomPercent: number) => void;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const dragRef = useRef<DragState | null>(null);
@@ -273,6 +276,9 @@ export function FloorCanvas({
   const [viewport, setViewport] = useState<FloorCanvasViewport>({ zoom: 1, centerX: 0, centerY: 0 });
   const viewportRef = useRef(viewport);
   viewportRef.current = viewport;
+  useEffect(() => {
+    onZoomChange?.(viewport.zoom * 100);
+  }, [onZoomChange, viewport.zoom]);
   const [axisLock, setAxisLock] = useState<FloorCanvasAxisLock>("free");
   const [dragPreview, setDragPreview] = useState<{ objectId: string; x: number; y: number } | null>(null);
   const [svgWidthPx, setSvgWidthPx] = useState(SVG_WIDTH);
@@ -380,8 +386,10 @@ export function FloorCanvas({
     const pxPerMm = effectiveScale * (svgWidthPx / SVG_WIDTH);
     if (pxPerMm <= 0) return;
     const shiftMm = (delta / 2) / pxPerMm;
-    barShiftMmRef.current += shiftMm;
-    setViewport((current) => ({ ...current, centerY: current.centerY + shiftMm }));
+    // world→view 的 Y 轴会随 centerY 增大而向下移动，因此命令栏出现时必须
+    // 减小 centerY，才能把工程对象让到命令栏上方。
+    barShiftMmRef.current -= shiftMm;
+    setViewport((current) => ({ ...current, centerY: current.centerY - shiftMm }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [commandBarHeight]);
 
@@ -735,7 +743,7 @@ export function FloorCanvas({
   const instanceIdRef = useRef(`floor-canvas-${Math.random().toString(36).slice(2, 10)}`);
 
   return (
-    <div className={`rounded-2xl border border-slate-200 bg-slate-50 ${fullscreen ? "flex h-full min-h-0 flex-col" : ""}`} data-testid="floor-canvas-card" data-canvas-instance-id={instanceIdRef.current}>
+    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-slate-50" data-testid="floor-canvas-card" data-canvas-instance-id={instanceIdRef.current}>
       {!fullscreen && <div className="flex min-h-9 items-center justify-between gap-3 border-b border-slate-200 bg-white px-3 py-1.5">
         <h2 className="min-w-0 truncate text-sm font-semibold text-slate-900">{topCalculation ? "整层面筋净跨路径" : bottomCalculation ? "整层地筋净跨路径" : "整层板区平面"}</h2>
         <div className="flex shrink-0 items-center gap-2">
@@ -771,13 +779,13 @@ export function FloorCanvas({
           inputProfile={inputProfile}
         />
       </div>
-      <div className={`relative min-h-0 overflow-hidden ${fullscreen ? "flex-1" : ""}`}>
+      <div className="relative min-h-0 flex-1 overflow-hidden">
         {commandBar && <div ref={commandBarWrapRef} className="pointer-events-none absolute inset-x-0 bottom-[calc(12px+env(safe-area-inset-bottom))] z-30 flex justify-center">{commandBar}</div>}
         <svg
           ref={svgRef}
           viewBox={`0 0 ${SVG_WIDTH} ${SVG_HEIGHT}`}
           preserveAspectRatio="xMidYMid meet"
-          className={`block w-full touch-none select-none bg-white ${fullscreen ? "h-full" : compactHeight ? "h-[clamp(420px,58dvh,520px)]" : inputProfile === "touch" ? "h-[clamp(520px,68dvh,720px)]" : "h-[max(58dvh,calc(100dvh-15rem))] min-h-[480px]"}`}
+          className={`block h-full w-full touch-none select-none bg-white ${compactHeight ? "min-h-[280px]" : "min-h-[320px]"}`}
           role="img"
           aria-label="整层板区、洞口、正式钢筋Piece和支承关系布局预览"
           data-floor-canvas-fit={fitMode}

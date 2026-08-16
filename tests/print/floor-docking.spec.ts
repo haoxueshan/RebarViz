@@ -72,22 +72,49 @@ test("Floor Docking V1拼接模式：Source+Target+北边+Ghost+确认生成0mm�
   await expect.poll(async () => (await savedSlabs(page)).find((slab) => slab.id === "b")?.x).toBe(0);
 });
 
-test("Floor Docking V1一键修复5mm Near Miss", async ({ page }) => {
+test("V4 Command Bar支持Esc取消与Enter确认且输入焦点不触发命令", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/calculator/floor");
   await setDraft(page, [
     { id: "a", name: "板区A", type: "room", x: 0, y: 0, width: 4200, height: 3600 },
     { id: "b", name: "板区B", type: "room", x: 0, y: 3605, width: 3600, height: 3600 },
   ], 0);
-  // UI V3.1：Inspector 为 Overlay，一键修复需要展开（首块板区默认选中）。
+  await page.reload();
+  await page.keyboard.press("d");
+  await canvasSlab(page, "板区B").click();
+  await canvasSlab(page, "板区A").click();
+  await page.locator('[data-dock-side="north"]').dispatchEvent("pointerdown");
+  await expect(page.getByTestId("dock-confirm-panel")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("dock-confirm-panel")).toHaveCount(0);
+
+  await canvasSlab(page, "板区B").click();
+  await canvasSlab(page, "板区A").click();
+  await page.locator('[data-dock-side="north"]').dispatchEvent("pointerdown");
+  await page.keyboard.press("Enter");
+  await expect.poll(async () => (await savedSlabs(page)).find((slab) => slab.id === "b")?.y).toBe(3600);
+
+  await page.getByRole("button", { name: "移动", exact: true }).click();
+  await page.getByRole("button", { name: "打开参数面板" }).click();
+  const nameInput = page.getByLabel("板区名称");
+  await nameInput.focus();
+  await page.keyboard.press("d");
+  await expect(page.getByRole("button", { name: "移动", exact: true })).toHaveAttribute("aria-pressed", "true");
+});
+
+test("Floor Docking V1一键修复5mm Near Miss", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/calculator/floor");
   await page.evaluate(() => localStorage.setItem("floorWorkspaceInspectorOpen", "true"));
-  await page.waitForTimeout(250);
-  await page.evaluate(() => localStorage.setItem("floorWorkspaceInspectorOpen", "true"));
+  await setDraft(page, [
+    { id: "a", name: "板区A", type: "room", x: 0, y: 0, width: 4200, height: 3600 },
+    { id: "b", name: "板区B", type: "room", x: 0, y: 3605, width: 3600, height: 3600 },
+  ], 0);
   await page.reload();
 
   await expect(page.locator("[data-near-miss]")).toHaveCount(1);
-  // UI V3.1：Inspector 为 Overlay（已设 floorWorkspaceInspectorOpen=true），首块板区默认选中。
-  await page.getByRole("button", { name: "楼层设置" }).click();
+  // UI V4：几何修复统一收拢到 Inspector 的“诊断”页。
+  await page.getByRole("tab", { name: "诊断" }).click();
   const suggestion = page.getByTestId("dock-suggestion-button");
   await expect(suggestion).toContainText("将板区B拼到板区A北侧");
   await suggestion.click();

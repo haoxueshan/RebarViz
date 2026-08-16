@@ -1,12 +1,14 @@
 import { expect, test } from "@playwright/test";
 
 async function openBoundaryInspector(page: import("@playwright/test").Page) {
-  const toggle = page.getByRole("button", { name: "边界关系" });
-  if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+  if (await page.getByTestId("floor-workspace-inspector").count() === 0) {
+    await page.getByTestId("open-inspector-handle").click();
+  }
+  await page.getByRole("tab", { name: "边界" }).click();
 }
 
 async function openDetailedResults(page: import("@playwright/test").Page) {
-  await page.getByRole("button", { name: /详细料单/ }).click();
+  await page.getByTestId("floor-live-summary").getByRole("button", { name: "查看料单" }).click();
 }
 
 async function openMobileInspector(page: import("@playwright/test").Page) {
@@ -16,12 +18,6 @@ async function openMobileInspector(page: import("@playwright/test").Page) {
 
 /** UI V3.1：Inspector 为 Overlay（默认关闭），既有桌面用例显式展开。 */
 async function installExpandedWorkspace(page: import("@playwright/test").Page) {
-  await page.evaluate(() => {
-    localStorage.setItem("floorWorkspaceInspectorOpen", "true");
-    localStorage.setItem("floorNavigatorCollapsed", "false");
-  });
-  // 等待页面首轮 hydrate/persist 完成后再写一次，避免被初始状态覆盖。
-  await page.waitForTimeout(250);
   await page.evaluate(() => {
     localStorage.setItem("floorWorkspaceInspectorOpen", "true");
     localStorage.setItem("floorNavigatorCollapsed", "false");
@@ -48,7 +44,7 @@ test("Geometry V2.1支持板区、洞口、支承切换和草稿恢复", async (
   await expect(page.getByRole("button", { name: "连续楼板", exact: true })).toHaveAttribute("aria-pressed", "true");
 
   await page.getByRole("button", { name: "添加洞口" }).click();
-  await expect(page.getByRole("heading", { name: "洞口精确参数" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "洞口属性" })).toBeVisible();
   await page.getByLabel("洞口类型").selectOption("stair");
   await page.getByLabel("洞口名称").fill("楼梯间");
   const openingHandle = page.getByRole("button", { name: "选择洞口 楼梯间" });
@@ -114,11 +110,12 @@ test("Bottom V1合并continuous、显示地筋料单并恢复独立设置", asyn
   await page.getByRole("button", { name: "连续楼板", exact: true }).click();
   await page.getByRole("button", { name: /2\. 地筋/ }).click();
   await expect(page.getByRole("heading", { name: "整层地筋默认规格" })).toBeVisible();
+  await expect(page.getByTestId("floor-live-summary")).toContainText("地筋有效");
   await openDetailedResults(page);
-  await expect(page.getByRole("heading", { name: "整层地筋料单" })).toBeVisible();
-  await expect(page.getByText("8.540m").first()).toBeVisible();
-  await expect(page.getByText("正式地筋结果有效").first()).toBeVisible();
+  await expect(page.getByRole("heading", { name: "地筋料单" })).toBeVisible();
+  await expect(page.getByRole("cell", { name: "8,540 mm", exact: true })).toBeVisible();
 
+  await page.getByRole("button", { name: /2\. 地筋/ }).click();
   const selects = page.getByLabel("根数算法");
   await selects.selectOption("floor");
   const mainDiameter = page.getByLabel("主筋直径").first();
@@ -186,15 +183,16 @@ test("Bottom V1.1迁移复核后，局部continuous与inner-wall同时生成长�
   await page.reload();
   await page.getByRole("button", { name: /2\. 地筋/ }).click();
   await expect(page.getByText("地筋结果无效")).toBeVisible();
+  await page.getByRole("tab", { name: "主副筋" }).click();
   await expect(page.getByText(/旧版本的东西\/南北向直径已迁移/).first()).toBeVisible();
   await page.getByRole("button", { name: "确认地筋主副筋规格" }).click();
-  await expect(page.getByText("正式地筋结果有效")).toBeVisible();
+  await expect(page.getByTestId("floor-live-summary")).toContainText("地筋有效");
   await openDetailedResults(page);
-  await expect(page.getByText("8.740m")).toBeVisible();
-  await expect(page.getByText("4.610m")).toBeVisible();
+  await expect(page.getByRole("cell", { name: "8,740 mm", exact: true })).toBeVisible();
+  await expect(page.getByRole("cell", { name: "4,610 mm", exact: true })).toBeVisible();
   const rows = page.locator("tbody tr");
-  await expect(rows.filter({ hasText: "8.740m" })).toContainText("2根");
-  await expect(rows.filter({ hasText: "4.610m" })).toContainText("4根");
+  await expect(rows.filter({ hasText: "8,740 mm" })).toContainText("2");
+  await expect(rows.filter({ hasText: "4,610 mm" })).toContainText("4");
 });
 
 test("Top V1普通内墙增加、continuous贯穿并恢复独立设置", async ({ page }) => {
@@ -213,18 +211,19 @@ test("Top V1普通内墙增加、continuous贯穿并恢复独立设置", async (
   await page.reload();
   await page.getByRole("button", { name: /3\. 面筋/ }).click();
   await expect(page.getByRole("heading", { name: "整层普通面筋默认规格" })).toBeVisible();
+  await expect(page.getByTestId("floor-live-summary")).toContainText("面筋有效");
   await openDetailedResults(page);
-  await expect(page.getByRole("heading", { name: "整层面筋料单" })).toBeVisible();
-  await expect(page.getByText("正式面筋结果有效").first()).toBeVisible();
-  await expect(page.getByText("5.060m")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "面筋料单（普通 + 通墙）" })).toBeVisible();
+  await expect(page.getByRole("cell", { name: "5,060 mm", exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: /1\. 楼层/ }).click();
   await openBoundaryInspector(page);
   await page.getByRole("button", { name: "连续楼板", exact: true }).click();
   await page.getByRole("button", { name: /3\. 面筋/ }).click();
   await openDetailedResults(page);
-  await expect(page.getByText("8.540m")).toBeVisible();
+  await expect(page.getByRole("cell", { name: "8,540 mm", exact: true })).toBeVisible();
 
+  await page.getByRole("button", { name: /3\. 面筋/ }).click();
   await page.getByLabel("根数算法").selectOption("floor");
   await page.getByLabel("面筋内墙端增加值").fill("300");
   await page.getByLabel("东西向增加端").selectOption("end");
@@ -242,7 +241,6 @@ test("Top V1普通内墙增加、continuous贯穿并恢复独立设置", async (
 
   await page.reload();
   await page.getByRole("button", { name: /3\. 面筋/ }).click();
-  await openDetailedResults(page);
   await expect(page.getByLabel("根数算法")).toHaveValue("floor");
   await expect(page.getByLabel("面筋内墙端增加值")).toHaveValue("300");
   await expect(page.getByLabel("东西向增加端")).toHaveValue("end");
@@ -292,11 +290,11 @@ test("Top V1楼梯间Opening裁断Piece且洞口边改内墙后增加下料长�
   await installExpandedWorkspace(page);
   await page.reload();
   await page.getByRole("button", { name: /3\. 面筋/ }).click();
+  await expect(page.getByTestId("floor-live-summary")).toContainText("面筋有效");
+  await expect(page.getByTestId("floor-live-summary")).toContainText("理论线 12");
+  await expect(page.getByTestId("floor-live-summary")).toContainText("Piece 16");
   await openDetailedResults(page);
-  await expect(page.getByText("正式面筋结果有效").first()).toBeVisible();
-  await expect(page.getByText("理论面筋线").locator("..")).toContainText("12");
-  await expect(page.getByText("实际下料件").locator("..")).toContainText("16");
-  await expect(page.getByText("2.370m").first()).toBeVisible();
+  await expect(page.getByRole("cell", { name: "2,370 mm", exact: true }).first()).toBeVisible();
 
   await page.getByRole("button", { name: /1\. 楼层/ }).click();
   await page.getByRole("button", { name: "选择洞口 楼梯间" }).click();
@@ -304,7 +302,7 @@ test("Top V1楼梯间Opening裁断Piece且洞口边改内墙后增加下料长�
   await page.getByRole("button", { name: "按内墙" }).first().click();
   await page.getByRole("button", { name: /3\. 面筋/ }).click();
   await openDetailedResults(page);
-  await expect(page.getByText("2.860m").first()).toBeVisible();
+  await expect(page.getByRole("cell", { name: "2,860 mm", exact: true }).first()).toBeVisible();
 });
 
 test("Top数字空草稿明确无效，失焦后恢复旧值且390px页面不横向溢出", async ({ page }) => {
@@ -359,15 +357,17 @@ test("正方形主筋方向人工选择由地筋和面筋共享，390px无页面
   await page.getByRole("button", { name: "地筋", exact: true }).click();
   const bottomInspector = await openMobileInspector(page);
   await expect(page.getByText("地筋结果无效")).toBeVisible();
+  await bottomInspector.getByRole("tab", { name: "主副筋" }).click();
   await expect(page.getByText(/两个方向净跨相同/).first()).toBeVisible();
   await bottomInspector.getByRole("button", { name: "东西向主筋" }).click();
-  await expect(page.getByText("正式地筋结果有效")).toBeVisible();
+  await expect(page.getByTestId("floor-live-summary")).toContainText("地筋有效");
   await page.getByRole("button", { name: "关闭", exact: true }).click();
 
   await page.getByRole("button", { name: "面筋", exact: true }).click();
   const topInspector = await openMobileInspector(page);
+  await topInspector.getByRole("tab", { name: "主副筋" }).click();
   await expect(topInspector.getByRole("button", { name: "东西向主筋" })).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByText("正式面筋结果有效")).toBeVisible();
+  await expect(page.getByTestId("floor-live-summary")).toContainText("面筋有效");
   const dimensions = await page.evaluate(() => ({
     clientWidth: document.documentElement.clientWidth,
     scrollWidth: document.documentElement.scrollWidth,
@@ -411,12 +411,13 @@ test("390px通墙Path被Opening阻断，缩小Band后恢复并持久化Schema 4"
   });
   await page.reload();
   await page.getByRole("button", { name: "面筋", exact: true }).click();
-  await openMobileInspector(page);
+  const throughInspector = await openMobileInspector(page);
   await expect(page.getByText("面筋结果无效")).toBeVisible();
+  await throughInspector.getByRole("tab", { name: "通墙" }).click();
   await expect(page.getByText(/与洞口发生正面积相交/).first()).toBeVisible();
   const pathCard = page.locator('[data-through-path-id="p"]');
   await pathCard.getByLabel("Y范围终点").fill("1700");
-  await expect(page.getByText("正式面筋结果有效")).toBeVisible();
+  await expect(page.getByTestId("floor-live-summary")).toContainText("面筋有效");
   await expect(pathCard.getByText(/有效通墙筋/)).toBeVisible();
   await page.waitForTimeout(450);
   const stored = await page.evaluate(() => JSON.parse(localStorage.getItem("rebarviz:floor-rebar:top:v1") ?? "null"));
