@@ -140,6 +140,7 @@ test.describe("Floor Print V1整层冻结快照打印", () => {
     expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
     await page.getByTestId("generate-floor-print-preview").click();
     await page.waitForURL(/\/calculator\/floor\/print\?id=/);
+    await expect(page.locator("[data-print-piece-id]").first()).toBeAttached();
     const snapshot = await page.evaluate(() => {
       const id = new URL(location.href).searchParams.get("id");
       return JSON.parse(sessionStorage.getItem(`rebarviz:floor-print:snapshot:${id}`) ?? "null");
@@ -166,6 +167,7 @@ test.describe("Floor Print V1整层冻结快照打印", () => {
     await page.getByLabel("方向").selectOption("portrait");
     await page.getByTestId("generate-floor-print-preview").click();
     await page.waitForURL(/\/calculator\/floor\/print\?id=/);
+    await expect(page.getByTestId("floor-print-report")).toBeVisible();
     await page.emulateMedia({ media: "print" });
     const bytes = await page.pdf({ preferCSSPageSize: true, printBackground: true });
     const pdf = await PDFDocument.load(bytes);
@@ -207,6 +209,16 @@ test.describe("Floor Print V1整层冻结快照打印", () => {
       localStorage.removeItem("rebarviz:floor-rebar:top:v1");
       localStorage.removeItem("rebarviz:floor-rebar:role:v1");
       sessionStorage.clear();
+    });
+    // UI V3：桌面默认 Canvas First，本用例需展开 Inspector 与 Navigator。
+    await page.evaluate(() => {
+      localStorage.setItem("floorInspectorCollapsed", "false");
+      localStorage.setItem("floorNavigatorCollapsed", "false");
+    });
+    await page.waitForTimeout(250);
+    await page.evaluate(() => {
+      localStorage.setItem("floorInspectorCollapsed", "false");
+      localStorage.setItem("floorNavigatorCollapsed", "false");
     });
     await page.reload();
     await page.getByRole("button", { name: /3\. 面筋/ }).click();

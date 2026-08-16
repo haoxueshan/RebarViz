@@ -14,6 +14,20 @@ async function openMobileInspector(page: import("@playwright/test").Page) {
   return page.getByTestId("floor-workspace-inspector");
 }
 
+/** UI V3：桌面默认 Canvas First（Inspector 收起），既有桌面用例显式展开三栏。 */
+async function installExpandedWorkspace(page: import("@playwright/test").Page) {
+  await page.evaluate(() => {
+    localStorage.setItem("floorInspectorCollapsed", "false");
+    localStorage.setItem("floorNavigatorCollapsed", "false");
+  });
+  // 等待页面首轮 hydrate/persist 完成后再写一次，避免被初始状态覆盖。
+  await page.waitForTimeout(250);
+  await page.evaluate(() => {
+    localStorage.setItem("floorInspectorCollapsed", "false");
+    localStorage.setItem("floorNavigatorCollapsed", "false");
+  });
+}
+
 test("Geometry V2.1支持板区、洞口、支承切换和草稿恢复", async ({ page }) => {
   await page.goto("/calculator/floor");
   await page.evaluate(() => {
@@ -22,8 +36,10 @@ test("Geometry V2.1支持板区、洞口、支承切换和草稿恢复", async (
     localStorage.removeItem("rebarviz:floor-rebar:top:v1");
     localStorage.removeItem("rebarviz:floor-rebar:role:v1");
   });
+  await installExpandedWorkspace(page);
   await page.reload();
-  await expect(page.getByText(/FloorRebarCalculator · Multi-Block Workspace V1 \+ Tablet Workspace V1 · Geometry V2\.1 \+ Floor 2D V2\.2/)).toBeVisible();
+  // UI V3：Header 降噪，技术版本描述行已删除，改验证工作台主体。
+  await expect(page.getByTestId("floor-workspace-grid")).toBeVisible();
   await expect(page.getByRole("heading", { name: "整层板区平面" })).toBeVisible();
 
   await page.getByLabel("板区类型").selectOption("corridor");
@@ -89,6 +105,7 @@ test("Bottom V1合并continuous、显示地筋料单并恢复独立设置", asyn
     localStorage.removeItem("rebarviz:floor-rebar:bottom:v1");
     localStorage.removeItem("rebarviz:floor-rebar:role:v1");
   });
+  await installExpandedWorkspace(page);
   await page.reload();
   await openBoundaryInspector(page);
   await page.getByRole("button", { name: "连续楼板", exact: true }).click();
@@ -116,6 +133,7 @@ test("Bottom V1合并continuous、显示地筋料单并恢复独立设置", asyn
 test("Bottom数字空草稿明确无效，失焦后恢复旧值并解除invalid", async ({ page }) => {
   await page.goto("/calculator/floor");
   await page.evaluate(() => localStorage.removeItem("rebarviz:floor-rebar:bottom:v1"));
+  await installExpandedWorkspace(page);
   await page.reload();
   await page.getByRole("button", { name: /2\. 地筋/ }).click();
   const spacing = page.getByLabel("东西向间距").first();
@@ -161,6 +179,7 @@ test("Bottom V1.1迁移复核后，局部continuous与inner-wall同时生成长�
     }));
     localStorage.removeItem("rebarviz:floor-rebar:role:v1");
   });
+  await installExpandedWorkspace(page);
   await page.reload();
   await page.getByRole("button", { name: /2\. 地筋/ }).click();
   await expect(page.getByText("地筋结果无效")).toBeVisible();
@@ -187,6 +206,7 @@ test("Top V1普通内墙增加、continuous贯穿并恢复独立设置", async (
       state: { mainDirectionOverrides: { "role:floor-slab-b": "x" } },
     }));
   });
+  await installExpandedWorkspace(page);
   await page.reload();
   await page.getByRole("button", { name: /3\. 面筋/ }).click();
   await expect(page.getByRole("heading", { name: "整层普通面筋默认规格" })).toBeVisible();
@@ -266,6 +286,7 @@ test("Top V1楼梯间Opening裁断Piece且洞口边改内墙后增加下料长�
       state: { mainDirectionOverrides: { "role:a": "x" } },
     }));
   });
+  await installExpandedWorkspace(page);
   await page.reload();
   await page.getByRole("button", { name: /3\. 面筋/ }).click();
   await openDetailedResults(page);

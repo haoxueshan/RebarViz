@@ -102,6 +102,7 @@ test("Display边可合并但点击与编辑精确落到对应Atomic段", async (
       },
     }));
     localStorage.setItem(roleKey, JSON.stringify({ schemaVersion: 1, savedAt: new Date().toISOString(), state: { mainDirectionOverrides: { "role:a": "x", "role:b": "x", "role:c": "x", "role:d": "x" } } }));
+    localStorage.setItem("floorInspectorCollapsed", "false");
   }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
   await page.reload();
 
@@ -122,6 +123,7 @@ test("pointercancel恢复拖动起点且不会把中间位置保存为草稿", a
   await page.evaluate(({ draftKey, roleKey }) => {
     localStorage.removeItem(draftKey);
     localStorage.removeItem(roleKey);
+    localStorage.setItem("floorInspectorCollapsed", "false");
   }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
   await page.reload();
   const slab = page.getByRole("button", { name: "选择板区 板区A" });
@@ -180,8 +182,10 @@ test("正式普通Piece和Through Piece均可点击检查，远端洞口不压�
   await page.reload();
   await expect(page.locator('svg[data-floor-canvas-fit="floor"]')).toBeVisible();
   await expect(page.getByText(/有1个洞口位于楼板范围外/)).toBeVisible();
+  await page.getByRole("button", { name: "视图" }).click();
   await page.getByRole("button", { name: "查看全部" }).click();
   await expect(page.locator('svg[data-floor-canvas-fit="all"]')).toBeVisible();
+  await page.getByRole("button", { name: "视图" }).click();
   await page.getByRole("button", { name: "适合楼层" }).click();
 
   await page.getByRole("button", { name: /3\. 面筋/ }).click();

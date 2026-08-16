@@ -67,6 +67,7 @@ export function FloorWorkspaceNavigator({
   throughItems,
   selectedThroughPathId,
   compact = false,
+  onOpenOverlay,
   onSelect,
   onSelectRole,
   onSelectThrough,
@@ -86,6 +87,8 @@ export function FloorWorkspaceNavigator({
   throughItems: readonly FloorWorkspaceThroughItem[];
   selectedThroughPathId: string | null;
   compact?: boolean;
+  /** UI V3（PRD 59-64）：Rail 按钮打开完整 Navigator Overlay。 */
+  onOpenOverlay?: () => void;
   onSelect: (selection: Exclude<FloorSelection, null>) => void;
   onSelectRole: (item: FloorWorkspaceRoleItem) => void;
   onSelectThrough: (id: string) => void;
@@ -112,9 +115,26 @@ export function FloorWorkspaceNavigator({
   const localCount = stage === "bottom" ? bottomOverrides.size : stage === "top" ? topOverrides.size : 0;
 
   if (compact) {
+    // UI V3（PRD 59-64）：Rail 不再截断对象列表（删除 slice(0,8)），
+    // 按钮按类别打开完整 Navigator Overlay，任何数量的板区/洞口/通墙都可访问。
+    const railButton = (label: string, icon: React.ReactNode, onClick: () => void, active = false) => (
+      <button key={label} type="button" title={label} aria-label={`导航-${label}`} aria-current={active ? "true" : undefined} onClick={onClick} className={`flex size-11 items-center justify-center rounded-xl ${active ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-100"}`}>{icon}</button>
+    );
     return (
       <nav className="flex h-full flex-col items-center gap-2 border-r border-slate-200 bg-white p-1.5" aria-label="工作台对象快捷导航">
-        {plan.slabs.slice(0, 8).map((slab) => <button key={slab.id} type="button" title={slab.name} aria-label={`选择板区 ${slab.name}`} aria-current={selection?.kind === "slab" && selection.id === slab.id ? "true" : undefined} onClick={() => onSelect({ kind: "slab", id: slab.id })} className={`flex size-11 items-center justify-center rounded-xl ${selection?.kind === "slab" && selection.id === slab.id ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-100"}`}><Grid2X2 size={17} /></button>)}
+        {stage === "plan" ? (
+          <>
+            {railButton("对象", <Grid2X2 size={17} />, () => onOpenOverlay?.(), selection?.kind === "slab")}
+            {railButton("洞口", <DoorOpen size={17} />, () => onOpenOverlay?.(), selection?.kind === "opening")}
+            {railButton("新增", <Plus size={17} />, () => { onAddSlab(); })}
+          </>
+        ) : (
+          <>
+            {railButton("板区", <Grid2X2 size={17} />, () => onOpenOverlay?.(), selection?.kind === "slab")}
+            {railButton("主副筋", <Circle size={17} />, () => onOpenOverlay?.())}
+            {stage === "top" && railButton("通墙", <Link2 size={17} />, () => onOpenOverlay?.(), Boolean(selectedThroughPathId))}
+          </>
+        )}
       </nav>
     );
   }

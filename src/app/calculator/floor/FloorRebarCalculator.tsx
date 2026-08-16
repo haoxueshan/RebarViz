@@ -10,6 +10,7 @@ import { FloorWorkspaceDrawer } from "@/components/calculator/floor/FloorWorkspa
 import { FloorWorkspaceInspector, type FloorWorkspaceInspectorTab } from "@/components/calculator/floor/FloorWorkspaceInspector";
 import { FloorWorkspaceNavigator } from "@/components/calculator/floor/FloorWorkspaceNavigator";
 import { FloorWorkspaceSummary } from "@/components/calculator/floor/FloorWorkspaceSummary";
+import { useFloorWorkspaceProfile } from "@/components/calculator/floor/useFloorWorkspaceProfile";
 import type {
   FloorWorkflowStage,
   FloorWorkflowStatus,
@@ -408,7 +409,8 @@ export default function FloorRebarCalculator() {
   const [navigatorOpen, setNavigatorOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [tabletInspectorExpanded, setTabletInspectorExpanded] = useState(true);
-  const [navigatorCollapsed, setNavigatorCollapsed] = useState(false);
+  // UI V3（PRD 12-14）：Desktop 默认 Canvas First——Navigator 52px Rail、Inspector 折叠。
+  const [navigatorCollapsed, setNavigatorCollapsed] = useState(true);
   const [detailsExpanded, setDetailsExpanded] = useState(false);
   const [highlightedRoleDomainId, setHighlightedRoleDomainId] = useState<string | null>(null);
   const [canvasFocusRequest, setCanvasFocusRequest] = useState<{ mode: "floor" | "selection" | "domain"; key: string } | null>(null);
@@ -421,10 +423,12 @@ export default function FloorRebarCalculator() {
   const [multiSelection, setMultiSelection] = useState<Set<string>>(new Set());
   const [multiAlignKind, setMultiAlignKind] = useState<FloorMultiAlignKind | null>(null);
   const [workspaceFullscreen, setWorkspaceFullscreen] = useState(false);
-  const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(true);
   const [history, setHistory] = useState<FloorHistoryState<FloorPlanState>>(() => createFloorHistory(cloneDefaultState()));
   const stateRef = useRef<FloorPlanState>(cloneDefaultState());
   stateRef.current = state;
+  const profile = useFloorWorkspaceProfile();
+  const touchInput = profile.input === "touch";
 
   useEffect(() => {
     try {
@@ -496,21 +500,20 @@ export default function FloorRebarCalculator() {
     } finally {
       setHydrated(true);
     }
+    // UI V3（PRD 12-13/45-46）：用户设置优先；无设置时保持默认 Canvas First。
+    const savedNavigatorCollapsed = window.localStorage.getItem("floorNavigatorCollapsed");
+    if (savedNavigatorCollapsed !== null) setNavigatorCollapsed(savedNavigatorCollapsed === "true");
     const savedInspectorCollapsed = window.localStorage.getItem("floorInspectorCollapsed");
     if (savedInspectorCollapsed !== null) {
       setInspectorCollapsed(savedInspectorCollapsed === "true");
-    } else {
-      // PRD 29-31：平板/横屏首次访问默认Canvas First；用户设置优先。
-      const tabletLike = typeof window.matchMedia === "function"
-        && window.matchMedia("(min-width: 768px) and (max-width: 1279px)").matches;
-      setInspectorCollapsed(tabletLike);
     }
   }, []);
 
   useEffect(() => {
     if (!hydrated) return;
     window.localStorage.setItem("floorInspectorCollapsed", String(inspectorCollapsed));
-  }, [hydrated, inspectorCollapsed]);
+    window.localStorage.setItem("floorNavigatorCollapsed", String(navigatorCollapsed));
+  }, [hydrated, inspectorCollapsed, navigatorCollapsed]);
 
   const toleranceResult = useMemo(() => resolveFloorGeometryTolerance(state), [state]);
   const canonicalPlan = toleranceResult.plan;
@@ -1195,6 +1198,64 @@ export default function FloorRebarCalculator() {
   );
 
   const inspector = <FloorWorkspaceInspector title={inspectorTitle} subtitle={inspectorSubtitle} tabs={inspectorTabs} issueCount={inspectorIssueCount}>{inspectorContent}</FloorWorkspaceInspector>;
+
+  // UI V3（PRD 47-57）：Dock确认与Multi对齐统一进入 Canvas 内部底部 Command Bar。
+  const canvasCommandBar = stage === "plan" && editMode === "dock" && dockPinned && dockSourceSlab && dockTargetSlab && dockHoverDirection && dockPreview ? (
+    <div className="pointer-events-auto w-[min(94%,720px)] rounded-2xl border border-orange-200 bg-orange-50/95 p-3 shadow-xl shadow-slate-900/10 backdrop-blur" data-testid="dock-confirm-panel">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-sm text-slate-800">
+          源板区：<strong>{dockSourceSlab.name}</strong>
+          <span className="mx-1 text-slate-400">→</span>
+          目标板区：<strong>{dockTargetSlab.name}</strong>
+          <span className="mx-1 text-slate-400">·</span>
+          方向：<strong>{floorDockDirectionLabel(dockHoverDirection)}</strong>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-slate-600">对齐：</span>
+          {FLOOR_DOCK_ALIGNMENTS.map((alignment) => (
+            <button key={alignment} type="button" onClick={() => setDockAlignment(alignment)} aria-pressed={dockAlignment === alignment} className={`min-h-9 rounded-lg border px-2.5 text-xs font-medium ${dockAlignment === alignment ? "border-orange-500 bg-white text-orange-700" : "border-slate-300 bg-white text-slate-600"}`}>{floorDockAlignmentLabel(alignment)}</button>
+          ))}
+        </div>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-600">
+        <span>移动：X {formatMm(Math.abs(dockPreview.moveXmm))}mm · Y {formatMm(Math.abs(dockPreview.moveYmm))}mm</span>
+        {Math.max(Math.abs(dockPreview.moveXmm), Math.abs(dockPreview.moveYmm)) <= state.overlapToleranceMm && <span className="rounded-full bg-emerald-100 px-2 py-0.5 font-semibold text-emerald-700">微小位移，可直接确认</span>}
+        {Math.max(Math.abs(dockPreview.moveXmm), Math.abs(dockPreview.moveYmm)) > state.snapDistanceMm && <span className="rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-700">该操作将移动板区{formatMm(Math.max(Math.abs(dockPreview.moveXmm), Math.abs(dockPreview.moveYmm)))}mm</span>}
+      </div>
+      {dockPreview.valid ? (
+        <p className="mt-2 rounded-lg bg-emerald-50 p-2 text-xs leading-5 text-emerald-800">拼接后将形成精确 0mm 共享板边（Gap=0 / Overlap=0）。</p>
+      ) : (
+        <p className="mt-2 rounded-lg bg-rose-50 p-2 text-xs leading-5 text-rose-800">无法拼接：{dockSourceSlab.name}移动到{dockTargetSlab.name}{floorDockDirectionLabel(dockHoverDirection)}后，将与{new Intl.ListFormat("zh-CN").format(dockPreview.conflicts)}发生面积重叠。</p>
+      )}
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button type="button" onClick={cancelDock} className="min-h-10 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700">取消</button>
+        <button type="button" onClick={confirmDock} disabled={!dockPreview.valid} className="min-h-10 rounded-xl bg-orange-600 px-5 text-sm font-semibold text-white disabled:opacity-40">确认拼接</button>
+      </div>
+    </div>
+  ) : stage === "plan" && editMode === "multi" && multiSelection.size >= 2 ? (
+    <div className="pointer-events-auto w-[min(94%,680px)] rounded-2xl border border-violet-200 bg-violet-50/95 p-3 shadow-xl shadow-slate-900/10 backdrop-blur" data-testid="multi-align-bar">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-semibold text-slate-800">对齐 {multiSelection.size} 个板区：</span>
+        {(["left", "right", "top", "bottom"] as FloorMultiAlignKind[]).map((kind) => (
+          <button key={kind} type="button" onClick={() => setMultiAlignKind(kind)} aria-pressed={multiAlignKind === kind} className={`min-h-10 rounded-xl border px-3 text-xs font-semibold ${multiAlignKind === kind ? "border-violet-500 bg-white text-violet-700" : "border-slate-300 bg-white text-slate-700"}`}>{kind === "left" ? "左对齐" : kind === "right" ? "右对齐" : kind === "top" ? "上对齐" : "下对齐"}</button>
+        ))}
+      </div>
+      {multiAlignPreview && (
+        <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+          {multiAlignPreview.valid ? (
+            <p className="text-xs text-slate-700">将移动 {multiAlignPreview.movedSlabCount} 个板区，最大位移：{formatMm(multiAlignPreview.maxMoveMm)}mm</p>
+          ) : (
+            <p className="text-xs text-rose-700">对齐后{new Intl.ListFormat("zh-CN").format(multiAlignPreview.conflicts)}将发生面积重叠，禁止执行。</p>
+          )}
+          <div className="mt-2 flex gap-2">
+            <button type="button" onClick={() => setMultiAlignKind(null)} className="min-h-9 rounded-xl border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-600">取消</button>
+            <button type="button" onClick={confirmMultiAlign} disabled={!multiAlignPreview.valid} className="min-h-9 rounded-xl bg-violet-600 px-4 text-xs font-semibold text-white disabled:opacity-40">确认对齐</button>
+          </div>
+        </div>
+      )}
+    </div>
+  ) : null;
+
   const canvasElement = (
     <FloorCanvas
       key={canvasFocusRequest?.key ?? "floor-canvas"}
@@ -1230,23 +1291,27 @@ export default function FloorRebarCalculator() {
       canRedo={history.future.length > 0}
       onUndo={undoHistory}
       onRedo={redoHistory}
+      inputProfile={profile.input}
+      commandBar={canvasCommandBar}
     />
   );
   const navigator = <FloorWorkspaceNavigator stage={stage} plan={state} selection={selection} geometryIssues={issues} bottomOverrides={new Set(Object.keys(bottomState.slabOverrides))} topOverrides={new Set(Object.keys(topState.slabOverrides))} roleItems={roleItems} throughItems={throughItems} selectedThroughPathId={selectedThroughPathId} onSelect={selectWorkspaceObject} onSelectRole={selectRoleItem} onSelectThrough={selectThroughPath} onAddSlab={addSlab} onAddOpening={addOpening} onDuplicate={duplicateSelected} onDelete={deleteSelected} onAddThrough={addThroughPath} />;
-  const gridClass = navigatorCollapsed
-    ? (inspectorCollapsed
-      ? "xl:grid-cols-[52px_minmax(0,1fr)_44px]"
-      : "xl:grid-cols-[52px_minmax(0,1fr)_370px]")
-    : (inspectorCollapsed
-      ? "xl:grid-cols-[240px_minmax(0,1fr)_44px]"
-      : "xl:grid-cols-[240px_minmax(0,1fr)_370px]");
+  // UI V3（PRD 7/75-77/99）：Touch 输入不占布局宽度（单列+Overlay），Desktop 才用三栏。
+  const gridClass = touchInput
+    ? ""
+    : (navigatorCollapsed
+      ? (inspectorCollapsed
+        ? "xl:grid-cols-[52px_minmax(0,1fr)_44px]"
+        : "xl:grid-cols-[52px_minmax(0,1fr)_370px]")
+      : (inspectorCollapsed
+        ? "xl:grid-cols-[240px_minmax(0,1fr)_44px]"
+        : "xl:grid-cols-[240px_minmax(0,1fr)_370px]"));
 
   return (
-    <main className={workspaceFullscreen ? "h-full" : "mx-auto max-w-[1500px] px-4 py-4 sm:px-6 lg:px-8 lg:py-5"}>
+    <main className={workspaceFullscreen ? "h-full" : "w-full max-w-none px-3 py-3 sm:px-4 lg:px-5 lg:py-4"}>
       <div className={workspaceFullscreen ? "fixed inset-0 z-[90] overflow-hidden bg-slate-50 p-3" : ""} data-testid={workspaceFullscreen ? "floor-fullscreen-canvas" : undefined}>
       <header className={`mb-3 ${workspaceFullscreen ? "hidden" : ""}`}>
-        <h1 className="text-2xl font-bold tracking-tight text-slate-950 xl:text-3xl">整层楼板板筋系统</h1>
-        <p className="mt-1 hidden truncate text-xs font-semibold text-blue-600 xl:block">FloorRebarCalculator · Multi-Block Workspace V1 + Tablet Workspace V1 · Geometry V2.1 + Floor 2D V2.2 + Bottom/Top/Through + BOM/Print V1</p>
+        <h1 className="text-xl font-bold tracking-tight text-slate-950 xl:text-2xl">整层楼板板筋系统</h1>
       </header>
       <div className={workspaceFullscreen ? "hidden" : ""}><WorkflowTabs stage={stage} statuses={workflowStatuses} onChange={changeStage} /></div>
 
@@ -1260,97 +1325,46 @@ export default function FloorRebarCalculator() {
           invalidDraftCount={invalidDrafts.size + invalidBottomDrafts.size + invalidTopDrafts.size}
         />
       )) : <>
-        <div className={`mb-2 flex items-center gap-2 xl:hidden ${workspaceFullscreen ? "hidden" : ""}`}>
+        <div className={`mb-2 flex items-center gap-2 ${touchInput ? "" : "xl:hidden"} ${workspaceFullscreen ? "hidden" : ""}`}>
           <button type="button" onClick={() => setNavigatorOpen(true)} className="inline-flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 text-left text-sm font-semibold text-slate-800"><Menu size={17} /><span className="min-w-0 flex-1 truncate">当前：{selectedSlab?.name ?? selectedOpening?.name ?? selectedThroughPath?.name ?? "请选择对象"}</span><ChevronRight size={16} /></button>
           <button type="button" onClick={() => { setInspectorCollapsed(false); setInspectorOpen(true); }} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white md:hidden"><Settings2 size={17} />编辑</button>
-          <button type="button" aria-expanded={!inspectorCollapsed && tabletInspectorExpanded} onClick={() => { if (inspectorCollapsed) { setInspectorCollapsed(false); setTabletInspectorExpanded(true); } else { setTabletInspectorExpanded((value) => !value); } }} className="hidden min-h-11 items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 md:inline-flex xl:hidden"><Settings2 size={17} />{inspectorCollapsed || !tabletInspectorExpanded ? "展开编辑" : "收起编辑"}</button>
+          <button type="button" aria-expanded={!inspectorCollapsed && tabletInspectorExpanded} onClick={() => { if (inspectorCollapsed) { setInspectorCollapsed(false); setTabletInspectorExpanded(true); } else { setTabletInspectorExpanded((value) => !value); } }} className={`hidden min-h-11 items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 md:inline-flex ${touchInput ? "" : "xl:hidden"}`}><Settings2 size={17} />{inspectorCollapsed || !tabletInspectorExpanded ? "展开编辑" : "收起编辑"}</button>
         </div>
 
-        <div className={`grid min-w-0 gap-4 ${workspaceFullscreen ? "h-full" : gridClass}`} data-testid="floor-workspace-grid">
+        <div className={`relative grid min-w-0 gap-4 ${workspaceFullscreen ? "h-full" : gridClass}`} data-testid="floor-workspace-grid">
           <aside className={`relative hidden min-h-[480px] overflow-hidden rounded-2xl border border-slate-200 bg-white xl:sticky xl:top-20 xl:col-start-1 xl:row-start-1 xl:block xl:h-[calc(100dvh-15rem)] xl:max-h-[calc(100dvh-15rem)] ${workspaceFullscreen ? "xl:hidden" : ""}`}>
-            <button type="button" aria-label={navigatorCollapsed ? "展开左侧导航" : "收起左侧导航"} onClick={() => setNavigatorCollapsed((value) => !value)} className="absolute right-1 top-1 z-10 flex size-10 items-center justify-center rounded-xl bg-white/90 text-slate-600 shadow-sm">{navigatorCollapsed ? <ChevronRight size={17} /> : <ChevronLeft size={17} />}</button>
-            {navigatorCollapsed ? <FloorWorkspaceNavigator compact stage={stage} plan={state} selection={selection} geometryIssues={issues} bottomOverrides={new Set(Object.keys(bottomState.slabOverrides))} topOverrides={new Set(Object.keys(topState.slabOverrides))} roleItems={roleItems} throughItems={throughItems} selectedThroughPathId={selectedThroughPathId} onSelect={selectWorkspaceObject} onSelectRole={selectRoleItem} onSelectThrough={selectThroughPath} onAddSlab={addSlab} onAddOpening={addOpening} onDuplicate={duplicateSelected} onDelete={deleteSelected} onAddThrough={addThroughPath} /> : navigator}
+            <button type="button" aria-label={navigatorCollapsed ? "展开左侧导航" : "收起左侧导航"} onClick={() => setNavigatorCollapsed((value) => !value)} className={`absolute right-1 top-1 z-10 flex size-10 items-center justify-center rounded-xl bg-white/90 text-slate-600 shadow-sm ${navigatorCollapsed ? "xl:static xl:mb-1 xl:size-8 xl:bg-transparent xl:shadow-none xl:hover:bg-slate-100" : ""}`}>{navigatorCollapsed ? <ChevronRight size={17} /> : <ChevronLeft size={17} />}</button>
+            {navigatorCollapsed ? <FloorWorkspaceNavigator compact onOpenOverlay={() => setNavigatorOpen(true)} stage={stage} plan={state} selection={selection} geometryIssues={issues} bottomOverrides={new Set(Object.keys(bottomState.slabOverrides))} topOverrides={new Set(Object.keys(topState.slabOverrides))} roleItems={roleItems} throughItems={throughItems} selectedThroughPathId={selectedThroughPathId} onSelect={selectWorkspaceObject} onSelectRole={selectRoleItem} onSelectThrough={selectThroughPath} onAddSlab={addSlab} onAddOpening={addOpening} onDuplicate={duplicateSelected} onDelete={deleteSelected} onAddThrough={addThroughPath} /> : navigator}
           </aside>
 
           <section className={workspaceFullscreen ? "h-full" : "relative min-w-0 space-y-3 xl:col-start-2"}>
             {canvasElement}
-            {stage === "plan" && editMode === "dock" && dockPinned && dockSourceSlab && dockTargetSlab && dockHoverDirection && dockPreview && (
-              <div className="rounded-2xl border border-orange-200 bg-orange-50 p-4" data-testid="dock-confirm-panel">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="text-sm text-slate-800">
-                    源板区：<strong>{dockSourceSlab.name}</strong>
-                    <span className="mx-1 text-slate-400">→</span>
-                    目标板区：<strong>{dockTargetSlab.name}</strong>
-                    <span className="mx-1 text-slate-400">·</span>
-                    方向：<strong>{floorDockDirectionLabel(dockHoverDirection)}</strong>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-slate-600">对齐：</span>
-                    {FLOOR_DOCK_ALIGNMENTS.map((alignment) => (
-                      <button key={alignment} type="button" onClick={() => setDockAlignment(alignment)} aria-pressed={dockAlignment === alignment} className={`min-h-9 rounded-lg border px-2.5 text-xs font-medium ${dockAlignment === alignment ? "border-orange-500 bg-white text-orange-700" : "border-slate-300 bg-white text-slate-600"}`}>{floorDockAlignmentLabel(alignment)}</button>
-                    ))}
-                  </div>
-                </div>
-                <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-600">
-                  <span>移动：X {formatMm(Math.abs(dockPreview.moveXmm))}mm · Y {formatMm(Math.abs(dockPreview.moveYmm))}mm</span>
-                  {Math.max(Math.abs(dockPreview.moveXmm), Math.abs(dockPreview.moveYmm)) <= state.overlapToleranceMm && <span className="rounded-full bg-emerald-100 px-2 py-0.5 font-semibold text-emerald-700">微小位移，可直接确认</span>}
-                  {Math.max(Math.abs(dockPreview.moveXmm), Math.abs(dockPreview.moveYmm)) > state.snapDistanceMm && <span className="rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-700">该操作将移动板区{formatMm(Math.max(Math.abs(dockPreview.moveXmm), Math.abs(dockPreview.moveYmm)))}mm</span>}
-                </div>
-                {dockPreview.valid ? (
-                  <p className="mt-2 rounded-lg bg-emerald-50 p-2 text-xs leading-5 text-emerald-800">拼接后将形成精确 0mm 共享板边（Gap=0 / Overlap=0）。</p>
-                ) : (
-                  <p className="mt-2 rounded-lg bg-rose-50 p-2 text-xs leading-5 text-rose-800">无法拼接：{dockSourceSlab.name}移动到{dockTargetSlab.name}{floorDockDirectionLabel(dockHoverDirection)}后，将与{new Intl.ListFormat("zh-CN").format(dockPreview.conflicts)}发生面积重叠。</p>
-                )}
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <button type="button" onClick={cancelDock} className="min-h-10 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700">取消</button>
-                  <button type="button" onClick={confirmDock} disabled={!dockPreview.valid} className="min-h-10 rounded-xl bg-orange-600 px-5 text-sm font-semibold text-white disabled:opacity-40">确认拼接</button>
-                </div>
-              </div>
-            )}
-            {stage === "plan" && editMode === "multi" && multiSelection.size >= 2 && (
-              <div className="absolute bottom-4 left-1/2 z-30 w-[min(92%,680px)] -translate-x-1/2 rounded-2xl border border-violet-200 bg-violet-50/95 p-3 shadow-xl shadow-slate-900/10 backdrop-blur" data-testid="multi-align-bar">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm font-semibold text-slate-800">对齐 {multiSelection.size} 个板区：</span>
-                  {(["left", "right", "top", "bottom"] as FloorMultiAlignKind[]).map((kind) => (
-                    <button key={kind} type="button" onClick={() => setMultiAlignKind(kind)} aria-pressed={multiAlignKind === kind} className={`min-h-10 rounded-xl border px-3 text-xs font-semibold ${multiAlignKind === kind ? "border-violet-500 bg-white text-violet-700" : "border-slate-300 bg-white text-slate-700"}`}>{kind === "left" ? "左对齐" : kind === "right" ? "右对齐" : kind === "top" ? "上对齐" : "下对齐"}</button>
-                  ))}
-                </div>
-                {multiAlignPreview && (
-                  <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
-                    {multiAlignPreview.valid ? (
-                      <p className="text-xs text-slate-700">将移动 {multiAlignPreview.movedSlabCount} 个板区，最大位移：{formatMm(multiAlignPreview.maxMoveMm)}mm</p>
-                    ) : (
-                      <p className="text-xs text-rose-700">对齐后{new Intl.ListFormat("zh-CN").format(multiAlignPreview.conflicts)}将发生面积重叠，禁止执行。</p>
-                    )}
-                    <div className="mt-2 flex gap-2">
-                      <button type="button" onClick={() => setMultiAlignKind(null)} className="min-h-9 rounded-xl border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-600">取消</button>
-                      <button type="button" onClick={confirmMultiAlign} disabled={!multiAlignPreview.valid} className="min-h-9 rounded-xl bg-violet-600 px-4 text-xs font-semibold text-white disabled:opacity-40">确认对齐</button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
             {stage === "plan" && !workspaceFullscreen && <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] text-slate-600 lg:hidden">{[["板区", state.slabs.length], ["洞口", state.openings.length], ["建筑外边", stats.exterior], ["内墙", stats.inner], ["连续板边", stats.continuous], ["洞口边", stats.opening]].map(([label, value]) => <span key={String(label)} className="rounded-full bg-slate-100 px-2.5 py-1"><strong className="text-slate-900">{value}</strong> {label}</span>)}</div>}
+            {/* UI V3（PRD 70-73）：Summary 属于 Canvas 列，不再横跨三栏。 */}
+            {!workspaceFullscreen && <FloorWorkspaceSummary stage={stage} bottom={bottomCalculation} top={topCalculation} geometryErrorCount={errors.length + invalidDrafts.size} onShowDetails={() => setDetailsExpanded((value) => !value)} onShowIssues={() => { if (stage === "plan") { setFloorSectionOpen(true); setInspectorOpen(true); setTabletInspectorExpanded(true); } else { setDetailsExpanded(true); } }} />}
           </section>
 
           {!workspaceFullscreen && inspectorOpen && <button type="button" aria-label="关闭属性面板遮罩" onClick={() => setInspectorOpen(false)} className="fixed inset-0 z-[60] bg-slate-950/40 md:hidden" />}
           {!workspaceFullscreen && !inspectorCollapsed && (
-            <aside className={`border border-slate-200 bg-white ${inspectorOpen ? "fixed inset-x-0 bottom-0 z-[70] block max-h-[82dvh] overflow-hidden rounded-t-3xl" : "hidden"} ${tabletInspectorExpanded ? "md:fixed md:bottom-3 md:left-auto md:right-3 md:top-[15rem] md:z-[70] md:block md:max-h-none md:w-[min(420px,88vw)] md:max-w-[420px] md:overflow-hidden md:rounded-2xl md:shadow-2xl" : "md:hidden"} xl:static xl:inset-auto xl:z-auto xl:col-start-3 xl:row-start-1 xl:block xl:w-auto xl:max-w-none xl:self-start xl:overflow-hidden xl:rounded-2xl xl:shadow-none`}>
+            <aside className={[
+              "flex flex-col border border-slate-200 bg-white",
+              profile.viewport === "phone"
+                ? `${inspectorOpen ? "fixed inset-x-0 bottom-0 z-[70] block max-h-[82dvh] overflow-hidden rounded-t-3xl" : "hidden"}`
+                : touchInput
+                  ? `${tabletInspectorExpanded ? "absolute bottom-24 right-3 top-2 z-[70] block w-[min(400px,88vw)] overflow-hidden rounded-2xl shadow-2xl" : "hidden"}`
+                  : `${tabletInspectorExpanded ? "absolute bottom-24 right-3 top-2 z-[70] block w-[min(400px,88vw)] overflow-hidden rounded-2xl shadow-2xl" : "hidden"} xl:static xl:inset-auto xl:z-auto xl:col-start-3 xl:row-start-1 xl:block xl:w-auto xl:overflow-hidden xl:rounded-2xl xl:shadow-none`,
+            ].join(" ")}>
               <div className="flex min-h-14 items-center justify-between border-b border-slate-200 px-4 md:hidden"><strong className="text-sm text-slate-950">编辑：{inspectorTitle}</strong><button type="button" onClick={() => setInspectorOpen(false)} className="min-h-11 rounded-xl px-3 text-sm font-semibold text-slate-600">关闭</button></div>
               <div className="hidden min-h-12 items-center justify-between border-b border-slate-200 px-3 md:flex xl:hidden"><span className="text-xs font-semibold text-slate-500">参数面板</span><button type="button" onClick={() => setTabletInspectorExpanded(false)} aria-label="关闭参数面板" className="inline-flex min-h-11 items-center gap-1 rounded-lg border border-slate-200 px-2 text-xs font-semibold text-slate-600">关闭</button></div>
               <div className="hidden min-h-10 items-center justify-between border-b border-slate-200 px-3 xl:flex"><span className="text-xs font-semibold text-slate-500">参数面板</span><button type="button" onClick={() => setInspectorCollapsed(true)} aria-label="收起参数面板" data-testid="collapse-inspector-handle" className="inline-flex min-h-8 items-center gap-1 rounded-lg border border-slate-200 px-2 text-xs font-semibold text-slate-600">收起<ChevronRight size={13} /></button></div>
-              <div className="max-h-[calc(82dvh-3.5rem)] overflow-y-auto pb-[max(16px,env(safe-area-inset-bottom))] md:max-h-[calc(100dvh-7rem)] xl:max-h-none xl:overflow-visible xl:pb-0">{inspector}</div>
+              <div className="min-h-0 flex-1 overflow-y-auto pb-[max(16px,env(safe-area-inset-bottom))] xl:overflow-visible xl:pb-0">{inspector}</div>
             </aside>
           )}
-          {!workspaceFullscreen && inspectorCollapsed && (
-            <aside className="hidden md:block xl:col-start-3">
+          {!workspaceFullscreen && inspectorCollapsed && !touchInput && (
+            <aside className="hidden xl:block xl:col-start-3">
               <button type="button" onClick={() => { setInspectorCollapsed(false); setTabletInspectorExpanded(true); }} aria-label="打开参数面板" data-testid="open-inspector-handle" className="flex h-full min-h-14 w-full flex-col items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white text-xs font-semibold text-slate-600 hover:bg-slate-50"><ChevronLeft size={16} /><span className="[writing-mode:vertical-rl]">参数</span></button>
             </aside>
           )}
-
-          {!workspaceFullscreen && <div className="min-w-0 xl:col-span-3">
-            <FloorWorkspaceSummary stage={stage} bottom={bottomCalculation} top={topCalculation} geometryErrorCount={errors.length + invalidDrafts.size} onShowDetails={() => setDetailsExpanded((value) => !value)} onShowIssues={() => { if (stage === "plan") { setFloorSectionOpen(true); setInspectorOpen(true); setTabletInspectorExpanded(true); } else { setDetailsExpanded(true); } }} />
-          </div>}
         </div>
 
         {!workspaceFullscreen && detailsExpanded && stage === "bottom" && <FloorBottomResults plan={state} calculation={bottomCalculation} invalidDraftCount={invalidDrafts.size + invalidBottomDrafts.size} />}

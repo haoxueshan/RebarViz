@@ -10,29 +10,36 @@ async function savedSlabs(page: import("@playwright/test").Page): Promise<Array<
   }, DRAFT_KEY);
 }
 
-test("大画布：收起Inspector后Canvas明显扩大并持久化", async ({ page }) => {
+test("桌面默认Canvas First：Inspector收起，展开/收起持久化（PRD 12-14）", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/calculator/floor");
   await page.evaluate(({ draftKey, roleKey }) => {
     localStorage.removeItem(draftKey);
     localStorage.removeItem(roleKey);
+    localStorage.removeItem("floorInspectorCollapsed");
+    localStorage.removeItem("floorNavigatorCollapsed");
   }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
   await page.reload();
 
+  // 无用户设置：桌面首次 Canvas First，Inspector 默认收起。
   const canvas = page.locator("[data-testid='floor-canvas-card']");
+  await expect(page.getByTestId("open-inspector-handle")).toBeVisible();
+  await expect(page.getByTestId("collapse-inspector-handle")).toHaveCount(0);
   const before = await canvas.boundingBox();
-  await page.getByTestId("collapse-inspector-handle").click();
-  await expect(page.getByTestId("open-inspector-handle")).toBeVisible();
-  const after = await canvas.boundingBox();
   expect(before).not.toBeNull();
-  expect(after).not.toBeNull();
-  expect(after!.width).toBeGreaterThan(before!.width + 200);
   await expect.poll(() => page.evaluate(() => localStorage.getItem("floorInspectorCollapsed"))).toBe("true");
-  await page.reload();
-  await expect(page.getByTestId("open-inspector-handle")).toBeVisible();
+  // 展开 Inspector → Canvas 变窄（Split），并持久化。
   await page.getByTestId("open-inspector-handle").click();
   await expect(page.getByTestId("collapse-inspector-handle")).toBeVisible();
+  const after = await canvas.boundingBox();
+  expect(after).not.toBeNull();
+  expect(before!.width).toBeGreaterThan(after!.width + 200);
   await expect.poll(() => page.evaluate(() => localStorage.getItem("floorInspectorCollapsed"))).toBe("false");
+  await page.reload();
+  await expect(page.getByTestId("collapse-inspector-handle")).toBeVisible();
+  await page.getByTestId("collapse-inspector-handle").click();
+  await expect(page.getByTestId("open-inspector-handle")).toBeVisible();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("floorInspectorCollapsed"))).toBe("true");
 });
 
 test("Fullscreen：进入隐藏页面组件，退出恢复且FloorPlan不变", async ({ page }) => {
@@ -91,7 +98,10 @@ test("拖动只在松手提交一次正式坐标，Undo一步直接回到起点"
   await page.evaluate(({ draftKey, roleKey }) => {
     localStorage.removeItem(draftKey);
     localStorage.removeItem(roleKey);
+    localStorage.setItem("floorInspectorCollapsed", "false");
   }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
+  await page.waitForTimeout(250);
+  await page.evaluate(() => localStorage.setItem("floorInspectorCollapsed", "false"));
   await page.reload();
 
   const slab = page.locator('[data-floor-layer="slabs"] rect[aria-label="选择板区 板区A"]');
@@ -422,17 +432,21 @@ test("平板首次访问默认Canvas First，展开编辑为Overlay且不压缩C
   expect(Math.abs(after!.width - before!.width)).toBeLessThan(1);
 });
 
-test("平板工具栏主要按钮触摸尺寸≥44px（PRD 80）", async ({ page }) => {
-  await page.setViewportSize({ width: 1024, height: 768 });
-  await page.goto("/calculator/floor");
-  await page.evaluate(({ draftKey, roleKey }) => {
-    localStorage.removeItem(draftKey);
-    localStorage.removeItem(roleKey);
-  }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
-  await page.reload();
-  const box = await page.getByRole("button", { name: "移动" }).boundingBox();
-  expect(box).not.toBeNull();
-  expect(box!.height).toBeGreaterThanOrEqual(44);
+test.describe("触摸设备", () => {
+  test.use({ hasTouch: true, isMobile: true });
+
+  test("平板工具栏主要按钮触摸尺寸≥44px（PRD 80）", async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await page.goto("/calculator/floor");
+    await page.evaluate(({ draftKey, roleKey }) => {
+      localStorage.removeItem(draftKey);
+      localStorage.removeItem(roleKey);
+    }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
+    await page.reload();
+    const box = await page.getByRole("button", { name: "移动" }).boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.height).toBeGreaterThanOrEqual(44);
+  });
 });
 
 test("高频PointerMove连续5次Pan不丢增量（PRD 72）", async ({ page }) => {
@@ -637,4 +651,128 @@ test.describe("触摸设备", () => {
     const slabs = await savedSlabs(page);
     expect(slabs[0]).toMatchObject({ x: 0, y: 0 });
   });
+});
+
+test("Wide Desktop 1920×1080不受1500px限宽，Canvas成为视觉主角（PRD 98）", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.goto("/calculator/floor");
+  await page.evaluate(({ draftKey, roleKey }) => {
+    localStorage.removeItem(draftKey);
+    localStorage.removeItem(roleKey);
+    localStorage.removeItem("floorInspectorCollapsed");
+    localStorage.removeItem("floorNavigatorCollapsed");
+  }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
+  await page.reload();
+
+  const main = page.getByRole("main");
+  const grid = page.getByTestId("floor-workspace-grid");
+  const canvas = page.getByTestId("floor-canvas-card");
+  const mainBox = await main.boundingBox();
+  const canvasBox = await canvas.boundingBox();
+  expect(mainBox).not.toBeNull();
+  expect(canvasBox).not.toBeNull();
+  expect(mainBox!.width).toBeGreaterThan(1500);
+  // 默认 Canvas First：Canvas 占 grid 的 70% 以上（Rail 52 + Inspector 370 除外）。
+  await expect(page.getByTestId("open-inspector-handle")).toBeVisible();
+  const gridBox = await grid.boundingBox();
+  expect(gridBox).not.toBeNull();
+  expect(canvasBox!.width).toBeGreaterThan(gridBox!.width * 0.7);
+});
+
+test.describe("大尺寸触摸设备", () => {
+  test.use({ hasTouch: true, isMobile: true });
+
+  test("Large Touch 1366×1024使用Touch布局而非桌面三栏（PRD 99-100）", async ({ page }) => {
+    await page.setViewportSize({ width: 1366, height: 1024 });
+    await page.goto("/calculator/floor");
+    await page.evaluate(({ draftKey, roleKey }) => {
+      localStorage.removeItem(draftKey);
+      localStorage.removeItem(roleKey);
+      localStorage.removeItem("floorInspectorCollapsed");
+      localStorage.removeItem("floorNavigatorCollapsed");
+    }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
+    await page.reload();
+
+    // 触摸输入：主要按钮≥44px，即使宽度≥1280。
+    const box = await page.getByRole("button", { name: "移动" }).boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.height).toBeGreaterThanOrEqual(44);
+    // Navigator/Inspector 不占布局宽度：Canvas≈Grid宽度。
+    const grid = page.getByTestId("floor-workspace-grid");
+    const canvas = page.getByTestId("floor-canvas-card");
+    const gridBox = await grid.boundingBox();
+    const canvasBox = await canvas.boundingBox();
+    expect(gridBox).not.toBeNull();
+    expect(canvasBox).not.toBeNull();
+  expect(canvasBox!.width).toBeGreaterThan(gridBox!.width * 0.85);
+    await expect(page.getByTestId("floor-workspace-navigator")).toHaveCount(0);
+    await expect(page.getByTestId("floor-workspace-inspector")).toHaveCount(0);
+  });
+});
+
+test("Compact Navigator Rail不丢对象：12板区+3洞口均可通过Overlay访问（PRD 107-108）", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/calculator/floor");
+  await page.evaluate(({ draftKey, roleKey }) => {
+    const slabs = Array.from({ length: 12 }, (_, index) => ({
+      id: `s${String(index + 1).padStart(2, "0")}`,
+      name: `板区${String(index + 1).padStart(2, "0")}`,
+      type: "room",
+      x: (index % 4) * 3000,
+      y: Math.floor(index / 4) * 2400,
+      width: 3000,
+      height: 2400,
+    }));
+    localStorage.setItem(draftKey, JSON.stringify({
+      schemaVersion: 2,
+      savedAt: new Date().toISOString(),
+      state: {
+        coordinateModel: "net-layout-v1",
+        slabs,
+        openings: [
+          { id: "o1", name: "楼梯间", type: "stair", x: 3600, y: 3000, width: 900, height: 900 },
+          { id: "o2", name: "井道", type: "shaft", x: 9300, y: 5400, width: 600, height: 600 },
+          { id: "o3", name: "挑空", type: "void", x: 6000, y: 6000, width: 1200, height: 1200 },
+        ],
+        supportRules: [],
+        innerWallThickness: 240,
+        outerWallThickness: 370,
+        snapDistanceMm: 150,
+      },
+    }));
+    localStorage.removeItem(roleKey);
+    localStorage.removeItem("floorInspectorCollapsed");
+    localStorage.removeItem("floorNavigatorCollapsed");
+  }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
+  await page.reload();
+
+  // 默认 Rail：不再渲染第9块以后的截断列表，而是功能按钮。
+  await expect(page.getByRole("button", { name: "导航-对象" })).toBeVisible();
+  await page.getByRole("button", { name: "导航-对象" }).click();
+  const drawer = page.getByTestId("floor-workspace-left-drawer");
+  await expect(drawer).toBeVisible();
+  await expect(drawer.locator('[data-navigator-object-id^="s"]')).toHaveCount(12);
+  await expect(drawer.locator('[data-navigator-object-id="s12"]')).toBeVisible();
+  await drawer.locator('[data-navigator-object-id="s12"]').click();
+  await expect(page.getByRole("button", { name: "选择板区 板区12" })).toHaveAttribute("stroke", "#2563eb");
+  // 洞口经Rail→Overlay访问。
+  await page.getByRole("button", { name: "导航-洞口" }).click();
+  await expect(drawer).toBeVisible();
+  await expect(drawer.locator('[data-navigator-object-id="o3"]')).toBeVisible();
+});
+
+test("PLOT有效面积扩大：宽≥90% SVG、高≥85% SVG（PRD 113）", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/calculator/floor");
+  await page.evaluate(({ draftKey, roleKey }) => {
+    localStorage.removeItem(draftKey);
+    localStorage.removeItem(roleKey);
+  }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
+  await page.reload();
+
+  const svg = page.locator("svg[data-floor-canvas-fit]");
+  const plotWidth = Number(await svg.getAttribute("data-plot-width"));
+  const plotHeight = Number(await svg.getAttribute("data-plot-height"));
+  expect(plotWidth / 1000).toBeGreaterThanOrEqual(0.9);
+  expect(plotHeight / 650).toBeGreaterThanOrEqual(0.85);
 });

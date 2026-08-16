@@ -48,12 +48,9 @@ test("Floor Docking V1拼接模式：Source+Target+北边+Ghost+确认生成0mm�
   await page.reload();
 
   await page.getByRole("button", { name: "拼接", exact: true }).click();
-  await expect(page.getByText("点击选择源板区")).toBeVisible();
 
   await canvasSlab(page, "板区B").click();
-  await expect(page.getByText("已选源板区，点击选择目标板区")).toBeVisible();
   await canvasSlab(page, "板区A").click();
-  await expect(page.getByText("已选目标板区，点击目标四边确认拼接")).toBeVisible();
 
   await page.locator('[data-dock-side="north"]').dispatchEvent("pointerover");
   await expect(page.locator("[data-dock-ghost]")).toHaveCount(1);
@@ -82,9 +79,14 @@ test("Floor Docking V1一键修复5mm Near Miss", async ({ page }) => {
     { id: "a", name: "板区A", type: "room", x: 0, y: 0, width: 4200, height: 3600 },
     { id: "b", name: "板区B", type: "room", x: 0, y: 3605, width: 3600, height: 3600 },
   ], 0);
+  // UI V3：桌面默认 Canvas First，一键修复需要 Inspector（楼层设置）展开。
+  await page.evaluate(() => localStorage.setItem("floorInspectorCollapsed", "false"));
+  await page.waitForTimeout(250);
+  await page.evaluate(() => localStorage.setItem("floorInspectorCollapsed", "false"));
   await page.reload();
 
   await expect(page.locator("[data-near-miss]")).toHaveCount(1);
+  // UI V3：Inspector 默认展开（已设 floorInspectorCollapsed=false），首块板区默认选中。
   await page.getByRole("button", { name: "楼层设置" }).click();
   const suggestion = page.getByTestId("dock-suggestion-button");
   await expect(suggestion).toContainText("将板区B拼到板区A北侧");

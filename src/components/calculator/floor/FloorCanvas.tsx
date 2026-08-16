@@ -1,6 +1,6 @@
 "use client";
 
-import { Move, TriangleAlert } from "lucide-react";
+import { TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   buildFloorAtomicBoundarySegments,
@@ -84,7 +84,8 @@ type DrawablePiece = {
 
 const SVG_WIDTH = 1000;
 const SVG_HEIGHT = 650;
-const PLOT = { x: 72, y: 54, width: 856, height: 520 };
+// UI V3（PRD 33-35）：Plot 占 SVG 宽度 93.6%、高度 91.4%，不再保留四周大空白。
+const PLOT = { x: 32, y: 28, width: 936, height: 594 };
 const PLOT_CENTER_X = PLOT.x + PLOT.width / 2;
 const PLOT_CENTER_Y = PLOT.y + PLOT.height / 2;
 
@@ -210,6 +211,8 @@ export function FloorCanvas({
   onUndo,
   onRedo,
   onQuickDock,
+  inputProfile = "desktop",
+  commandBar = null,
 }: {
   state: FloorPlanState;
   selection: FloorSelection;
@@ -245,6 +248,10 @@ export function FloorCanvas({
   onRedo?: () => void;
   /** Quick Dock：拖动松手且Smart Guide激活时，把Dock请求交给父层复用floor-docking计算。 */
   onQuickDock?: (request: FloorDockRequest, x: number, y: number) => void;
+  /** UI V3：输入模式决定触摸尺寸（touch≥44px），不再由 xl 断点判断。 */
+  inputProfile?: "touch" | "desktop";
+  /** UI V3：Dock确认/Multi对齐等Command Bar渲染在Canvas内部底部（PRD 47-57）。 */
+  commandBar?: React.ReactNode;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const dragRef = useRef<DragState | null>(null);
@@ -260,7 +267,6 @@ export function FloorCanvas({
   const [dragPreview, setDragPreview] = useState<{ objectId: string; x: number; y: number } | null>(null);
   const [svgWidthPx, setSvgWidthPx] = useState(SVG_WIDTH);
   const [selectedPieceId, setSelectedPieceId] = useState<string | null>(null);
-  const [coarsePointer, setCoarsePointer] = useState(false);
   const highlightedRoleDomain = roleDomains.find((domain) => domain.id === highlightedRoleDomainId);
   const bounds = useMemo(() => {
     if (fitMode === "selection" && selection) {
@@ -306,15 +312,6 @@ export function FloorCanvas({
     });
     observer.observe(svg);
     return () => observer.disconnect();
-  }, []);
-
-  useEffect(() => {
-    // PRD 41：触摸设备使用更大的透明命中宽度（只影响Hit Target，不改视觉墙线）。
-    const media = window.matchMedia("(pointer: coarse)");
-    const apply = () => setCoarsePointer(media.matches);
-    apply();
-    media.addEventListener("change", apply);
-    return () => media.removeEventListener("change", apply);
   }, []);
 
   useEffect(() => {
@@ -684,26 +681,19 @@ export function FloorCanvas({
 
   const dockSource = state.slabs.find((slab) => slab.id === dockSourceId) ?? null;
   const dockTarget = state.slabs.find((slab) => slab.id === dockTargetId) ?? null;
-  const modeHint = editMode === "dock"
-    ? (!dockSource ? "点击选择源板区" : !dockTarget ? "已选源板区，点击选择目标板区" : "已选目标板区，点击目标四边确认拼接")
-    : editMode === "multi"
-      ? `已选${multiSelection.size}个板区，选择2个以上后可对齐`
-      : "拖动板区或洞口自由布置";
   const dockGhost = dockPreview?.sourcePreview ?? null;
 
   return (
-    <div className={`overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 ${fullscreen ? "flex h-full min-h-0 flex-col" : ""}`} data-testid="floor-canvas-card">
-      {!fullscreen && <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-2.5">
-        <div className="min-w-0 flex-1">
-          <h2 className="text-sm font-semibold text-slate-900">{topCalculation ? "整层面筋净跨路径" : bottomCalculation ? "整层地筋净跨路径" : "整层板区平面"}</h2>
-          <p className="mt-0.5 hidden text-xs leading-5 text-slate-500 md:block">净跨布置示意；下料长度以钢筋详情/料单为准。</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {uncoveredOpenings.length > 0 && <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-3 py-1 text-xs font-medium text-rose-700"><TriangleAlert size={13} /> 有{uncoveredOpenings.length}个洞口位于楼板范围外</span>}
-          <span className="inline-flex min-h-8 items-center gap-1 rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700"><Move size={13} /> {modeHint}</span>
+    <div className={`rounded-2xl border border-slate-200 bg-slate-50 ${fullscreen ? "flex h-full min-h-0 flex-col" : ""}`} data-testid="floor-canvas-card">
+      {!fullscreen && <div className="flex min-h-9 items-center justify-between gap-3 border-b border-slate-200 bg-white px-3 py-1.5">
+        <h2 className="min-w-0 truncate text-sm font-semibold text-slate-900">{topCalculation ? "整层面筋净跨路径" : bottomCalculation ? "整层地筋净跨路径" : "整层板区平面"}</h2>
+        <div className="flex shrink-0 items-center gap-2">
+          {uncoveredOpenings.length > 0 && <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2.5 py-0.5 text-xs font-medium text-rose-700"><TriangleAlert size={13} /> 有{uncoveredOpenings.length}个洞口位于楼板范围外</span>}
+          {nearMisses.length > 0 && <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700"><TriangleAlert size={13} /> {nearMisses.length}处临近</span>}
         </div>
       </div>}
-      <div className={`relative min-h-0 ${fullscreen ? "flex-1" : ""}`}>
+      {/* UI V3（PRD 26-28）：Toolbar 独立 Chrome 行，不再 absolute 覆盖 SVG 绘图区；提升层级保证视图 Popover 不被 SVG 盖住；窄屏允许行内横向滚动（PRD 102）。 */}
+      <div className="relative z-30 flex min-h-12 flex-wrap items-center justify-center gap-2 overflow-x-auto border-b border-slate-200 bg-white px-3 py-1">
         <FloorCanvasToolbar
           editMode={editMode}
           onEditModeChange={onEditModeChange ?? (() => undefined)}
@@ -727,16 +717,22 @@ export function FloorCanvas({
           onUndo={onUndo ?? (() => undefined)}
           onRedo={onRedo ?? (() => undefined)}
           domainHighlighted={Boolean(highlightedRoleDomain)}
+          inputProfile={inputProfile}
         />
+      </div>
+      <div className={`relative min-h-0 overflow-hidden ${fullscreen ? "flex-1" : ""}`}>
+        {commandBar && <div className="pointer-events-none absolute inset-x-0 bottom-4 z-30 flex justify-center">{commandBar}</div>}
         <svg
           ref={svgRef}
           viewBox={`0 0 ${SVG_WIDTH} ${SVG_HEIGHT}`}
           preserveAspectRatio="xMidYMid meet"
-          className={`block w-full touch-none select-none bg-white ${fullscreen ? "h-full" : "h-[clamp(420px,62dvh,640px)] md:h-[clamp(560px,72dvh,760px)] lg:h-[clamp(600px,76dvh,840px)] xl:h-[max(68dvh,calc(100dvh-14rem))] xl:min-h-[600px]"}`}
+          className={`block w-full touch-none select-none bg-white ${fullscreen ? "h-full" : "h-[clamp(420px,62dvh,640px)] md:h-[clamp(560px,72dvh,760px)] lg:h-[clamp(600px,76dvh,840px)] xl:h-[max(68dvh,calc(100dvh-15rem))] xl:min-h-[600px]"}`}
           role="img"
           aria-label="整层板区、洞口、正式钢筋Piece和支承关系布局预览"
           data-floor-canvas-fit={fitMode}
           data-zoom-percent={Math.round(viewport.zoom * 100)}
+          data-plot-width={PLOT.width}
+          data-plot-height={PLOT.height}
           data-viewport-center-x={viewport.centerX}
           data-viewport-center-y={viewport.centerY}
           onPointerDown={(event) => {
@@ -1011,8 +1007,8 @@ export function FloorCanvas({
             <line
               key={`atomic-hit:${segment.id}`}
               x1={toX(segment.startX)} y1={toY(segment.startY)} x2={toX(segment.endX)} y2={toY(segment.endY)}
-              stroke="transparent" strokeWidth={coarsePointer ? 34 : 22} pointerEvents="stroke" className="cursor-pointer"
-              data-atomic-boundary-id={segment.id} data-boundary-support={segment.support} data-boundary-kind={segment.geometryKind} data-atomic-hit-width={coarsePointer ? 34 : 22}
+              stroke="transparent" strokeWidth={inputProfile === "touch" ? 34 : 22} pointerEvents="stroke" className="cursor-pointer"
+              data-atomic-boundary-id={segment.id} data-boundary-support={segment.support} data-boundary-kind={segment.geometryKind} data-atomic-hit-width={inputProfile === "touch" ? 34 : 22}
               role="button" tabIndex={0} aria-label={`编辑${segment.geometryKind === "shared-slab" ? "共享板边" : segment.geometryKind === "opening-edge" ? "洞口边" : "建筑外边"} ${segment.id}`}
               onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); setSelectedPieceId(null); onSelectBoundary(segment); }}
               onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { setSelectedPieceId(null); onSelectBoundary(segment); } }}
@@ -1053,17 +1049,24 @@ export function FloorCanvas({
           })}
         </g>}
 
-        <g aria-label="方向标识" fontSize="13" fill="#334155">
-          <line x1="92" y1="608" x2="198" y2="608" stroke="#2563eb" strokeWidth="3" /><path d="M198 608 l-12 -6 v12 z" fill="#2563eb" /><text x="92" y="630">西</text><text x="202" y="630">东 · X</text>
-          <line x1="48" y1="555" x2="48" y2="445" stroke="#dc2626" strokeWidth="3" /><path d="M48 445 l-6 12 h12 z" fill="#dc2626" /><text x="30" y="558">南</text><text x="24" y="432">北 · Y</text>
+        {/* UI V3：图例与方向标识移入 PLOT 内部左上/左下，pointerEvents none 不拦截交互（PRD 123）。 */}
+        <g aria-label="图例" fontSize="11" fill="#475569" pointerEvents="none">
+          <rect x={PLOT.x + 10} y={PLOT.y + 8} width="470" height={rebarCalculation ? 52 : 32} rx="8" fill="white" fillOpacity="0.88" stroke="#e2e8f0" />
+          <line x1={PLOT.x + 22} y1={PLOT.y + 24} x2={PLOT.x + 57} y2={PLOT.y + 24} stroke="#0f172a" strokeWidth="7" /><text x={PLOT.x + 64} y={PLOT.y + 28}>建筑外边</text>
+          <line x1={PLOT.x + 142} y1={PLOT.y + 24} x2={PLOT.x + 177} y2={PLOT.y + 24} stroke="#2563eb" strokeWidth="7" /><text x={PLOT.x + 184} y={PLOT.y + 28}>内墙</text>
+          <line x1={PLOT.x + 247} y1={PLOT.y + 24} x2={PLOT.x + 282} y2={PLOT.y + 24} stroke="#64748b" strokeWidth="2.5" strokeDasharray="9 6" /><text x={PLOT.x + 289} y={PLOT.y + 28}>连续</text>
+          <line x1={PLOT.x + 352} y1={PLOT.y + 24} x2={PLOT.x + 387} y2={PLOT.y + 24} stroke="#94a3b8" strokeWidth="3" strokeDasharray="5 6" /><text x={PLOT.x + 394} y={PLOT.y + 28}>洞口裁断</text>
+          {rebarCalculation && <>
+            <line x1={PLOT.x + 22} y1={PLOT.y + 46} x2={PLOT.x + 57} y2={PLOT.y + 46} stroke={topCalculation ? "#0891b2" : "#dc2626"} strokeWidth={topCalculation ? "2.8" : "2.4"} strokeDasharray={topCalculation ? "8 5" : undefined} /><text x={PLOT.x + 64} y={PLOT.y + 50}>东西向{topCalculation ? "面筋" : "地筋"}Piece</text>
+            <line x1={PLOT.x + 242} y1={PLOT.y + 46} x2={PLOT.x + 277} y2={PLOT.y + 46} stroke={topCalculation ? "#047857" : "#7c3aed"} strokeWidth={topCalculation ? "2.8" : "2.4"} strokeDasharray={topCalculation ? "8 5" : undefined} /><text x={PLOT.x + 284} y={PLOT.y + 50}>南北向{topCalculation ? "面筋" : "地筋"}Piece</text>
+            {topCalculation && <><line x1={PLOT.x + 407} y1={PLOT.y + 46} x2={PLOT.x + 442} y2={PLOT.y + 46} stroke="#1d4ed8" strokeWidth="5" /><circle cx={PLOT.x + 424} cy={PLOT.y + 46} r="4" fill="white" stroke="#1d4ed8" strokeWidth="2" /><text x={PLOT.x + 449} y={PLOT.y + 50}>通墙面筋Piece</text></>}
+          </>}
         </g>
-        <g transform="translate(560 600)" fontSize="11" fill="#475569">
-          <line x1="0" y1="0" x2="35" y2="0" stroke="#0f172a" strokeWidth="7" /><text x="42" y="4">建筑外边</text>
-          <line x1="120" y1="0" x2="155" y2="0" stroke="#2563eb" strokeWidth="7" /><text x="162" y="4">内墙</text>
-          <line x1="225" y1="0" x2="260" y2="0" stroke="#64748b" strokeWidth="2.5" strokeDasharray="9 6" /><text x="267" y="4">连续</text>
-          <line x1="330" y1="0" x2="365" y2="0" stroke="#94a3b8" strokeWidth="3" strokeDasharray="5 6" /><text x="372" y="4">洞口裁断</text>
+        <g aria-label="方向标识" fontSize="13" fill="#334155" pointerEvents="none">
+          <rect x={PLOT.x + 10} y={PLOT.y + PLOT.height - 42} width="140" height="32" rx="8" fill="white" fillOpacity="0.88" stroke="#e2e8f0" />
+          <line x1={PLOT.x + 22} y1={PLOT.y + PLOT.height - 26} x2={PLOT.x + 92} y2={PLOT.y + PLOT.height - 26} stroke="#2563eb" strokeWidth="3" /><path d={`M${PLOT.x + 92} ${PLOT.y + PLOT.height - 26} l-12 -6 v12 z`} fill="#2563eb" /><text x={PLOT.x + 22} y={PLOT.y + PLOT.height - 10}>西</text><text x={PLOT.x + 96} y={PLOT.y + PLOT.height - 10}>东 · X</text>
+          <line x1={PLOT.x + 132} y1={PLOT.y + PLOT.height - 26} x2={PLOT.x + 132} y2={PLOT.y + PLOT.height - 78} stroke="#dc2626" strokeWidth="3" /><path d={`M${PLOT.x + 132} ${PLOT.y + PLOT.height - 78} l-6 12 h12 z`} fill="#dc2626" /><text x={PLOT.x + 118} y={PLOT.y + PLOT.height - 8}>南</text><text x={PLOT.x + 114} y={PLOT.y + PLOT.height - 82}>北 · Y</text>
         </g>
-        {rebarCalculation && <g transform="translate(560 625)" fontSize="11" fill="#475569"><line x1="0" y1="0" x2="35" y2="0" stroke={topCalculation ? "#0891b2" : "#dc2626"} strokeWidth={topCalculation ? "2.8" : "2.4"} strokeDasharray={topCalculation ? "8 5" : undefined} /><text x="42" y="4">东西向{topCalculation ? "面筋" : "地筋"}Piece</text><line x1="150" y1="0" x2="185" y2="0" stroke={topCalculation ? "#047857" : "#7c3aed"} strokeWidth={topCalculation ? "2.8" : "2.4"} strokeDasharray={topCalculation ? "8 5" : undefined} /><text x="192" y="4">南北向{topCalculation ? "面筋" : "地筋"}Piece</text>{topCalculation && <><line x1="315" y1="0" x2="350" y2="0" stroke="#1d4ed8" strokeWidth="5" /><circle cx="332" cy="0" r="4" fill="white" stroke="#1d4ed8" strokeWidth="2" /><text x="357" y="4">通墙面筋Piece</text></>}</g>}
         </svg>
       </div>
       {selectedPiece && <FloorPieceInspector piece={selectedPiece} throughPathName={throughPathName} />}

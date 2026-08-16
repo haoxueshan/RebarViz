@@ -69,7 +69,14 @@ async function installMultiBlockWorkspace(page: import("@playwright/test").Page)
     localStorage.removeItem(roleKey);
     // 显式用户设置：平板也展开 Inspector（Canvas First 首访默认由专用用例验证）。
     localStorage.setItem("floorInspectorCollapsed", "false");
+    localStorage.setItem("floorNavigatorCollapsed", "false");
   }, { draftKey: DRAFT_KEY, bottomKey: BOTTOM_KEY, topKey: TOP_KEY, roleKey: ROLE_KEY });
+  // 等待页面首轮 hydrate/persist 完成后再写一次，避免被初始状态覆盖。
+  await page.waitForTimeout(250);
+  await page.evaluate(() => {
+    localStorage.setItem("floorInspectorCollapsed", "false");
+    localStorage.setItem("floorNavigatorCollapsed", "false");
+  });
   await page.reload();
 }
 
@@ -84,6 +91,7 @@ test("12板区工作台保持Navigator、Canvas与Inspector双向同步并实时
   await expect(page.getByTestId("floor-workspace-inspector")).toContainText("板区10");
   await expect(page.getByRole("button", { name: "选择板区 板区10" })).toHaveAttribute("stroke", "#2563eb");
 
+  await page.getByRole("button", { name: "视图" }).click();
   await page.getByRole("button", { name: "适合楼层" }).click();
   await page.getByRole("button", { name: "选择板区 板区03" }).click();
   await expect(page.locator('[data-navigator-object-id="s03"]')).toHaveAttribute("data-selected", "true");
@@ -167,7 +175,15 @@ test("正方形和不规则Role区域在Navigator定位并共享人工主筋方�
       },
     }));
     localStorage.removeItem(roleKey);
+    // UI V3：桌面默认 Canvas First（Navigator Rail / Inspector 收起），本用例需完整三栏。
+    localStorage.setItem("floorInspectorCollapsed", "false");
+    localStorage.setItem("floorNavigatorCollapsed", "false");
   }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
+  await page.waitForTimeout(250);
+  await page.evaluate(() => {
+    localStorage.setItem("floorInspectorCollapsed", "false");
+    localStorage.setItem("floorNavigatorCollapsed", "false");
+  });
   await page.reload();
   await page.getByRole("button", { name: /2\. 地筋/ }).click();
   const roleRows = page.locator("[data-navigator-role-id]");
@@ -472,6 +488,7 @@ test("异常洞口伸出很远时适合楼层仍以楼板主体取景，显示�
   const floorBox = await floorSlab.boundingBox();
   expect(floorBox).not.toBeNull();
   expect(floorBox!.width).toBeGreaterThan(150);
+  await page.getByRole("button", { name: "视图" }).click();
   await page.getByRole("button", { name: "查看全部" }).click();
   await expect(page.locator('svg[data-floor-canvas-fit="all"]')).toBeVisible();
   const allBox = await floorSlab.boundingBox();
