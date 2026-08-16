@@ -241,7 +241,16 @@ export function removeFloorCanvasGesturePointer(
   pointers.delete(pointerId);
   if (pointers.size === 0) return null;
   if (pointers.size === 1) {
-    return { ...gesture, pointers, mode: "pan", startDistance: null };
+    // PRD 77：Pinch→Pan 重建单指基线，避免后续阈值/位移受旧Pinch中心影响。
+    const remaining = [...pointers.values()][0];
+    return {
+      ...gesture,
+      pointers,
+      mode: "pan",
+      startDistance: null,
+      startCenterClientX: remaining.clientX,
+      startCenterClientY: remaining.clientY,
+    };
   }
   return { ...gesture, pointers };
 }

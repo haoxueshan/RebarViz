@@ -59,6 +59,9 @@ type DragState = {
   selection: Exclude<FloorSelection, null>;
   startClientX: number;
   startClientY: number;
+  /** 指针最近一次位置（用于双指升级 Pinch 时重建基线，PRD 41）。 */
+  lastClientX: number;
+  lastClientY: number;
   startX: number;
   startY: number;
   pixelsPerWorldX: number;
@@ -314,6 +317,17 @@ export function FloorCanvas({
     return () => media.removeEventListener("change", apply);
   }, []);
 
+  useEffect(() => {
+    // PRD 24/56：卸载时清理 RAF 与交互引用，避免Stage/路由切换后执行旧帧。
+    return () => {
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+      pendingRef.current = null;
+      gestureRef.current = null;
+      dragRef.current = null;
+    };
+  }, []);
+
   const boundsKey = fitMode === "selection" && selection
     ? `${selection.kind}:${selection.id}`
     : fitMode === "domain" && highlightedRoleDomain
@@ -342,7 +356,8 @@ export function FloorCanvas({
       const current = viewportRef.current;
       const anchor = viewToWorld(viewX, viewY, current);
       const factor = Math.exp(-event.deltaY * 0.0015);
-      setViewport(zoomViewportAt(current, factor, anchor.x, anchor.y));
+      viewportRef.current = zoomViewportAt(current, factor, anchor.x, anchor.y);
+      setViewport(viewportRef.current);
     };
     svg.addEventListener("wheel", onWheel, { passive: false });
     return () => svg.removeEventListener("wheel", onWheel);
@@ -425,17 +440,61 @@ export function FloorCanvas({
     slabs: state.slabs.map((slab) => slab.id === source.id ? { ...slab, x, y } : slab),
   });
 
+  /**
+   * 交互帧调度（PRD 52-55）：viewport 与 preview 合并而非互相覆盖；
+   * RAF 回调同时同步 viewportRef，保证下一次 PointerMove 基于最新交互 Viewport。
+   */
   const scheduleFrame = (next: { viewport?: FloorCanvasViewport; preview?: { objectId: string; x: number; y: number } | null }) => {
-    pendingRef.current = next;
+    pendingRef.current = { ...pendingRef.current, ...next };
     if (rafRef.current !== null) return;
     rafRef.current = requestAnimationFrame(() => {
       rafRef.current = null;
       const pending = pendingRef.current;
       pendingRef.current = null;
       if (!pending) return;
-      if (pending.viewport) setViewport(pending.viewport);
+      if (pending.viewport) {
+        viewportRef.current = pending.viewport;
+        setViewport(pending.viewport);
+      }
       if (pending.preview !== undefined) setDragPreview(pending.preview);
     });
+  };
+
+  /** PRD 9-10/107：交互路径统一入口——先同步最新 Viewport ref，再走 RAF 渲染，不等待 React Render。 */
+  const commitInteractionViewport = (next: FloorCanvasViewport) => {
+    viewportRef.current = next;
+    scheduleFrame({ viewport: next });
+  };
+
+  /** 一次性入口（滚轮/按钮/Fit）：同步 ref 并立即 setState。 */
+  const applyViewportImmediate = (next: FloorCanvasViewport) => {
+    viewportRef.current = next;
+    setViewport(next);
+  };
+
+  /** PRD 16/19/23：取消未执行的交互帧（拖板松手/取消前清掉过期 Preview RAF）。 */
+  const cancelPendingInteractionFrame = () => {
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    pendingRef.current = null;
+  };
+
+  /** PRD 20-22：冲刷 pending 交互帧（Pan PointerUp 前不丢最后一段位移）。 */
+  const flushPendingInteractionFrame = () => {
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    const pending = pendingRef.current;
+    pendingRef.current = null;
+    if (!pending) return;
+    if (pending.viewport) {
+      viewportRef.current = pending.viewport;
+      setViewport(pending.viewport);
+    }
+    if (pending.preview !== undefined) setDragPreview(pending.preview);
   };
 
   const beginDrag = (
@@ -455,6 +514,8 @@ export function FloorCanvas({
       selection: nextSelection,
       startClientX: event.clientX,
       startClientY: event.clientY,
+      lastClientX: event.clientX,
+      lastClientY: event.clientY,
       startX: object.x,
       startY: object.y,
       pixelsPerWorldX: SVG_WIDTH / content.width / effectiveScale,
@@ -472,6 +533,8 @@ export function FloorCanvas({
   const finishDrag = (event: React.PointerEvent<SVGSVGElement>) => {
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
+    // PRD 18：先取消遗留的 Preview RAF，再用 PointerUp 坐标计算最终值，避免松手后旧帧回弹。
+    cancelPendingInteractionFrame();
     const moved = dragPosition(event, drag);
     const movingSlab = drag.selection.kind === "slab"
       ? state.slabs.find((slab) => slab.id === drag.selection.id)
@@ -498,10 +561,37 @@ export function FloorCanvas({
   const cancelDrag = (event: React.PointerEvent<SVGSVGElement>) => {
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
+    // PRD 19：取消未执行的 Preview RAF，禁止过期帧恢复 Ghost。
+    cancelPendingInteractionFrame();
     dragRef.current = null;
     setDragPreview(null);
     onDragStateChange?.(false);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  };
+
+  /** PRD 27-35：触摸双指手势优先于单板拖动——取消未提交的拖动预览并升级为 Pinch。 */
+  const upgradeTouchDragToGesture = (event: React.PointerEvent<SVGElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId === event.pointerId) return;
+    // 不调用 onMove、不写 FloorPlan、不产生 History（PRD 42/46）。
+    dragRef.current = null;
+    cancelPendingInteractionFrame();
+    setDragPreview(null);
+    onDragStateChange?.(false);
+    try {
+      svgRef.current?.setPointerCapture(event.pointerId);
+    } catch {
+      // 忽略捕获失败。
+    }
+    const effectiveScale = transformRef.current.scale * viewportRef.current.zoom;
+    gestureRef.current = addFloorCanvasGesturePointer(
+      createFloorCanvasGesture(viewportRef.current, effectiveScale, drag.pointerId, drag.lastClientX, drag.lastClientY),
+      viewportRef.current,
+      effectiveScale,
+      event.pointerId,
+      event.clientX,
+      event.clientY,
+    );
   };
 
   const beginPan = (event: React.PointerEvent<SVGSVGElement>) => {
@@ -525,6 +615,7 @@ export function FloorCanvas({
     const rect = svgRef.current?.getBoundingClientRect();
     if (!rect || rect.width <= 0 || rect.height <= 0) return;
     const content = svgContentRect(rect);
+    const previous = viewportRef.current;
     const result = updateFloorCanvasGesture(
       gesture,
       event.pointerId,
@@ -541,22 +632,37 @@ export function FloorCanvas({
         plotCenterY: PLOT_CENTER_Y,
         effectiveScale: transformRef.current.scale * viewportRef.current.zoom,
       },
-      viewportRef.current,
+      previous,
     );
     if (!result) return;
     gestureRef.current = result.gesture;
-    if (result.viewport !== viewportRef.current) scheduleFrame({ viewport: result.viewport });
+    // PRD 9/107：立即同步最新 Viewport ref 再 RAF 渲染，高频 PointerMove 不丢增量。
+    if (result.viewport !== previous) commitInteractionViewport(result.viewport);
   };
 
-  const endPan = (event: React.PointerEvent<SVGSVGElement>) => {
+  const finishPan = (event: React.PointerEvent<SVGSVGElement>) => {
     const gesture = gestureRef.current;
     if (!gesture || !gesture.pointers.has(event.pointerId)) return;
+    // PRD 20-22：PointerUp 前 flush 最后一帧 pending Viewport，不丢最后一段位移。
+    flushPendingInteractionFrame();
     const remaining = removeFloorCanvasGesturePointer(gesture, event.pointerId);
     gestureRef.current = remaining;
     if (!remaining && !gesture.moved) {
       setSelectedPieceId(null);
       onSelect(null);
     }
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  const cancelPan = (event: React.PointerEvent<SVGSVGElement>) => {
+    const gesture = gestureRef.current;
+    if (!gesture || !gesture.pointers.has(event.pointerId)) return;
+    // PRD 23/80：Cancel 停止未来 pending 更新，保留已正式渲染的 Viewport。
+    cancelPendingInteractionFrame();
+    const remaining = removeFloorCanvasGesturePointer(gesture, event.pointerId);
+    gestureRef.current = remaining;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
@@ -608,11 +714,11 @@ export function FloorCanvas({
           zoomPercent={viewport.zoom * 100}
           onZoomIn={() => {
             const current = viewportRef.current;
-            setViewport(zoomViewportAt(current, 1.25, current.centerX, current.centerY));
+            applyViewportImmediate(zoomViewportAt(current, 1.25, current.centerX, current.centerY));
           }}
           onZoomOut={() => {
             const current = viewportRef.current;
-            setViewport(zoomViewportAt(current, 1 / 1.25, current.centerX, current.centerY));
+            applyViewportImmediate(zoomViewportAt(current, 1 / 1.25, current.centerX, current.centerY));
           }}
           fullscreen={fullscreen}
           onToggleFullscreen={onToggleFullscreen ?? (() => undefined)}
@@ -634,7 +740,11 @@ export function FloorCanvas({
           data-viewport-center-x={viewport.centerX}
           data-viewport-center-y={viewport.centerY}
           onPointerDown={(event) => {
-            if (dragRef.current) return;
+            if (dragRef.current) {
+              // 第二根手指落在画布：touch 拖动升级为双指 Pinch（PRD 27-35）。
+              if (event.pointerType === "touch") upgradeTouchDragToGesture(event);
+              return;
+            }
             const target = event.target as Element;
             const isBackground = target === event.currentTarget || target.getAttribute("data-floor-canvas-background") === "true";
             if (!isBackground) return;
@@ -643,6 +753,8 @@ export function FloorCanvas({
           onPointerMove={(event) => {
             const drag = dragRef.current;
             if (drag && drag.pointerId === event.pointerId) {
+              drag.lastClientX = event.clientX;
+              drag.lastClientY = event.clientY;
               const moved = dragPosition(event, drag);
               scheduleFrame({ preview: { objectId: drag.selection.id, x: moved.x, y: moved.y } });
               return;
@@ -651,16 +763,16 @@ export function FloorCanvas({
           }}
           onPointerUp={(event) => {
             if (dragRef.current?.pointerId === event.pointerId) { finishDrag(event); return; }
-            endPan(event);
+            finishPan(event);
           }}
           onPointerCancel={(event) => {
             if (dragRef.current?.pointerId === event.pointerId) { cancelDrag(event); return; }
-            endPan(event);
+            cancelPan(event);
           }}
           onDoubleClick={(event) => {
             if (event.target !== event.currentTarget) return;
             setFitMode("floor");
-            setViewport(viewportForBounds(calculateFloorCanvasBounds(state, "floor")));
+            applyViewportImmediate(viewportForBounds(calculateFloorCanvasBounds(state, "floor")));
           }}
         >
         <defs>
@@ -707,12 +819,18 @@ export function FloorCanvas({
                 onPointerDown={(event) => {
                   if (editMode === "dock") { event.stopPropagation(); onDockPick?.(slab.id); return; }
                   if (editMode === "multi") { event.stopPropagation(); onMultiToggle?.(slab.id); return; }
+                  // PRD 27-35/44：两指手势优先于单板拖动（仅 touch；鼠标/触控笔立即Drag）。
+                  if (event.pointerType === "touch" && dragRef.current && dragRef.current.pointerId !== event.pointerId) {
+                    event.stopPropagation();
+                    upgradeTouchDragToGesture(event);
+                    return;
+                  }
                   beginDrag(event, { kind: "slab", id: slab.id }, slab);
                 }}
                 onDoubleClick={(event) => {
                   event.stopPropagation();
                   if (editMode !== "move") return;
-                  setViewport(viewportForBounds(expandViewportBounds({
+                  applyViewportImmediate(viewportForBounds(expandViewportBounds({
                     minX: slab.x,
                     minY: slab.y,
                     maxX: slab.x + slab.width,
@@ -730,7 +848,14 @@ export function FloorCanvas({
               width={Math.max(opening.width * effectiveScale, 1)} height={Math.max(opening.height * effectiveScale, 1)}
               fill="url(#opening-hatch-v22)" stroke="transparent" className="cursor-move touch-none"
               role="button" aria-label={`选择洞口 ${opening.name}`} tabIndex={0}
-              onPointerDown={(event) => beginDrag(event, { kind: "opening", id: opening.id }, opening)}
+              onPointerDown={(event) => {
+                if (event.pointerType === "touch" && dragRef.current && dragRef.current.pointerId !== event.pointerId) {
+                  event.stopPropagation();
+                  upgradeTouchDragToGesture(event);
+                  return;
+                }
+                beginDrag(event, { kind: "opening", id: opening.id }, opening);
+              }}
               onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { setSelectedPieceId(null); onSelect({ kind: "opening", id: opening.id }); } }}
             />
           ))}
@@ -889,7 +1014,7 @@ export function FloorCanvas({
               stroke="transparent" strokeWidth={coarsePointer ? 34 : 22} pointerEvents="stroke" className="cursor-pointer"
               data-atomic-boundary-id={segment.id} data-boundary-support={segment.support} data-boundary-kind={segment.geometryKind} data-atomic-hit-width={coarsePointer ? 34 : 22}
               role="button" tabIndex={0} aria-label={`编辑${segment.geometryKind === "shared-slab" ? "共享板边" : segment.geometryKind === "opening-edge" ? "洞口边" : "建筑外边"} ${segment.id}`}
-              onPointerDown={(event) => { event.stopPropagation(); setSelectedPieceId(null); onSelectBoundary(segment); }}
+              onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); setSelectedPieceId(null); onSelectBoundary(segment); }}
               onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { setSelectedPieceId(null); onSelectBoundary(segment); } }}
             />
           ))}

@@ -102,6 +102,22 @@ describe("floor-canvas-gesture 手势生命周期（PRD 67）", () => {
     expect(removeFloorCanvasGesturePointer(remaining, 1)).toBeNull();
   });
 
+  it("Pinch后抬起一指，剩余手指首次移动不跳变（PRD 75-77）", () => {
+    const gesture = addFloorCanvasGesturePointer(
+      createFloorCanvasGesture(VIEWPORT, 1, 1, 200, 200),
+      VIEWPORT, 1, 2, 300, 200,
+    )!;
+    // 先产生一次Pinch移动（距离减半 → zoom 0.5）。
+    const pinched = updateFloorCanvasGesture(gesture, 1, 250, 200, CONTEXT, VIEWPORT)!;
+    expect(pinched.viewport.zoom).toBeCloseTo(0.5);
+    const remaining = removeFloorCanvasGesturePointer(pinched.gesture, 2)!;
+    // 剩余手指在当前zoom(0.5)下移动10px：位移=10px/(0.5)=20 world，无跳变。
+    const zoomedContext = { ...CONTEXT, effectiveScale: 0.5 };
+    const panned = updateFloorCanvasGesture(remaining, 1, 260, 200, zoomedContext, pinched.viewport)!;
+    expect(panned.viewport.zoom).toBeCloseTo(0.5);
+    expect(panned.viewport.centerX - pinched.viewport.centerX).toBeCloseTo(-20);
+  });
+
   it("单指增量Pan无累积漂移：20px+20px = 40px 而不是 60px（PRD 68）", () => {
     const gesture = createFloorCanvasGesture(VIEWPORT, 1, 1, 100, 100);
     const first = updateFloorCanvasGesture(gesture, 1, 120, 100, CONTEXT, VIEWPORT)!;

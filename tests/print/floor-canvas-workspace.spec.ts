@@ -107,6 +107,9 @@ test("拖动只在松手提交一次正式坐标，Undo一步直接回到起点"
   await expect(page.getByLabel("西南角 X")).toHaveValue("0");
   await svg.dispatchEvent("pointerup", { pointerId: 51, pointerType: "mouse", isPrimary: true, buttons: 0, clientX: startX + 120, clientY: startY, bubbles: true });
   await expect(page.locator("[data-drag-preview]")).toHaveCount(0);
+  // PRD 72-3：PointerUp 后旧 RAF 不得回弹 Preview。
+  await page.waitForTimeout(150);
+  await expect(page.locator("[data-drag-preview]")).toHaveCount(0);
   await expect.poll(async () => {
     const slabs = await savedSlabs(page);
     return slabs[0]?.x ?? 0;
@@ -430,6 +433,185 @@ test("平板工具栏主要按钮触摸尺寸≥44px（PRD 80）", async ({ page
   const box = await page.getByRole("button", { name: "移动" }).boundingBox();
   expect(box).not.toBeNull();
   expect(box!.height).toBeGreaterThanOrEqual(44);
+});
+
+test("高频PointerMove连续5次Pan不丢增量（PRD 72）", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/calculator/floor");
+  await page.evaluate(({ draftKey, roleKey }) => {
+    localStorage.removeItem(draftKey);
+    localStorage.removeItem(roleKey);
+  }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
+  await page.reload();
+
+  const svg = page.locator("svg[data-floor-canvas-fit]");
+  const box = await svg.boundingBox();
+  expect(box).not.toBeNull();
+  const cx = box!.x + 30;
+  const cy = box!.y + 30;
+  const readCenter = () => svg.getAttribute("data-viewport-center-x").then(Number);
+  const start = await readCenter();
+  // 同一帧内连续5次+20px，不等待RAF（模拟高频Pointer事件）。
+  await svg.dispatchEvent("pointerdown", { pointerId: 85, pointerType: "touch", isPrimary: true, buttons: 1, clientX: cx, clientY: cy, bubbles: true });
+  for (const step of [1, 2, 3, 4, 5]) {
+    await svg.dispatchEvent("pointermove", { pointerId: 85, pointerType: "touch", buttons: 1, clientX: cx + step * 20, clientY: cy, bubbles: true });
+  }
+  await expect.poll(async () => await readCenter()).not.toBe(start);
+  const afterBurst = await readCenter();
+  await svg.dispatchEvent("pointerup", { pointerId: 85, pointerType: "touch", buttons: 0, clientX: cx + 100, clientY: cy, bubbles: true });
+  // 对照：单次+100px，位移应与连续5次完全一致。
+  await svg.dispatchEvent("pointerdown", { pointerId: 86, pointerType: "touch", isPrimary: true, buttons: 1, clientX: cx, clientY: cy, bubbles: true });
+  await svg.dispatchEvent("pointermove", { pointerId: 86, pointerType: "touch", buttons: 1, clientX: cx + 100, clientY: cy, bubbles: true });
+  await expect.poll(async () => await readCenter()).not.toBe(afterBurst);
+  const afterSingle = await readCenter();
+  await svg.dispatchEvent("pointerup", { pointerId: 86, pointerType: "touch", buttons: 0, clientX: cx + 100, clientY: cy, bubbles: true });
+  const deltaBurst = start - afterBurst;
+  const deltaSingle = afterBurst - afterSingle;
+  expect(deltaBurst).toBeGreaterThan(0);
+  expect(deltaBurst).toBeCloseTo(deltaSingle, 5);
+  await page.waitForTimeout(400);
+  const slabs = await savedSlabs(page);
+  expect(slabs[0]).toMatchObject({ x: 0, y: 0 });
+});
+
+test("PointerCancel不恢复过期Drag Preview（PRD 72-3/89）", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/calculator/floor");
+  await page.evaluate(({ draftKey, roleKey }) => {
+    localStorage.removeItem(draftKey);
+    localStorage.removeItem(roleKey);
+  }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
+  await page.reload();
+
+  const slab = page.locator('[data-floor-layer="slabs"] rect[aria-label="选择板区 板区A"]');
+  const svg = page.locator("svg[data-floor-canvas-fit]");
+  const box = await slab.boundingBox();
+  expect(box).not.toBeNull();
+  const startX = box!.x + box!.width / 2;
+  const startY = box!.y + box!.height / 2;
+  await slab.dispatchEvent("pointerdown", { pointerId: 87, pointerType: "touch", isPrimary: true, buttons: 1, clientX: startX, clientY: startY, bubbles: true });
+  await svg.dispatchEvent("pointermove", { pointerId: 87, pointerType: "touch", buttons: 1, clientX: startX + 80, clientY: startY + 20, bubbles: true });
+  await expect(page.locator("[data-drag-preview]")).toHaveCount(1);
+  await svg.dispatchEvent("pointercancel", { pointerId: 87, pointerType: "touch", buttons: 0, clientX: startX + 80, clientY: startY + 20, bubbles: true });
+  await expect(page.locator("[data-drag-preview]")).toHaveCount(0);
+  // 等待两帧后仍不得出现旧RAF回弹的Ghost。
+  await page.waitForTimeout(150);
+  await expect(page.locator("[data-drag-preview]")).toHaveCount(0);
+  await page.waitForTimeout(400);
+  const slabs = await savedSlabs(page);
+  expect(slabs[0]).toMatchObject({ x: 0, y: 0 });
+});
+
+test("Slab上双指Pinch：第一指落板区、第二指落空白，升级为缩放且不移动板区（PRD 43）", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/calculator/floor");
+  await page.evaluate(({ draftKey, roleKey }) => {
+    localStorage.removeItem(draftKey);
+    localStorage.removeItem(roleKey);
+  }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
+  await page.reload();
+
+  const slabA = page.locator('rect[aria-label="选择板区 板区A"]');
+  const svg = page.locator("svg[data-floor-canvas-fit]");
+  const boxA = await slabA.boundingBox();
+  const boxS = await svg.boundingBox();
+  expect(boxA).not.toBeNull();
+  expect(boxS).not.toBeNull();
+  const percent = page.getByTestId("canvas-zoom-percent");
+  await expect(percent).toHaveText("100%");
+  // finger1 落板区（touch）→ 进入拖动预览；finger2 落空白 → 升级为 Pinch。
+  await slabA.dispatchEvent("pointerdown", { pointerId: 91, pointerType: "touch", isPrimary: true, buttons: 1, clientX: boxA!.x + boxA!.width / 2, clientY: boxA!.y + boxA!.height / 2, bubbles: true });
+  await svg.dispatchEvent("pointerdown", { pointerId: 92, pointerType: "touch", isPrimary: false, buttons: 1, clientX: boxS!.x + 30, clientY: boxS!.y + 30, bubbles: true });
+  await expect(page.locator("[data-drag-preview]")).toHaveCount(0);
+  // 双指拉开。
+  await svg.dispatchEvent("pointermove", { pointerId: 91, pointerType: "touch", buttons: 1, clientX: boxA!.x - 60, clientY: boxA!.y + boxA!.height / 2, bubbles: true });
+  await svg.dispatchEvent("pointermove", { pointerId: 92, pointerType: "touch", buttons: 1, clientX: boxS!.x + 90, clientY: boxS!.y + 30, bubbles: true });
+  await expect(percent).not.toHaveText("100%");
+  await svg.dispatchEvent("pointerup", { pointerId: 91, pointerType: "touch", buttons: 0, clientX: boxA!.x - 60, clientY: boxA!.y + boxA!.height / 2, bubbles: true });
+  await svg.dispatchEvent("pointerup", { pointerId: 92, pointerType: "touch", buttons: 0, clientX: boxS!.x + 90, clientY: boxS!.y + 30, bubbles: true });
+  await page.waitForTimeout(400);
+  // 板区完全不变，且被取消的拖动不产生任何History（PRD 46）。
+  const slabs = await savedSlabs(page);
+  expect(slabs[0]).toMatchObject({ x: 0, y: 0 });
+  await expect(page.getByRole("button", { name: "撤销" })).toBeDisabled();
+});
+
+test("两指都落在Slab区域也升级Pinch（PRD 44）", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/calculator/floor");
+  await page.evaluate(({ draftKey, roleKey }) => {
+    localStorage.setItem(draftKey, JSON.stringify({
+      schemaVersion: 2,
+      savedAt: new Date().toISOString(),
+      state: {
+        coordinateModel: "net-layout-v1",
+        slabs: [
+          { id: "a", name: "板区A", type: "room", x: 0, y: 0, width: 2000, height: 2000 },
+          { id: "b", name: "板区B", type: "room", x: 3000, y: 0, width: 2000, height: 2000 },
+        ],
+        openings: [],
+        supportRules: [],
+        innerWallThickness: 240,
+        outerWallThickness: 370,
+        snapDistanceMm: 150,
+      },
+    }));
+    localStorage.removeItem(roleKey);
+    localStorage.setItem("floorInspectorCollapsed", "false");
+  }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
+  await page.reload();
+
+  const slabA = page.locator('rect[aria-label="选择板区 板区A"]');
+  const slabB = page.locator('rect[aria-label="选择板区 板区B"]');
+  const svg = page.locator("svg[data-floor-canvas-fit]");
+  const boxA = await slabA.boundingBox();
+  const boxB = await slabB.boundingBox();
+  expect(boxA).not.toBeNull();
+  expect(boxB).not.toBeNull();
+  const percent = page.getByTestId("canvas-zoom-percent");
+  await expect(percent).toHaveText("100%");
+  await slabA.dispatchEvent("pointerdown", { pointerId: 93, pointerType: "touch", isPrimary: true, buttons: 1, clientX: boxA!.x + boxA!.width / 2, clientY: boxA!.y + boxA!.height / 2, bubbles: true });
+  await slabB.dispatchEvent("pointerdown", { pointerId: 94, pointerType: "touch", isPrimary: false, buttons: 1, clientX: boxB!.x + boxB!.width / 2, clientY: boxB!.y + boxB!.height / 2, bubbles: true });
+  await expect(page.locator("[data-drag-preview]")).toHaveCount(0);
+  // 双指拉开。
+  await svg.dispatchEvent("pointermove", { pointerId: 93, pointerType: "touch", buttons: 1, clientX: boxA!.x - 60, clientY: boxA!.y + boxA!.height / 2, bubbles: true });
+  await svg.dispatchEvent("pointermove", { pointerId: 94, pointerType: "touch", buttons: 1, clientX: boxB!.x + boxB!.width + 40, clientY: boxB!.y + boxB!.height / 2, bubbles: true });
+  await expect(percent).not.toHaveText("100%");
+  await svg.dispatchEvent("pointerup", { pointerId: 93, pointerType: "touch", buttons: 0, clientX: boxA!.x - 60, clientY: boxA!.y + boxA!.height / 2, bubbles: true });
+  await svg.dispatchEvent("pointerup", { pointerId: 94, pointerType: "touch", buttons: 0, clientX: boxB!.x + boxB!.width + 40, clientY: boxB!.y + boxB!.height / 2, bubbles: true });
+  await page.waitForTimeout(400);
+  const slabs = await savedSlabs(page);
+  expect(slabs.find((slab) => slab.id === "a")).toMatchObject({ x: 0, y: 0 });
+  expect(slabs.find((slab) => slab.id === "b")).toMatchObject({ x: 3000, y: 0 });
+  await expect(page.getByRole("button", { name: "撤销" })).toBeDisabled();
+});
+
+test("Touch单指拖板仍正常且一次Undo恢复（PRD 45/74）", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/calculator/floor");
+  await page.evaluate(({ draftKey, roleKey }) => {
+    localStorage.removeItem(draftKey);
+    localStorage.removeItem(roleKey);
+  }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
+  await page.reload();
+
+  const slab = page.locator('[data-floor-layer="slabs"] rect[aria-label="选择板区 板区A"]');
+  const svg = page.locator("svg[data-floor-canvas-fit]");
+  const box = await slab.boundingBox();
+  expect(box).not.toBeNull();
+  const startX = box!.x + box!.width / 2;
+  const startY = box!.y + box!.height / 2;
+  await slab.dispatchEvent("pointerdown", { pointerId: 95, pointerType: "touch", isPrimary: true, buttons: 1, clientX: startX, clientY: startY, bubbles: true });
+  await svg.dispatchEvent("pointermove", { pointerId: 95, pointerType: "touch", buttons: 1, clientX: startX + 120, clientY: startY, bubbles: true });
+  await expect(page.locator("[data-drag-preview]")).toHaveCount(1);
+  await svg.dispatchEvent("pointerup", { pointerId: 95, pointerType: "touch", buttons: 0, clientX: startX + 120, clientY: startY, bubbles: true });
+  await expect.poll(async () => (await savedSlabs(page))[0]?.x ?? 0).toBeGreaterThan(0);
+  const movedX = (await savedSlabs(page))[0]?.x;
+  await page.getByRole("button", { name: "撤销" }).click();
+  await expect.poll(async () => (await savedSlabs(page))[0]?.x ?? 0).toBe(0);
+  await expect(page.getByRole("button", { name: "撤销" })).toBeDisabled();
+  await page.getByRole("button", { name: "重做" }).click();
+  await expect.poll(async () => (await savedSlabs(page))[0]?.x ?? 0).toBe(movedX);
 });
 
 test.describe("触摸设备", () => {
