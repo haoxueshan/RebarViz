@@ -8,13 +8,30 @@ import { FloorCanvas, type FloorSelection } from "@/components/calculator/floor/
 import { FloorCanvasCommandBar } from "@/components/calculator/floor/FloorCanvasCommandBar";
 import { FloorTopSettingsPanel } from "@/components/calculator/floor/FloorTopPanel";
 import { FloorIssueCenter } from "@/components/calculator/floor/FloorIssueCenter";
+import { FloorImportProjectDialog } from "@/components/calculator/floor/FloorImportProjectDialog";
 import { FloorNavigatorPalette } from "@/components/calculator/floor/FloorNavigatorPalette";
+import { FloorNewProjectDialog, type FloorNewProjectMode } from "@/components/calculator/floor/FloorNewProjectDialog";
+import { FloorProjectMenu } from "@/components/calculator/floor/FloorProjectMenu";
 import { FloorWorkspaceDrawer } from "@/components/calculator/floor/FloorWorkspaceDrawer";
 import { FloorWorkspaceInspector, type FloorWorkspaceInspectorTab } from "@/components/calculator/floor/FloorWorkspaceInspector";
 import { FloorWorkspaceNavigator, FLOOR_NAVIGATOR_SECTION_LABELS, type FloorNavigatorSection } from "@/components/calculator/floor/FloorWorkspaceNavigator";
 import { FloorWorkspaceShell } from "@/components/calculator/floor/FloorWorkspaceShell";
 import { FloorWorkspaceStatusBar } from "@/components/calculator/floor/FloorWorkspaceStatusBar";
 import { useFloorWorkspaceProfile } from "@/components/calculator/floor/useFloorWorkspaceProfile";
+import {
+  createBlankFloorPlanState,
+  createFloorProjectFile,
+  createFloorProjectMetaRecord,
+  FLOOR_DEFAULT_PROJECT_NAME,
+  FLOOR_PROJECT_FILE_MAX_BYTES,
+  FLOOR_PROJECT_META_KEY,
+  FLOOR_PROJECT_PARSE_ERROR_MESSAGES,
+  floorProjectFileName,
+  parseFloorProjectFile,
+  parseFloorProjectMetaRecord,
+  serializeFloorProjectFile,
+  type ParsedFloorProject,
+} from "@/lib/floor-project-file";
 import type {
   FloorWorkflowStage,
   FloorWorkflowStatus,
@@ -393,6 +410,12 @@ export default function FloorRebarCalculator() {
   const [bomFilter, setBomFilter] = useState<"all" | "bottom" | "top" | "through">("all");
   const [canvasZoomPercent, setCanvasZoomPercent] = useState(100);
   const [draftSavedAt, setDraftSavedAt] = useState<number | null>(null);
+  // UI V5+ 工程文件：工程名称、新建/导入 Dialog 与状态栏闪示。
+  const [projectName, setProjectName] = useState(FLOOR_DEFAULT_PROJECT_NAME);
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [importDialog, setImportDialog] = useState<{ open: boolean; fileName: string; project: ParsedFloorProject | null; errorMessage: string | null }>({ open: false, fileName: "", project: null, errorMessage: null });
+  const [statusFlash, setStatusFlash] = useState<string | null>(null);
+  const statusFlashTimerRef = useRef<number | null>(null);
   const [highlightedRoleDomainId, setHighlightedRoleDomainId] = useState<string | null>(null);
   const [canvasFocusRequest, setCanvasFocusRequest] = useState<{ id: number; mode: "floor" | "selection" | "domain" } | null>(null);
   const [editMode, setEditMode] = useState<"move" | "dock" | "multi">("move");
@@ -485,6 +508,9 @@ export default function FloorRebarCalculator() {
     if (window.innerWidth >= 640 && window.localStorage.getItem("floorWorkspaceInspectorOpen") === "true") setInspectorOpen(true);
     // UI V5：Wide（≥1600px）首访默认 Inspector Dock 展开。
     if (window.innerWidth >= 1600 && window.localStorage.getItem("floorWorkspaceInspectorOpen") === null) setInspectorOpen(true);
+    // UI V5+ 工程名称：独立 project-meta 存储。
+    const projectMeta = parseFloorProjectMetaRecord(JSON.parse(window.localStorage.getItem(FLOOR_PROJECT_META_KEY) ?? "null"));
+    if (projectMeta) setProjectName(projectMeta.projectName);
   }, []);
 
   const toleranceResult = useMemo(() => resolveFloorGeometryTolerance(state), [state]);
@@ -943,6 +969,137 @@ export default function FloorRebarCalculator() {
     setCanvasFocusRequest({ id: Date.now(), mode });
   };
 
+  // —— UI V5+ 工程文件：统一数据应用入口（新建与导入共用，防 Autosave Race） ——
+  const persistFloorProjectSnapshot = (plan: FloorPlanState, bottom: FloorBottomState, top: FloorTopState, role: FloorRebarRoleState, bottomReview: boolean, topReview: boolean, name: string) => {
+    const savedAt = new Date().toISOString();
+    window.localStorage.setItem(FLOOR_DRAFT_KEY, JSON.stringify(createFloorDraftRecord(plan, savedAt)));
+    window.localStorage.setItem(FLOOR_BOTTOM_STORAGE_KEY, JSON.stringify(createFloorBottomStoredRecord(bottom, savedAt, bottomReview)));
+    window.localStorage.setItem(FLOOR_TOP_STORAGE_KEY, JSON.stringify(createFloorTopStoredRecord(top, savedAt, topReview)));
+    window.localStorage.setItem(FLOOR_REBAR_ROLE_STORAGE_KEY, JSON.stringify(createFloorRebarRoleStoredRecord(role, savedAt)));
+    window.localStorage.setItem(FLOOR_PROJECT_META_KEY, JSON.stringify(createFloorProjectMetaRecord(name)));
+  };
+
+  const flashStatus = (message: string) => {
+    setStatusFlash(message);
+    if (statusFlashTimerRef.current !== null) window.clearTimeout(statusFlashTimerRef.current);
+    statusFlashTimerRef.current = window.setTimeout(() => setStatusFlash(null), 4000);
+  };
+
+  const applyFloorProject = (imported: ParsedFloorProject, name: string, flash: string) => {
+    persistFloorProjectSnapshot(
+      imported.planState,
+      imported.bottomState,
+      imported.topState,
+      imported.roleState,
+      imported.bottomRoleReviewRequired,
+      imported.topRoleReviewRequired,
+      name,
+    );
+    setState(imported.planState);
+    setBottomState(imported.bottomState);
+    setTopState(imported.topState);
+    setRoleState(imported.roleState);
+    setBottomRoleReviewRequired(imported.bottomRoleReviewRequired);
+    setTopRoleReviewRequired(imported.topRoleReviewRequired);
+    setProjectName(name);
+    setHistory(createFloorHistory(imported.planState));
+    const firstSlab = imported.planState.slabs[0];
+    const firstOpening = imported.planState.openings[0];
+    setSelection(firstSlab ? { kind: "slab", id: firstSlab.id } : firstOpening ? { kind: "opening", id: firstOpening.id } : null);
+    setStage("plan");
+    setSelectedBoundaryId(null);
+    setSelectedThroughPathId(null);
+    setHighlightedRoleDomainId(null);
+    setInvalidDrafts(new Set());
+    setInvalidBottomDrafts(new Set());
+    setInvalidTopDrafts(new Set());
+    setMultiSelection(new Set());
+    setMultiAlignKind(null);
+    setDockSourceId(null);
+    setDockTargetId(null);
+    setDockHoverDirection(null);
+    setDockPinned(false);
+    setDockAlignment("preserve");
+    changeEditMode("move");
+    setNavigatorSection(null);
+    setNavigatorOpen(false);
+    setIssueCenterOpen(false);
+    setIssueStageFilter(null);
+    setInspectorOpen(false);
+    setBomFilter("all");
+    setActiveInspectorTab("object");
+    requestCanvasFocus("floor");
+    flashStatus(flash);
+  };
+
+  const handleNewFloorProject = (name: string, mode: FloorNewProjectMode) => {
+    const plan = mode === "blank" ? createBlankFloorPlanState() : structuredClone(DEFAULT_FLOOR_PLAN_STATE);
+    setNewProjectOpen(false);
+    applyFloorProject(
+      {
+        projectName: name,
+        planState: plan,
+        bottomState: cloneDefaultBottomState(),
+        topState: cloneDefaultTopState(),
+        roleState: cloneDefaultRoleState(),
+        bottomRoleReviewRequired: false,
+        topRoleReviewRequired: false,
+        legacy: false,
+      },
+      name,
+      `✓ 已新建：${name}`,
+    );
+  };
+
+  const handleExportFloorProject = () => {
+    const project = createFloorProjectFile({
+      projectName,
+      plan: state,
+      bottom: bottomState,
+      top: topState,
+      role: roleState,
+      bottomRoleReviewRequired,
+      topRoleReviewRequired,
+    });
+    const blob = new Blob([serializeFloorProjectFile(project)], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = floorProjectFileName(projectName);
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    flashStatus("✓ 楼板数据已导出");
+  };
+
+  const handleImportFile = async (file: File) => {
+    if (file.size > FLOOR_PROJECT_FILE_MAX_BYTES) {
+      setImportDialog({ open: true, fileName: file.name, project: null, errorMessage: "文件过大，无法导入。" });
+      return;
+    }
+    let text: string;
+    try {
+      text = await file.text();
+    } catch {
+      setImportDialog({ open: true, fileName: file.name, project: null, errorMessage: "无法读取文件：读取失败。" });
+      return;
+    }
+    const result = parseFloorProjectFile(text);
+    if (!result.ok) {
+      setImportDialog({ open: true, fileName: file.name, project: null, errorMessage: FLOOR_PROJECT_PARSE_ERROR_MESSAGES[result.error] });
+      return;
+    }
+    setImportDialog({ open: true, fileName: file.name, project: result.project, errorMessage: null });
+  };
+
+  const confirmImportProject = () => {
+    if (!importDialog.project) return;
+    const imported = importDialog.project;
+    setImportDialog({ open: false, fileName: "", project: null, errorMessage: null });
+    applyFloorProject(imported, imported.projectName, `✓ 已导入：${imported.projectName}`);
+  };
+
   const handleDockPick = (slabId: string) => {
     setDockPinned(false);
     if (!dockSourceId) {
@@ -1359,16 +1516,26 @@ export default function FloorRebarCalculator() {
   const paletteTitle = navigatorSection ? FLOOR_NAVIGATOR_SECTION_LABELS[navigatorSection] : stage === "plan" ? "对象浏览器" : stage === "bottom" ? "地筋对象" : "面筋对象";
   const filteredIssueCenterItems = issueStageFilter && issueStageFilter !== "bom" ? workspaceIssues.filter((issue) => issue.stage === issueStageFilter) : workspaceIssues;
 
-  const workflow = <WorkflowTabs stage={stage} statuses={workflowStatuses} issueCounts={workflowIssueCounts} onChange={changeStage} onOpenIssues={(nextStage) => openIssueCenter(nextStage)} />;
-  const statusBar = <FloorWorkspaceStatusBar stage={stage} mode={commandModeLabel} selectionLabel={currentSelectionLabel} detail={statusDetail} issueCount={currentStageIssueCount} zoomPercent={canvasZoomPercent} saved={draftSavedAt !== null} bottom={bottomCalculation} top={topCalculation} onOpenIssues={() => openIssueCenter(stage)} onOpenBom={() => { setBomFilter(stage === "top" ? "top" : "bottom"); changeStage("bom"); }} />;
+  const workflow = (
+    <div className="flex items-stretch bg-white" data-testid="floor-workflow-row">
+      <div className="min-w-0 flex-1"><WorkflowTabs stage={stage} statuses={workflowStatuses} issueCounts={workflowIssueCounts} onChange={changeStage} onOpenIssues={(nextStage) => openIssueCenter(nextStage)} /></div>
+      {!touchInput && profile.viewport !== "phone" && <FloorProjectMenu projectName={projectName} onAction={(action) => { if (action === "new") setNewProjectOpen(true); else if (action === "export") handleExportFloorProject(); }} onImportFile={handleImportFile} />}
+    </div>
+  );
+  const statusBar = <FloorWorkspaceStatusBar stage={stage} mode={commandModeLabel} selectionLabel={currentSelectionLabel} detail={statusDetail} issueCount={currentStageIssueCount} zoomPercent={canvasZoomPercent} saved={draftSavedAt !== null} flash={statusFlash} bottom={bottomCalculation} top={topCalculation} onOpenIssues={() => openIssueCenter(stage)} onOpenBom={() => { setBomFilter(stage === "top" ? "top" : "bottom"); changeStage("bom"); }} />;
 
   const workspaceBody = stage === "bom" ? (
     <div className="h-full overflow-y-auto bg-slate-100 p-3 sm:p-4" data-testid="floor-bom-workspace">
-      <FloorBomPanel plan={state} bottom={bottomCalculation} top={topCalculation} bottomRoleReviewRequired={bottomRoleReviewRequired} topRoleReviewRequired={topRoleReviewRequired} invalidDraftCount={invalidDrafts.size + invalidBottomDrafts.size + invalidTopDrafts.size} initialFilter={bomFilter} />
+      {state.slabs.length === 0 ? (
+        <div className="mx-auto max-w-md rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center" data-testid="floor-bom-empty"><p className="font-bold text-slate-900">尚未创建板区</p><p className="mt-1 text-xs text-slate-500">料单根据板区、地筋与面筋设置生成，请先创建板区。</p></div>
+      ) : (
+        <FloorBomPanel plan={state} bottom={bottomCalculation} top={topCalculation} bottomRoleReviewRequired={bottomRoleReviewRequired} topRoleReviewRequired={topRoleReviewRequired} invalidDraftCount={invalidDrafts.size + invalidBottomDrafts.size + invalidTopDrafts.size} initialFilter={bomFilter} />
+      )}
     </div>
   ) : (
     <div className="flex h-full min-h-0 flex-col">
       {!workspaceFullscreen && <div className={`flex items-center gap-2 border-b border-slate-200 bg-white p-2 ${touchInput ? "" : "xl:hidden"}`}>
+        {profile.viewport === "phone" && <FloorProjectMenu compact projectName={projectName} onAction={(action) => { if (action === "new") setNewProjectOpen(true); else if (action === "export") handleExportFloorProject(); }} onImportFile={handleImportFile} />}
         <button type="button" onClick={() => openNavigatorOverlay(null)} className="inline-flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-left text-sm font-semibold text-slate-800"><Menu size={17} /><span className="min-w-0 flex-1 truncate">当前：{currentSelectionLabel}</span><ChevronRight size={16} /></button>
         <button type="button" aria-expanded={inspectorOpen} onClick={() => { if (inspectorOpen) closeInspector(); else openInspector(); }} className={`inline-flex min-h-11 items-center gap-2 rounded-lg px-4 text-sm font-semibold ${inspectorOpen ? "border border-slate-300 bg-white text-slate-700" : "bg-blue-600 text-white"}`}><Settings2 size={17} />{profile.viewport === "phone" ? "编辑" : inspectorOpen ? "收起编辑" : "展开编辑"}</button>
       </div>}
@@ -1386,7 +1553,23 @@ export default function FloorRebarCalculator() {
           )}
         </aside>
         <section className={`${canvasColumnClass} flex min-h-0 flex-col`} data-testid="floor-canvas-column">
-          <div className="min-h-0 flex-1">{canvasElement}</div>
+          {/* UI V5+：空工程（0 板区）阶段提示，不制造 JS Exception。 */}
+          {!workspaceFullscreen && state.slabs.length === 0 && stage !== "plan" && (
+            <div className="mx-2 mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-center text-sm font-semibold text-amber-800" data-testid="floor-empty-stage-hint">请先创建板区，再设置{stage === "bottom" ? "地筋" : "面筋"}。</div>
+          )}
+          <div className="min-h-0 flex-1">
+            {state.slabs.length === 0 && state.openings.length === 0 && stage === "plan" && !workspaceFullscreen ? (
+              <div className="mx-2 flex h-[min(420px,58dvh)] flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-slate-300 bg-white" data-testid="floor-canvas-empty">
+                <div className="text-center">
+                  <p className="font-bold text-slate-900">尚未创建板区</p>
+                  <p className="mt-1 text-xs text-slate-500">添加第一个板区开始绘制楼板布局</p>
+                </div>
+                <button type="button" onClick={addSlab} className="inline-flex min-h-11 items-center gap-1.5 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white"><Grid2X2 size={15} />新增板区</button>
+              </div>
+            ) : (
+              canvasElement
+            )}
+          </div>
         </section>
 
         {!workspaceFullscreen && <FloorNavigatorPalette open={navigatorOpen && !useSheetNavigation} title={paletteTitle} onClose={closeNavigatorOverlay}>{overlayNavigator}</FloorNavigatorPalette>}
@@ -1420,6 +1603,8 @@ export default function FloorRebarCalculator() {
     <>
       <FloorWorkspaceShell workflow={workflow} body={workspaceBody} status={statusBar} fullscreen={workspaceFullscreen} />
       <FloorIssueCenter open={issueCenterOpen} issues={filteredIssueCenterItems} onClose={() => setIssueCenterOpen(false)} onLocate={locateWorkspaceIssue} />
+      <FloorNewProjectDialog open={newProjectOpen} currentProjectName={projectName} onCancel={() => setNewProjectOpen(false)} onConfirm={handleNewFloorProject} />
+      <FloorImportProjectDialog open={importDialog.open} fileName={importDialog.fileName} project={importDialog.project} errorMessage={importDialog.errorMessage} onCancel={() => setImportDialog({ open: false, fileName: "", project: null, errorMessage: null })} onConfirm={confirmImportProject} onExportCurrent={() => { handleExportFloorProject(); }} />
     </>
   );
 }

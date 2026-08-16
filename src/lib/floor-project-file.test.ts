@@ -1,0 +1,219 @@
+import { describe, expect, it } from "vitest";
+import { DEFAULT_FLOOR_BOTTOM_STATE, type FloorBottomState } from "./floor-bottom-calculator";
+import { DEFAULT_FLOOR_PLAN_STATE, type FloorPlanState } from "./floor-plan";
+import {
+  createBlankFloorPlanState,
+  createFloorProjectFile,
+  FLOOR_DEFAULT_PROJECT_NAME,
+  FLOOR_PROJECT_FILE_FORMAT,
+  FLOOR_PROJECT_FILE_SCHEMA_VERSION,
+  floorProjectFileName,
+  parseFloorProjectFile,
+  serializeFloorProjectFile,
+} from "./floor-project-file";
+import { buildFloorRebarRoleDomains, DEFAULT_FLOOR_REBAR_ROLE_STATE } from "./floor-rebar-role";
+import { DEFAULT_FLOOR_TOP_STATE, type FloorTopState } from "./floor-top-calculator";
+
+function buildRichPlan(): FloorPlanState {
+  return {
+    coordinateModel: "net-layout-v1",
+    slabs: [
+      { id: "s-keep-1", name: "一层客厅", type: "hall", x: 0, y: 0, width: 4200, height: 3600 },
+      { id: "s-keep-2", name: "一层卧室", type: "room", x: 4200, y: 0, width: 3600, height: 3600 },
+    ],
+    openings: [{ id: "o-keep-1", name: "楼梯间", type: "stair", x: 1200, y: 900, width: 900, height: 900 }],
+    supportRules: [
+      { id: "rule-keep-1", target: { kind: "slab-edge", slabId: "s-keep-1", side: "east", range: { mode: "offset", startMm: 0, endMm: 2000 } }, support: "continuous" },
+    ],
+    innerWallThickness: 200,
+    outerWallThickness: 300,
+    snapDistanceMm: 100,
+    overlapToleranceMm: 5,
+  };
+}
+
+function buildRichInputs() {
+  const plan = buildRichPlan();
+  const bottom: FloorBottomState = {
+    countMode: "floor",
+    defaults: { mainDiameter: 14, secondaryDiameter: 12, xSpacing: 180, ySpacing: 160 },
+    slabOverrides: {
+      "s-keep-1": { mainDiameter: 16, xSpacing: 150 },
+      "stale-slab": { secondaryDiameter: 8, ySpacing: 90 },
+    },
+  };
+  const top: FloorTopState = {
+    countMode: "project",
+    topAnchorExtra: 250,
+    defaults: { mainDiameter: 10, secondaryDiameter: 10, xSpacing: 300, ySpacing: 300, xExtraMode: "both", yExtraMode: "both" },
+    slabOverrides: {
+      "s-keep-2": { mainDiameter: 12, xSpacing: 260, xExtraMode: "end", yExtraMode: "start" },
+      "stale-slab": { secondaryDiameter: 8 },
+    },
+    throughPaths: [
+      { id: "tp-keep-1", name: "通墙01", direction: "x", slabIds: ["s-keep-1", "s-keep-2"], bandStartMm: 0, bandEndMm: 3600, enabled: true },
+      { id: "tp-stale", name: "失效通墙", direction: "x", slabIds: ["stale-slab"], bandStartMm: 0, bandEndMm: 1000, enabled: true },
+    ],
+  };
+  const role = {
+    mainDirectionOverrides: {
+      [buildFloorRebarRoleDomains(plan)[0].id]: "x" as const,
+      "role:stale-domain": "y" as const,
+    },
+  };
+  return { plan, bottom, top, role };
+}
+
+describe("Floor Project File 工程文件", () => {
+  it("完整 Round Trip：State → Export → JSON → Import → State", () => {
+    const { plan, bottom, top, role } = buildRichInputs();
+    const file = createFloorProjectFile({
+      projectName: "一层楼板",
+      plan, bottom, top, role,
+      bottomRoleReviewRequired: true,
+      topRoleReviewRequired: false,
+    });
+    expect(file.format).toBe(FLOOR_PROJECT_FILE_FORMAT);
+    expect(file.schemaVersion).toBe(FLOOR_PROJECT_FILE_SCHEMA_VERSION);
+    const text = serializeFloorProjectFile(file);
+    const result = parseFloorProjectFile(text);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.project.legacy).toBe(false);
+    expect(result.project.projectName).toBe("一层楼板");
+    expect(result.project.bottomRoleReviewRequired).toBe(true);
+    expect(result.project.topRoleReviewRequired).toBe(false);
+    // Plan 完全一致（ID 原样保留）。
+    expect(result.project.planState).toEqual(plan);
+    // Bottom Override 保留且失效项被清理。
+    expect(result.project.bottomState.slabOverrides).toEqual({ "s-keep-1": bottom.slabOverrides["s-keep-1"] });
+    // Top Override 保留且失效项被清理。
+    expect(result.project.topState.slabOverrides).toEqual({ "s-keep-2": top.slabOverrides["s-keep-2"] });
+    // Through Path 保留且失效路径被清理。
+    expect(result.project.topState.throughPaths.map((path) => path.id)).toEqual(["tp-keep-1"]);
+    // Role Override 保留且失效 Domain 被清理。
+    const expectedRoleKey = buildFloorRebarRoleDomains(plan)[0].id;
+    expect(result.project.roleState.mainDirectionOverrides).toEqual({ [expectedRoleKey]: "x" });
+  });
+
+  it("Slab ID 保留", () => {
+    const { plan, bottom, top, role } = buildRichInputs();
+    const file = createFloorProjectFile({ projectName: "测试", plan, bottom, top, role, bottomRoleReviewRequired: false, topRoleReviewRequired: false });
+    const result = parseFloorProjectFile(serializeFloorProjectFile(file));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.project.planState.slabs.map((slab) => slab.id)).toEqual(["s-keep-1", "s-keep-2"]);
+  });
+
+  it("Opening ID 与 Support Rule 保留", () => {
+    const { plan, bottom, top, role } = buildRichInputs();
+    const file = createFloorProjectFile({ projectName: "测试", plan, bottom, top, role, bottomRoleReviewRequired: false, topRoleReviewRequired: false });
+    const result = parseFloorProjectFile(serializeFloorProjectFile(file));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.project.planState.openings.map((opening) => opening.id)).toEqual(["o-keep-1"]);
+    expect(result.project.planState.supportRules.map((rule) => rule.id)).toEqual(["rule-keep-1"]);
+    expect(result.project.planState.supportRules[0]).toMatchObject({ support: "continuous", target: { slabId: "s-keep-1", side: "east" } });
+  });
+
+  it("roleReviewRequired 保留", () => {
+    const { plan, bottom, top, role } = buildRichInputs();
+    const file = createFloorProjectFile({ projectName: "测试", plan, bottom, top, role, bottomRoleReviewRequired: true, topRoleReviewRequired: true });
+    const result = parseFloorProjectFile(serializeFloorProjectFile(file));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.project.bottomRoleReviewRequired).toBe(true);
+    expect(result.project.topRoleReviewRequired).toBe(true);
+  });
+
+  it("非法 JSON 返回 not-json", () => {
+    const result = parseFloorProjectFile("{ not json !!!");
+    expect(result).toEqual({ ok: false, error: "not-json" });
+  });
+
+  it("错误 format 返回 not-floor-file", () => {
+    const result = parseFloorProjectFile(JSON.stringify({ format: "other-app", schemaVersion: 1, data: {} }));
+    expect(result).toEqual({ ok: false, error: "not-floor-file" });
+  });
+
+  it("未知 schemaVersion 返回 unsupported-schema", () => {
+    const { plan, bottom, top, role } = buildRichInputs();
+    const file = createFloorProjectFile({ projectName: "测试", plan, bottom, top, role, bottomRoleReviewRequired: false, topRoleReviewRequired: false });
+    const future = { ...file, schemaVersion: 99 };
+    const result = parseFloorProjectFile(JSON.stringify(future));
+    expect(result).toEqual({ ok: false, error: "unsupported-schema" });
+  });
+
+  it("缺少 Plan 返回 missing-plan", () => {
+    const result = parseFloorProjectFile(JSON.stringify({ format: FLOOR_PROJECT_FILE_FORMAT, schemaVersion: 1, data: { bottom: {}, top: {}, role: {} } }));
+    expect(result).toEqual({ ok: false, error: "missing-plan" });
+  });
+
+  it("数据损坏（Bottom 不可解析）返回 corrupted", () => {
+    const { plan, bottom, top, role } = buildRichInputs();
+    const file = createFloorProjectFile({ projectName: "测试", plan, bottom, top, role, bottomRoleReviewRequired: false, topRoleReviewRequired: false });
+    const broken = { ...file, data: { ...file.data, bottom: { schemaVersion: 99, state: {} } } };
+    const result = parseFloorProjectFile(JSON.stringify(broken));
+    expect(result).toEqual({ ok: false, error: "corrupted" });
+  });
+
+  it("失效 Bottom slabOverride 自动删除", () => {
+    const plan = buildRichPlan();
+    const bottom: FloorBottomState = {
+      ...DEFAULT_FLOOR_BOTTOM_STATE,
+      slabOverrides: { "stale-1": { mainDiameter: 20 }, "s-keep-1": { mainDiameter: 16 } },
+    };
+    const file = createFloorProjectFile({ projectName: "测试", plan, bottom, top: structuredClone(DEFAULT_FLOOR_TOP_STATE), role: structuredClone(DEFAULT_FLOOR_REBAR_ROLE_STATE), bottomRoleReviewRequired: false, topRoleReviewRequired: false });
+    expect(file.data.bottom.state.slabOverrides).toEqual({ "s-keep-1": { mainDiameter: 16 } });
+  });
+
+  it("失效 Top slabOverride 与 ThroughPath 自动删除", () => {
+    const plan = buildRichPlan();
+    const top: FloorTopState = {
+      ...DEFAULT_FLOOR_TOP_STATE,
+      slabOverrides: { "stale-2": { mainDiameter: 22 } },
+      throughPaths: [
+        { id: "tp-stale", name: "失效", direction: "x", slabIds: ["stale-2"], bandStartMm: 0, bandEndMm: 500, enabled: true },
+      ],
+    };
+    const file = createFloorProjectFile({ projectName: "测试", plan, bottom: structuredClone(DEFAULT_FLOOR_BOTTOM_STATE), top, role: structuredClone(DEFAULT_FLOOR_REBAR_ROLE_STATE), bottomRoleReviewRequired: false, topRoleReviewRequired: false });
+    expect(file.data.top.state.slabOverrides).toEqual({});
+    expect(file.data.top.state.throughPaths).toEqual([]);
+  });
+
+  it("失效 Role Override 自动删除", () => {
+    const plan = buildRichPlan();
+    const validKey = buildFloorRebarRoleDomains(plan)[0].id;
+    const role = { mainDirectionOverrides: { "role:stale-domain": "x", [validKey]: "y" } as const };
+    const file = createFloorProjectFile({ projectName: "测试", plan, bottom: structuredClone(DEFAULT_FLOOR_BOTTOM_STATE), top: structuredClone(DEFAULT_FLOOR_TOP_STATE), role: role as never, bottomRoleReviewRequired: false, topRoleReviewRequired: false });
+    expect(file.data.role.state.mainDirectionOverrides).toEqual({ [validKey]: "y" });
+  });
+
+  it("旧版仅楼层草稿文件：恢复 Plan，其余默认值且标记 legacy", () => {
+    const plan = buildRichPlan();
+    const result = parseFloorProjectFile(JSON.stringify(plan));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.project.legacy).toBe(true);
+    expect(result.project.planState.slabs.map((slab) => slab.id)).toEqual(["s-keep-1", "s-keep-2"]);
+    expect(result.project.bottomState).toEqual(DEFAULT_FLOOR_BOTTOM_STATE);
+    expect(result.project.topState).toEqual(DEFAULT_FLOOR_TOP_STATE);
+  });
+
+  it("createBlankFloorPlanState 生成真空白且保留默认工程参数", () => {
+    const blank = createBlankFloorPlanState();
+    expect(blank.slabs).toEqual([]);
+    expect(blank.openings).toEqual([]);
+    expect(blank.supportRules).toEqual([]);
+    expect(blank.innerWallThickness).toBe(DEFAULT_FLOOR_PLAN_STATE.innerWallThickness);
+    expect(blank.outerWallThickness).toBe(DEFAULT_FLOOR_PLAN_STATE.outerWallThickness);
+    expect(blank.snapDistanceMm).toBe(DEFAULT_FLOOR_PLAN_STATE.snapDistanceMm);
+    expect(blank.overlapToleranceMm).toBe(DEFAULT_FLOOR_PLAN_STATE.overlapToleranceMm);
+  });
+
+  it("文件名清理非法字符且包含日期", () => {
+    const name = floorProjectFileName("A栋/一层:楼板?", new Date("2026-08-16T10:00:00Z"));
+    expect(name).toBe("RebarViz_A栋_一层_楼板__2026-08-16.json");
+    expect(floorProjectFileName("", new Date("2026-08-16T10:00:00Z"))).toBe(`RebarViz_${FLOOR_DEFAULT_PROJECT_NAME}_2026-08-16.json`);
+  });
+});

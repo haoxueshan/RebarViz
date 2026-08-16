@@ -185,6 +185,7 @@ export function FloorWorkspaceNavigator({
         {showSlabs && (
           <div data-navigator-section="slabs">
             <SectionTitle count={filteredSlabs.length}>板区</SectionTitle>
+            {filteredSlabs.length === 0 && <p className="px-2 py-1 text-xs text-slate-400" data-testid="navigator-empty-slabs">暂无板区</p>}
             <div className="space-y-1">
               {filteredSlabs.map((slab) => {
                 const selected = selection?.kind === "slab" && selection.id === slab.id;

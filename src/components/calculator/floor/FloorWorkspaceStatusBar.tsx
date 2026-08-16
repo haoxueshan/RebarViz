@@ -18,6 +18,7 @@ export function FloorWorkspaceStatusBar({
   issueCount,
   zoomPercent,
   saved,
+  flash,
   bottom,
   top,
   onOpenIssues,
@@ -30,6 +31,8 @@ export function FloorWorkspaceStatusBar({
   issueCount: number;
   zoomPercent: number;
   saved: boolean;
+  /** UI V5+：工程操作后的短暂提示（如「✓ 已导出」），优先于「已保存」显示。 */
+  flash?: string | null;
   bottom: FloorBottomCalculation;
   top: FloorTopCalculation;
   onOpenIssues: () => void;
@@ -70,7 +73,8 @@ export function FloorWorkspaceStatusBar({
           <span className="inline-flex items-center gap-1 font-semibold text-emerald-700"><CheckCircle2 size={13} />正常</span>
         )}
         <span className="tabular-nums" data-testid="status-zoom">{Math.round(zoomPercent)}%</span>
-        {saved && <span className="hidden items-center gap-1 text-emerald-700 lg:inline-flex" data-testid="status-saved"><span className="size-1.5 rounded-full bg-emerald-500" />已保存</span>}
+        {flash && <span className="inline-flex items-center gap-1 text-emerald-700" data-testid="status-flash">{flash}</span>}
+        {!flash && saved && <span className="hidden items-center gap-1 text-emerald-700 lg:inline-flex" data-testid="status-saved"><span className="size-1.5 rounded-full bg-emerald-500" />已保存</span>}
       </div>
     </footer>
   );
