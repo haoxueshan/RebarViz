@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, ChevronLeft } from "lucide-react";
+import { AlertTriangle, ChevronLeft, X } from "lucide-react";
 import type { FloorInspectorTab } from "./floor-workspace-types";
 
 export type FloorWorkspaceInspectorTab = {
@@ -8,6 +8,10 @@ export type FloorWorkspaceInspectorTab = {
   label: string;
 };
 
+/**
+ * UI V5：单层 Inspector Header——关闭按钮内置，不再由外层额外渲染「属性面板 + 关闭」。
+ * Phone / Tablet / Desktop / Wide 共用这一套 Header。
+ */
 export function FloorWorkspaceInspector({
   title,
   subtitle,
@@ -17,6 +21,8 @@ export function FloorWorkspaceInspector({
   issueCount = 0,
   onTabChange,
   onBack,
+  onClose,
+  closeAriaLabel = "关闭参数面板",
   children,
 }: {
   title: string;
@@ -27,7 +33,10 @@ export function FloorWorkspaceInspector({
   issueCount?: number;
   onTabChange?: (tab: FloorInspectorTab) => void;
   onBack?: () => void;
+  /** UI V5：关闭按钮在 Inspector 内部 Header，不再由外层渲染。 */
+  onClose?: () => void;
+  closeAriaLabel?: string;
   children: React.ReactNode;
 }) {
-  return <div className="flex min-h-0 flex-col bg-white" data-testid="floor-workspace-inspector"><header className="border-b border-slate-200 px-4 py-3">{onBack && <button type="button" onClick={onBack} className="mb-2 inline-flex min-h-11 items-center gap-1 text-xs font-semibold text-blue-700"><ChevronLeft size={15} />返回当前板区</button>}<div className="flex items-start justify-between gap-3"><div className="min-w-0">{breadcrumb && <p className="mb-1 truncate text-[10px] font-semibold text-blue-700" data-testid="selection-breadcrumb">{breadcrumb}</p>}<p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">属性</p><h2 className="mt-0.5 truncate font-bold text-slate-950">{title}</h2>{subtitle && <p className="mt-1 text-xs leading-5 text-slate-500">{subtitle}</p>}</div>{issueCount > 0 && <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-rose-100 px-2.5 py-1 text-[11px] font-semibold text-rose-800"><AlertTriangle size={13} />{issueCount}个问题</span>}</div></header>{tabs.length > 0 && <div className="flex gap-1 overflow-x-auto border-b border-slate-200 px-2 py-1.5" role="tablist">{tabs.map((tab) => <button key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id} onClick={() => onTabChange?.(tab.id)} className={`min-h-10 shrink-0 rounded-lg px-3 text-xs font-semibold ${activeTab === tab.id ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-100"}`}>{tab.label}</button>)}</div>}<div className="min-h-0 flex-1 overflow-y-auto p-4">{children}</div></div>;
+  return <div className="flex min-h-0 flex-col bg-white" data-testid="floor-workspace-inspector"><header className="shrink-0 border-b border-slate-200 px-4 py-2.5">{onBack && <button type="button" onClick={onBack} className="mb-2 inline-flex min-h-11 items-center gap-1 text-xs font-semibold text-blue-700"><ChevronLeft size={15} />返回当前板区</button>}<div className="flex items-start justify-between gap-3"><div className="min-w-0 flex-1">{breadcrumb && <p className="mb-1 truncate text-[10px] font-semibold text-blue-700" data-testid="selection-breadcrumb">{breadcrumb}</p>}<h2 className="mt-0.5 truncate font-bold text-slate-950">{title}</h2>{subtitle && <p className="mt-1 text-xs leading-5 text-slate-500">{subtitle}</p>}</div><div className="flex shrink-0 items-center gap-2">{issueCount > 0 && <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2.5 py-1 text-[11px] font-semibold text-rose-800"><AlertTriangle size={13} />{issueCount}</span>}{onClose && <button type="button" onClick={onClose} aria-label={closeAriaLabel} className="flex size-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"><X size={17} /></button>}</div></div></header>{tabs.length > 0 && <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-slate-200 px-2 py-1.5" role="tablist">{tabs.map((tab) => <button key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id} onClick={() => onTabChange?.(tab.id)} className={`min-h-10 shrink-0 rounded-lg px-3 text-xs font-semibold ${activeTab === tab.id ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-100"}`}>{tab.label}</button>)}</div>}<div className="min-h-0 flex-1 overflow-y-auto p-4">{children}</div></div>;
 }

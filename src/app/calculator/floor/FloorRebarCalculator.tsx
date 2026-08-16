@@ -12,7 +12,6 @@ import { FloorNavigatorPalette } from "@/components/calculator/floor/FloorNaviga
 import { FloorWorkspaceDrawer } from "@/components/calculator/floor/FloorWorkspaceDrawer";
 import { FloorWorkspaceInspector, type FloorWorkspaceInspectorTab } from "@/components/calculator/floor/FloorWorkspaceInspector";
 import { FloorWorkspaceNavigator, FLOOR_NAVIGATOR_SECTION_LABELS, type FloorNavigatorSection } from "@/components/calculator/floor/FloorWorkspaceNavigator";
-import { FloorWorkspaceResultStrip } from "@/components/calculator/floor/FloorWorkspaceResultStrip";
 import { FloorWorkspaceShell } from "@/components/calculator/floor/FloorWorkspaceShell";
 import { FloorWorkspaceStatusBar } from "@/components/calculator/floor/FloorWorkspaceStatusBar";
 import { useFloorWorkspaceProfile } from "@/components/calculator/floor/useFloorWorkspaceProfile";
@@ -393,6 +392,7 @@ export default function FloorRebarCalculator() {
   const [issueStageFilter, setIssueStageFilter] = useState<FloorWorkflowStage | null>(null);
   const [bomFilter, setBomFilter] = useState<"all" | "bottom" | "top" | "through">("all");
   const [canvasZoomPercent, setCanvasZoomPercent] = useState(100);
+  const [draftSavedAt, setDraftSavedAt] = useState<number | null>(null);
   const [highlightedRoleDomainId, setHighlightedRoleDomainId] = useState<string | null>(null);
   const [canvasFocusRequest, setCanvasFocusRequest] = useState<{ id: number; mode: "floor" | "selection" | "domain" } | null>(null);
   const [editMode, setEditMode] = useState<"move" | "dock" | "multi">("move");
@@ -483,6 +483,8 @@ export default function FloorRebarCalculator() {
     // V4不再持久化Workspace UI；仅一次性兼容V3.1遗留偏好，后续刷新不会回写。
     if (window.innerWidth >= 1280 && window.localStorage.getItem("floorNavigatorCollapsed") === "false") setNavigatorOpen(true);
     if (window.innerWidth >= 640 && window.localStorage.getItem("floorWorkspaceInspectorOpen") === "true") setInspectorOpen(true);
+    // UI V5：Wide（≥1600px）首访默认 Inspector Dock 展开。
+    if (window.innerWidth >= 1600 && window.localStorage.getItem("floorWorkspaceInspectorOpen") === null) setInspectorOpen(true);
   }, []);
 
   const toleranceResult = useMemo(() => resolveFloorGeometryTolerance(state), [state]);
@@ -493,6 +495,7 @@ export default function FloorRebarCalculator() {
     if (!hydrated || dragActive) return;
     const timer = window.setTimeout(() => {
       window.localStorage.setItem(FLOOR_DRAFT_KEY, JSON.stringify(createFloorDraftRecord(toleranceResult.plan)));
+      setDraftSavedAt(Date.now());
     }, 300);
     return () => window.clearTimeout(timer);
   }, [dragActive, hydrated, toleranceResult]);
@@ -1219,7 +1222,8 @@ export default function FloorRebarCalculator() {
     </div>
   );
 
-  const inspector = <FloorWorkspaceInspector title={inspectorTitle} subtitle={inspectorSubtitle} breadcrumb={inspectorBreadcrumb} tabs={inspectorTabs} activeTab={effectiveInspectorTab} onTabChange={setActiveInspectorTab} issueCount={inspectorIssueCount}>{inspectorContent}</FloorWorkspaceInspector>;
+  // UI V5：Inspector 自带单层 Header（含关闭按钮），外层不再渲染「属性面板 + 关闭」。
+  const inspectorWithClose = <FloorWorkspaceInspector title={inspectorTitle} subtitle={inspectorSubtitle} breadcrumb={inspectorBreadcrumb} tabs={inspectorTabs} activeTab={effectiveInspectorTab} onTabChange={setActiveInspectorTab} issueCount={inspectorIssueCount} onClose={closeInspector} closeAriaLabel={profile.viewport === "phone" ? "关闭" : "关闭参数面板"}>{inspectorContent}</FloorWorkspaceInspector>;
 
 
   // UI V3（PRD 47-57）：Dock确认与Multi对齐统一进入 Canvas 内部底部 Command Bar。
@@ -1316,12 +1320,23 @@ export default function FloorRebarCalculator() {
       onUndo={undoHistory}
       onRedo={redoHistory}
       inputProfile={profile.input}
+      compactMode={profile.viewport === "phone"}
       commandBar={canvasCommandBar}
       onZoomChange={setCanvasZoomPercent}
     />
   );
   const overlayNavigator = <FloorWorkspaceNavigator activeSection={navigatorSection} stage={stage} plan={state} selection={selection} geometryIssues={issues} bottomOverrides={new Set(Object.keys(bottomState.slabOverrides))} topOverrides={new Set(Object.keys(topState.slabOverrides))} roleItems={roleItems} throughItems={throughItems} selectedThroughPathId={selectedThroughPathId} onSelect={selectWorkspaceObject} onSelectRole={selectRoleItem} onSelectThrough={selectThroughPath} onAddSlab={addSlab} onAddOpening={addOpening} onDuplicate={duplicateSelected} onDelete={deleteSelected} onAddThrough={addThroughPath} />;
-  const gridClass = touchInput ? "" : "xl:grid-cols-[52px_minmax(0,1fr)_44px]";
+  // UI V5：布局只由 profile 决定。Desktop 52px Rail | Canvas（无 44px 列）；
+  // Wide（≥1600px）真 Dock：Navigator 220-250 | Canvas 1fr | Inspector 340-380。
+  // 注：wide 分支整体替换 grid-cols（Tailwind 自定义 breakpoint 排序不可靠，避免同元素双规则）。
+  const wideInspectorDocked = !touchInput && profile.viewport === "wide" && inspectorOpen;
+  const gridClass = touchInput
+    ? ""
+    : profile.viewport === "wide"
+      ? wideInspectorDocked
+        ? "xl:grid-cols-[minmax(220px,250px)_minmax(0,1fr)_minmax(340px,380px)]"
+        : "xl:grid-cols-[minmax(220px,250px)_minmax(0,1fr)]"
+      : "xl:grid-cols-[52px_minmax(0,1fr)]";
   const desktopNavigatorClass = touchInput ? "hidden" : "hidden xl:block xl:col-start-1";
   const canvasColumnClass = touchInput ? "relative min-w-0" : "relative min-w-0 xl:col-start-2";
   const useSheetNavigation = touchInput || profile.viewport === "phone" || profile.viewport === "tablet";
@@ -1345,7 +1360,7 @@ export default function FloorRebarCalculator() {
   const filteredIssueCenterItems = issueStageFilter && issueStageFilter !== "bom" ? workspaceIssues.filter((issue) => issue.stage === issueStageFilter) : workspaceIssues;
 
   const workflow = <WorkflowTabs stage={stage} statuses={workflowStatuses} issueCounts={workflowIssueCounts} onChange={changeStage} onOpenIssues={(nextStage) => openIssueCenter(nextStage)} />;
-  const statusBar = <FloorWorkspaceStatusBar stage={stage} mode={commandModeLabel} selectionLabel={currentSelectionLabel} detail={statusDetail} issueCount={currentStageIssueCount} zoomPercent={canvasZoomPercent} onOpenIssues={() => openIssueCenter(stage)} />;
+  const statusBar = <FloorWorkspaceStatusBar stage={stage} mode={commandModeLabel} selectionLabel={currentSelectionLabel} detail={statusDetail} issueCount={currentStageIssueCount} zoomPercent={canvasZoomPercent} saved={draftSavedAt !== null} bottom={bottomCalculation} top={topCalculation} onOpenIssues={() => openIssueCenter(stage)} onOpenBom={() => { setBomFilter(stage === "top" ? "top" : "bottom"); changeStage("bom"); }} />;
 
   const workspaceBody = stage === "bom" ? (
     <div className="h-full overflow-y-auto bg-slate-100 p-3 sm:p-4" data-testid="floor-bom-workspace">
@@ -1359,28 +1374,43 @@ export default function FloorRebarCalculator() {
       </div>}
       <div className={`relative grid min-h-0 min-w-0 flex-1 gap-2 bg-slate-100 p-2 ${workspaceFullscreen ? "h-full" : gridClass}`} data-testid="floor-workspace-grid">
         <aside className={`min-h-0 overflow-hidden border-r border-slate-200 bg-white ${desktopNavigatorClass} ${workspaceFullscreen ? "xl:hidden" : ""}`}>
-          <FloorWorkspaceNavigator compact onOpenOverlay={openNavigatorOverlay} stage={stage} plan={state} selection={selection} geometryIssues={issues} bottomOverrides={new Set(Object.keys(bottomState.slabOverrides))} topOverrides={new Set(Object.keys(topState.slabOverrides))} roleItems={roleItems} throughItems={throughItems} selectedThroughPathId={selectedThroughPathId} onSelect={selectWorkspaceObject} onSelectRole={selectRoleItem} onSelectThrough={selectThroughPath} onAddSlab={addSlab} onAddOpening={addOpening} onDuplicate={duplicateSelected} onDelete={deleteSelected} onAddThrough={addThroughPath} />
+          {/* UI V5：Wide（≥1600px）渲染完整 Navigator Dock；其余桌面渲染 52px Rail（JS 条件渲染避免重复 DOM）。 */}
+          {!touchInput && profile.viewport === "wide" ? (
+            <div className="h-full" data-testid="floor-wide-navigator">
+              <FloorWorkspaceNavigator stage={stage} plan={state} selection={selection} geometryIssues={issues} bottomOverrides={new Set(Object.keys(bottomState.slabOverrides))} topOverrides={new Set(Object.keys(topState.slabOverrides))} roleItems={roleItems} throughItems={throughItems} selectedThroughPathId={selectedThroughPathId} onSelect={selectWorkspaceObject} onSelectRole={selectRoleItem} onSelectThrough={selectThroughPath} onAddSlab={addSlab} onAddOpening={addOpening} onDuplicate={duplicateSelected} onDelete={deleteSelected} onAddThrough={addThroughPath} />
+            </div>
+          ) : (
+            <div className="h-full" data-testid="floor-desktop-rail">
+              <FloorWorkspaceNavigator compact onOpenOverlay={openNavigatorOverlay} stage={stage} plan={state} selection={selection} geometryIssues={issues} bottomOverrides={new Set(Object.keys(bottomState.slabOverrides))} topOverrides={new Set(Object.keys(topState.slabOverrides))} roleItems={roleItems} throughItems={throughItems} selectedThroughPathId={selectedThroughPathId} onSelect={selectWorkspaceObject} onSelectRole={selectRoleItem} onSelectThrough={selectThroughPath} onAddSlab={addSlab} onAddOpening={addOpening} onDuplicate={duplicateSelected} onDelete={deleteSelected} onAddThrough={addThroughPath} />
+            </div>
+          )}
         </aside>
-        <section className={`${canvasColumnClass} flex min-h-0 flex-col`}>
+        <section className={`${canvasColumnClass} flex min-h-0 flex-col`} data-testid="floor-canvas-column">
           <div className="min-h-0 flex-1">{canvasElement}</div>
-          {!workspaceFullscreen && stage === "bottom" && <FloorWorkspaceResultStrip layer="bottom" bottom={bottomCalculation} top={topCalculation} onOpenBom={() => { setBomFilter("bottom"); changeStage("bom"); }} onOpenIssues={() => openIssueCenter("bottom")} />}
-          {!workspaceFullscreen && stage === "top" && <FloorWorkspaceResultStrip layer="top" bottom={bottomCalculation} top={topCalculation} onOpenBom={() => { setBomFilter("top"); changeStage("bom"); }} onOpenIssues={() => openIssueCenter("top")} />}
         </section>
 
         {!workspaceFullscreen && <FloorNavigatorPalette open={navigatorOpen && !useSheetNavigation} title={paletteTitle} onClose={closeNavigatorOverlay}>{overlayNavigator}</FloorNavigatorPalette>}
         {!workspaceFullscreen && inspectorOpen && profile.viewport === "phone" && <button type="button" aria-label="关闭属性面板遮罩" onClick={closeInspector} className="fixed inset-0 z-[60] bg-slate-950/35" />}
-        {!workspaceFullscreen && inspectorOpen && (
+        {!workspaceFullscreen && inspectorOpen && !wideInspectorDocked && (
           <aside className={[
             "flex flex-col overflow-hidden border border-slate-200 bg-white shadow-xl",
             profile.viewport === "phone"
               ? "fixed inset-x-0 bottom-0 z-[70] max-h-[82dvh] rounded-t-2xl"
-              : `absolute right-[52px] top-2 z-[70] w-[min(390px,88vw)] rounded-xl ${stage === "bottom" || stage === "top" ? "bottom-16" : "bottom-2"}`,
-          ].join(" ")}>
-            <div className="flex min-h-12 items-center justify-between border-b border-slate-200 px-3"><strong className="text-sm text-slate-950">属性面板</strong><button type="button" onClick={closeInspector} aria-label={profile.viewport === "phone" ? "关闭" : "关闭参数面板"} className="inline-flex min-h-10 items-center rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-600">关闭</button></div>
-            <div className="min-h-0 flex-1 overflow-y-auto pb-[max(16px,env(safe-area-inset-bottom))]">{inspector}</div>
+              : `absolute right-2 top-2 z-[70] w-[min(390px,88vw)] rounded-xl ${stage === "bottom" || stage === "top" ? "bottom-14" : "bottom-2"}`,
+          ].join(" ")} data-testid={profile.viewport === "phone" ? "floor-mobile-inspector-sheet" : "floor-inspector-overlay"}>
+            {inspectorWithClose}
           </aside>
         )}
-        {!workspaceFullscreen && !touchInput && <aside className="hidden xl:block xl:col-start-3"><button type="button" onClick={openInspector} aria-label="打开参数面板" data-testid="open-inspector-handle" className="flex h-full min-h-14 w-full flex-col items-center justify-center gap-2 border border-slate-200 bg-white text-xs font-semibold text-slate-600 hover:bg-slate-50"><ChevronLeft size={16} /><span className="[writing-mode:vertical-rl]">属性</span></button></aside>}
+        {/* UI V5：Wide Dock Inspector（独立列，不覆盖 Canvas） */}
+        {!workspaceFullscreen && wideInspectorDocked && (
+          <aside className="hidden min-h-0 overflow-hidden border-l border-slate-200 bg-white 3xl:block 3xl:col-start-3" data-testid="floor-wide-inspector">
+            {inspectorWithClose}
+          </aside>
+        )}
+        {/* UI V5：浮动属性按钮（Desktop；Wide Dock 时隐藏），不再占用固定 44px 列 */}
+        {!workspaceFullscreen && !touchInput && !inspectorOpen && (
+          <button type="button" onClick={openInspector} aria-label="打开参数面板" data-testid="open-inspector-handle" className="absolute right-2 top-1/2 z-20 hidden -translate-y-1/2 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-3 text-xs font-semibold text-slate-600 shadow-sm hover:bg-slate-50 xl:inline-flex"><ChevronLeft size={14} /><span className="[writing-mode:vertical-rl]">属性</span></button>
+        )}
       </div>
       {!workspaceFullscreen && useSheetNavigation && <FloorWorkspaceDrawer open={navigatorOpen} title={paletteTitle} side="left" onClose={closeNavigatorOverlay}>{overlayNavigator}</FloorWorkspaceDrawer>}
     </div>
@@ -1388,7 +1418,7 @@ export default function FloorRebarCalculator() {
 
   return (
     <>
-      <FloorWorkspaceShell workflow={workflow} body={workspaceBody} status={statusBar} fullscreen={workspaceFullscreen} showAppBar={!touchInput && profile.viewport === "desktop"} />
+      <FloorWorkspaceShell workflow={workflow} body={workspaceBody} status={statusBar} fullscreen={workspaceFullscreen} />
       <FloorIssueCenter open={issueCenterOpen} issues={filteredIssueCenterItems} onClose={() => setIssueCenterOpen(false)} onLocate={locateWorkspaceIssue} />
     </>
   );

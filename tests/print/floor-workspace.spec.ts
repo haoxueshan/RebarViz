@@ -81,7 +81,7 @@ test("12板区工作台保持Navigator、Canvas与Inspector双向同步并实时
 
   await page.locator('[data-navigator-object-id="s10"]').click();
   await expect(page.locator('[data-navigator-object-id="s10"]')).toHaveAttribute("data-selected", "true");
-  await page.getByTestId("open-inspector-handle").click();
+  // UI V5：install 已写入 inspectorOpen=true（Inspector Overlay 已打开），直接断言内容。
   await expect(page.getByTestId("floor-workspace-inspector")).toContainText("板区10");
   await expect(page.getByRole("button", { name: "选择板区 板区10" })).toHaveAttribute("stroke", "#2563eb");
 
@@ -216,7 +216,7 @@ test("Tablet四档断点保持Workflow可用、无横向溢出并按设备切换
       return {
         overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
         inspector: visible('[data-testid="floor-workspace-inspector"]'),
-        navigator: visible('[aria-label="工作台对象快捷导航"]'),
+        navigator: visible('[aria-label="工作台对象快捷导航"], [data-testid="floor-wide-navigator"]'),
         canvasRatio: grid && canvas ? canvas.getBoundingClientRect().width / grid.getBoundingClientRect().width : 0,
         summaryRendered: Boolean(status && status.getBoundingClientRect().height > 0),
       };

@@ -214,6 +214,7 @@ export function FloorCanvas({
   onRedo,
   onQuickDock,
   inputProfile = "desktop",
+  compactMode = false,
   commandBar = null,
   onZoomChange,
 }: {
@@ -257,6 +258,8 @@ export function FloorCanvas({
   onQuickDock?: (request: FloorDockRequest, x: number, y: number) => void;
   /** UI V3：输入模式决定触摸尺寸（touch≥44px），不再由 xl 断点判断。 */
   inputProfile?: "touch" | "desktop";
+  /** UI V5：手机紧凑 Toolbar（移动/拼接/多选 + 更多菜单）。 */
+  compactMode?: boolean;
   /** UI V3：Dock确认/Multi对齐等Command Bar渲染在Canvas内部底部（PRD 47-57）。 */
   commandBar?: React.ReactNode;
   /** 仅把Viewport缩放反馈给Workspace Status Bar，不进入工程State/History。 */
@@ -777,6 +780,7 @@ export function FloorCanvas({
           onRedo={onRedo ?? (() => undefined)}
           domainHighlighted={Boolean(highlightedRoleDomain)}
           inputProfile={inputProfile}
+          compactMode={compactMode}
         />
       </div>
       <div className="relative min-h-0 flex-1 overflow-hidden">

@@ -53,7 +53,8 @@ test("Fullscreen：进入隐藏页面组件，退出恢复且FloorPlan不变", a
   await page.reload();
 
   const appBar = page.getByTestId("floor-workspace-app-bar");
-  await expect(appBar).toBeVisible();
+  // UI V5：工作区内部 App Bar 已删除（与全局 Header 重复）。
+  await expect(appBar).toHaveCount(0);
   // 先放大到125%，验证Fullscreen进入/退出保持Viewport（PRD 70）。
   await page.getByRole("button", { name: "放大" }).click();
   await expect(page.getByTestId("canvas-zoom-percent")).toHaveText("125%");
@@ -63,7 +64,7 @@ test("Fullscreen：进入隐藏页面组件，退出恢复且FloorPlan不变", a
   await expect(page.getByTestId("canvas-zoom-percent")).toHaveText("125%");
   await page.getByRole("button", { name: "退出全屏画布" }).click();
   await expect(page.getByTestId("floor-fullscreen-canvas")).toHaveCount(0);
-  await expect(page.getByTestId("floor-workspace-app-bar")).toBeVisible();
+  await expect(appBar).toHaveCount(0);
   await expect(page.getByTestId("canvas-zoom-percent")).toHaveText("125%");
   await page.waitForTimeout(400);
   const slabs = await savedSlabs(page);
@@ -654,7 +655,7 @@ test.describe("触摸设备", () => {
   });
 });
 
-test("Wide Desktop 1920×1080不受1500px限宽，Canvas成为视觉主角（PRD 98）", async ({ page }) => {
+test("Wide Desktop 1920×1080 Dock布局：Navigator+Canvas+Inspector三列且Canvas最大（V5）", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   await page.goto("/calculator/floor");
   await page.evaluate(({ draftKey, roleKey }) => {
@@ -673,11 +674,21 @@ test("Wide Desktop 1920×1080不受1500px限宽，Canvas成为视觉主角（PRD
   expect(mainBox).not.toBeNull();
   expect(canvasBox).not.toBeNull();
   expect(mainBox!.width).toBeGreaterThan(1500);
-  // 默认 Canvas First：Canvas 占 grid 的 70% 以上（Rail 52 + Inspector 370 除外）。
-  await expect(page.getByTestId("open-inspector-handle")).toBeVisible();
-  const gridBox = await grid.boundingBox();
-  expect(gridBox).not.toBeNull();
-  expect(canvasBox!.width).toBeGreaterThan(gridBox!.width * 0.7);
+  // Wide：Navigator 完整 Dock、Inspector 默认 Dock 展开、无浮动属性按钮。
+  const wideNavigator = page.getByTestId("floor-wide-navigator");
+  const wideInspector = page.getByTestId("floor-wide-inspector");
+  await expect(wideNavigator).toBeVisible();
+  await expect(wideInspector).toBeVisible();
+  await expect(page.getByTestId("open-inspector-handle")).toHaveCount(0);
+  const navBox = await wideNavigator.boundingBox();
+  const inspectorBox = await wideInspector.boundingBox();
+  expect(navBox).not.toBeNull();
+  expect(inspectorBox).not.toBeNull();
+  // Inspector 不覆盖 Canvas；Canvas 是最大区域。
+  expect(navBox!.x).toBeLessThan(canvasBox!.x);
+  expect(canvasBox!.x + canvasBox!.width).toBeLessThanOrEqual(inspectorBox!.x + 1);
+  expect(canvasBox!.width).toBeGreaterThan(inspectorBox!.width);
+  expect(canvasBox!.width).toBeGreaterThan(navBox!.width);
 });
 
 test.describe("大尺寸触摸设备", () => {
@@ -1132,5 +1143,139 @@ test("Command Bar底部考虑Safe Area且出现后主要图纸不被完全遮挡
   expect(slabBox).not.toBeNull();
   // 主对象主体位于 Command Bar 上方可视区域（不被完全遮挡）。
   expect(slabBox!.y + slabBox!.height / 2).toBeLessThan(panelBox!.y);
+});
+
+test.describe("UI V5 工作台布局", () => {
+  test("1280×800 Desktop：52px Rail + Canvas，无固定44px列，浮动属性按钮（V5）", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto("/calculator/floor");
+    await page.evaluate(({ draftKey, roleKey }) => {
+      localStorage.removeItem(draftKey);
+      localStorage.removeItem(roleKey);
+      localStorage.removeItem("floorWorkspaceInspectorOpen");
+    }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
+    await page.reload();
+
+    const grid = page.getByTestId("floor-workspace-grid");
+    const canvas = page.getByTestId("floor-canvas-card");
+    await expect(page.getByTestId("open-inspector-handle")).toBeVisible();
+    const gridBox = await grid.boundingBox();
+    const canvasBox = await canvas.boundingBox();
+    expect(gridBox).not.toBeNull();
+    expect(canvasBox).not.toBeNull();
+    // 右侧不再存在固定 44px Inspector column：Canvas 占 grid 除 52px Rail 外全部。
+    expect(canvasBox!.width).toBeGreaterThan(gridBox!.width - 80);
+    // 浮动按钮打开 Inspector Overlay，Canvas 宽度不变。
+    const before = canvasBox!.width;
+    await page.getByTestId("open-inspector-handle").click();
+    await expect(page.getByTestId("floor-inspector-overlay")).toBeVisible();
+    const after = await (await canvas.boundingBox());
+    expect(after).not.toBeNull();
+    expect(Math.abs(after!.width - before)).toBeLessThan(1);
+  });
+
+  test("1600×900 Wide Dock：Navigator完整展开+Inspector Dock且不覆盖Canvas（V5）", async ({ page }) => {
+    await page.setViewportSize({ width: 1600, height: 900 });
+    await page.goto("/calculator/floor");
+    await page.evaluate(({ draftKey, roleKey }) => {
+      localStorage.removeItem(draftKey);
+      localStorage.removeItem(roleKey);
+      localStorage.removeItem("floorWorkspaceInspectorOpen");
+    }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
+    await page.reload();
+
+    const navigator = page.getByTestId("floor-wide-navigator");
+    const inspector = page.getByTestId("floor-wide-inspector");
+    const canvas = page.getByTestId("floor-canvas-card");
+    await expect(navigator).toBeVisible();
+    await expect(inspector).toBeVisible();
+    await expect(navigator.locator('[data-navigator-object-id]').first()).toBeVisible();
+    const navBox = await navigator.boundingBox();
+    const canvasBox = await canvas.boundingBox();
+    const inspectorBox = await inspector.boundingBox();
+    expect(navBox).not.toBeNull();
+    expect(canvasBox).not.toBeNull();
+    expect(inspectorBox).not.toBeNull();
+    expect(navBox!.width).toBeGreaterThanOrEqual(200);
+    expect(inspectorBox!.width).toBeGreaterThanOrEqual(320);
+    expect(canvasBox!.x + canvasBox!.width).toBeLessThanOrEqual(inspectorBox!.x + 1);
+    expect(canvasBox!.width).toBeGreaterThan(inspectorBox!.width);
+  });
+
+  test("390×844 Phone：紧凑Toolbar+更多菜单+单层Inspector Header（V5）", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/calculator/floor");
+    await page.evaluate(({ draftKey, roleKey }) => {
+      localStorage.removeItem(draftKey);
+      localStorage.removeItem(roleKey);
+    }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
+    await page.reload();
+
+    // 紧凑 Toolbar：移动/拼接/多选 + 更多菜单；不展示完整撤销/缩放/视图/全屏按钮。
+    await expect(page.getByRole("button", { name: "移动" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "拼接" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "多选" })).toBeVisible();
+    await expect(page.getByTestId("floor-mobile-toolbar-more")).toBeVisible();
+    await expect(page.getByRole("button", { name: "全屏画布" })).toHaveCount(0);
+    // 更多菜单包含撤销/缩放/取景/锁轴。
+    await page.getByTestId("floor-mobile-toolbar-more").click();
+    const menu = page.getByTestId("floor-mobile-toolbar-menu");
+    await expect(menu).toBeVisible();
+    await expect(menu.getByRole("button", { name: "适合楼层" })).toBeVisible();
+    await expect(menu.getByRole("button", { name: "水平移动" })).toBeVisible();
+    await expect(menu.getByRole("button", { name: "全屏画布" })).toBeVisible();
+    await page.getByRole("button", { name: "关闭更多菜单" }).click();
+    // 打开 Inspector：单层 Header（无外层“属性面板+关闭”行）。
+    await page.getByRole("button", { name: "编辑", exact: true }).click();
+    const inspector = page.getByTestId("floor-workspace-inspector");
+    await expect(inspector).toBeVisible();
+    await expect(inspector.getByRole("button", { name: "关闭" })).toBeVisible();
+    await expect(page.getByText("属性面板")).toHaveCount(0);
+    await expect(page.getByTestId("floor-mobile-inspector-sheet")).toBeVisible();
+    // 无横向溢出。
+    const dimensions = await page.evaluate(() => ({ clientWidth: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth }));
+    expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
+  });
+
+  test("1366×768：无Workspace App Bar且只有一条Bottom Bar（V5）", async ({ page }) => {
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await page.goto("/calculator/floor");
+    await page.evaluate(({ draftKey, roleKey }) => {
+      localStorage.removeItem(draftKey);
+      localStorage.removeItem(roleKey);
+    }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
+    await page.reload();
+
+    await expect(page.getByTestId("floor-workspace-app-bar")).toHaveCount(0);
+    await expect(page.getByTestId("floor-unified-status-bar")).toHaveCount(1);
+    await expect(page.getByTestId("floor-workspace-status-bar")).toHaveCount(1);
+    // Result Strip 已合并：不再单独渲染第二条底部区域。
+    await expect(page.getByTestId("floor-unified-status-bar")).toBeVisible();
+  });
+
+  test("1024×768：Inspector开关不改变Canvas宽度且不重置Zoom（V5）", async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await page.goto("/calculator/floor");
+    await page.evaluate(({ draftKey, roleKey }) => {
+      localStorage.removeItem(draftKey);
+      localStorage.removeItem(roleKey);
+      localStorage.removeItem("floorWorkspaceInspectorOpen");
+    }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
+    await page.reload();
+
+    const canvas = page.getByTestId("floor-canvas-card");
+    await page.getByRole("button", { name: "放大" }).click();
+    await expect(page.getByTestId("canvas-zoom-percent")).toHaveText("125%");
+    const before = await canvas.boundingBox();
+    expect(before).not.toBeNull();
+    await page.getByRole("button", { name: "展开编辑" }).click();
+    await expect(page.getByTestId("floor-workspace-inspector")).toBeVisible();
+    const after = await canvas.boundingBox();
+    expect(after).not.toBeNull();
+    expect(Math.abs(after!.width - before!.width)).toBeLessThan(1);
+    await expect(page.getByTestId("canvas-zoom-percent")).toHaveText("125%");
+    await page.getByRole("button", { name: "收起编辑" }).click();
+    await expect(page.getByTestId("canvas-zoom-percent")).toHaveText("125%");
+  });
 });
 

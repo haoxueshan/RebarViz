@@ -1,6 +1,8 @@
 @import "tailwindcss";
 
 @theme {
+  /* UI V5：Wide 断点 1600px（真 Dock 布局）。 */
+  --breakpoint-3xl: 1600px;
   --color-primary: #0f172a;
   --color-primary-light: #1e293b;
   --color-accent: #3B82F6;
