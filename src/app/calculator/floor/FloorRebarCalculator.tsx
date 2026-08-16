@@ -8,7 +8,7 @@ import { FloorCanvas, type FloorSelection } from "@/components/calculator/floor/
 import { FloorTopResults, FloorTopSettingsPanel } from "@/components/calculator/floor/FloorTopPanel";
 import { FloorWorkspaceDrawer } from "@/components/calculator/floor/FloorWorkspaceDrawer";
 import { FloorWorkspaceInspector, type FloorWorkspaceInspectorTab } from "@/components/calculator/floor/FloorWorkspaceInspector";
-import { FloorWorkspaceNavigator } from "@/components/calculator/floor/FloorWorkspaceNavigator";
+import { FloorWorkspaceNavigator, FLOOR_NAVIGATOR_SECTION_LABELS, type FloorNavigatorSection } from "@/components/calculator/floor/FloorWorkspaceNavigator";
 import { FloorWorkspaceSummary } from "@/components/calculator/floor/FloorWorkspaceSummary";
 import { useFloorWorkspaceProfile } from "@/components/calculator/floor/useFloorWorkspaceProfile";
 import type {
@@ -407,13 +407,15 @@ export default function FloorRebarCalculator() {
   const [floorSectionOpen, setFloorSectionOpen] = useState(false);
   const [positionSectionOpen, setPositionSectionOpen] = useState(false);
   const [navigatorOpen, setNavigatorOpen] = useState(false);
+  // UI V3.1：Inspector 状态收敛为单一 overlay 状态（Touch/Desktop 统一 Overlay，不压缩 Canvas）。
   const [inspectorOpen, setInspectorOpen] = useState(false);
-  const [tabletInspectorExpanded, setTabletInspectorExpanded] = useState(true);
-  // UI V3（PRD 12-14）：Desktop 默认 Canvas First——Navigator 52px Rail、Inspector 折叠。
+  // UI V3.1（PRD 20）：Rail 分类导航的当前 Section。
+  const [navigatorSection, setNavigatorSection] = useState<FloorNavigatorSection | null>(null);
+  // UI V3（PRD 12-14）：Desktop 默认 Canvas First——Navigator 52px Rail。
   const [navigatorCollapsed, setNavigatorCollapsed] = useState(true);
   const [detailsExpanded, setDetailsExpanded] = useState(false);
   const [highlightedRoleDomainId, setHighlightedRoleDomainId] = useState<string | null>(null);
-  const [canvasFocusRequest, setCanvasFocusRequest] = useState<{ mode: "floor" | "selection" | "domain"; key: string } | null>(null);
+  const [canvasFocusRequest, setCanvasFocusRequest] = useState<{ id: number; mode: "floor" | "selection" | "domain" } | null>(null);
   const [editMode, setEditMode] = useState<"move" | "dock" | "multi">("move");
   const [dockSourceId, setDockSourceId] = useState<string | null>(null);
   const [dockTargetId, setDockTargetId] = useState<string | null>(null);
@@ -423,7 +425,6 @@ export default function FloorRebarCalculator() {
   const [multiSelection, setMultiSelection] = useState<Set<string>>(new Set());
   const [multiAlignKind, setMultiAlignKind] = useState<FloorMultiAlignKind | null>(null);
   const [workspaceFullscreen, setWorkspaceFullscreen] = useState(false);
-  const [inspectorCollapsed, setInspectorCollapsed] = useState(true);
   const [history, setHistory] = useState<FloorHistoryState<FloorPlanState>>(() => createFloorHistory(cloneDefaultState()));
   const stateRef = useRef<FloorPlanState>(cloneDefaultState());
   stateRef.current = state;
@@ -500,20 +501,18 @@ export default function FloorRebarCalculator() {
     } finally {
       setHydrated(true);
     }
-    // UI V3（PRD 12-13/45-46）：用户设置优先；无设置时保持默认 Canvas First。
+    // UI V3.1（PRD 11）：Inspector 收敛为 overlay 打开状态；navigatorCollapsed 控制 Desktop Rail/展开。
     const savedNavigatorCollapsed = window.localStorage.getItem("floorNavigatorCollapsed");
     if (savedNavigatorCollapsed !== null) setNavigatorCollapsed(savedNavigatorCollapsed === "true");
-    const savedInspectorCollapsed = window.localStorage.getItem("floorInspectorCollapsed");
-    if (savedInspectorCollapsed !== null) {
-      setInspectorCollapsed(savedInspectorCollapsed === "true");
-    }
+    const savedInspectorOpen = window.localStorage.getItem("floorWorkspaceInspectorOpen");
+    if (savedInspectorOpen !== null) setInspectorOpen(savedInspectorOpen === "true");
   }, []);
 
   useEffect(() => {
     if (!hydrated) return;
-    window.localStorage.setItem("floorInspectorCollapsed", String(inspectorCollapsed));
+    window.localStorage.setItem("floorWorkspaceInspectorOpen", String(inspectorOpen));
     window.localStorage.setItem("floorNavigatorCollapsed", String(navigatorCollapsed));
-  }, [hydrated, inspectorCollapsed, navigatorCollapsed]);
+  }, [hydrated, inspectorOpen, navigatorCollapsed]);
 
   const toleranceResult = useMemo(() => resolveFloorGeometryTolerance(state), [state]);
   const canonicalPlan = toleranceResult.plan;
@@ -898,7 +897,6 @@ export default function FloorRebarCalculator() {
       } else if (event.key === "Escape") {
         setNavigatorOpen(false);
         setInspectorOpen(false);
-        setTabletInspectorExpanded(false);
         setDockSourceId(null);
         setDockTargetId(null);
         setDockHoverDirection(null);
@@ -906,7 +904,7 @@ export default function FloorRebarCalculator() {
         setMultiSelection(new Set());
         setMultiAlignKind(null);
       } else if (event.key.toLowerCase() === "f") {
-        setCanvasFocusRequest({ mode: "floor", key: `fit:${Date.now()}` });
+        setCanvasFocusRequest({ id: Date.now(), mode: "floor" });
       }
     };
     window.addEventListener("keydown", onKey);
@@ -922,6 +920,18 @@ export default function FloorRebarCalculator() {
     setDockPinned(false);
     setMultiSelection(new Set());
     setMultiAlignKind(null);
+  };
+
+  // UI V3.1：Inspector/Navigator 全部经 helper 收敛，禁止散落 setInspectorOpen 等。
+  const openInspector = () => setInspectorOpen(true);
+  const closeInspector = () => setInspectorOpen(false);
+  const openNavigatorOverlay = (section: FloorNavigatorSection | null = null) => {
+    setNavigatorSection(section);
+    setNavigatorOpen(true);
+  };
+  const closeNavigatorOverlay = () => setNavigatorOpen(false);
+  const requestCanvasFocus = (mode: "floor" | "selection" | "domain") => {
+    setCanvasFocusRequest({ id: Date.now(), mode });
   };
 
   const handleDockPick = (slabId: string) => {
@@ -1008,18 +1018,16 @@ export default function FloorRebarCalculator() {
     if (segment.openingId) setSelection({ kind: "opening", id: segment.openingId });
     else if (segment.slabIds[0]) setSelection({ kind: "slab", id: segment.slabIds[0] });
     setBoundarySectionOpen(true);
-    setInspectorOpen(true);
-    setTabletInspectorExpanded(true);
+    openInspector();
   };
 
   const changeStage = (nextStage: FloorWorkflowStage) => {
     setStage(nextStage);
     setDetailsExpanded(false);
     setNavigatorOpen(false);
-    setInspectorOpen(false);
+    // UI V3.1：切换阶段保持 Inspector 打开状态，不打断编辑连续性。
     setHighlightedRoleDomainId(null);
     if (nextStage !== "top") setSelectedThroughPathId(null);
-    setTabletInspectorExpanded(true);
   };
 
   const selectWorkspaceObject = (nextSelection: Exclude<FloorSelection, null>) => {
@@ -1027,7 +1035,7 @@ export default function FloorRebarCalculator() {
     setSelectedBoundaryId(null);
     setSelectedThroughPathId(null);
     setHighlightedRoleDomainId(null);
-    setCanvasFocusRequest({ mode: "selection", key: `${nextSelection.kind}:${nextSelection.id}:${Date.now()}` });
+    requestCanvasFocus("selection");
     setNavigatorOpen(false);
   };
 
@@ -1037,18 +1045,16 @@ export default function FloorRebarCalculator() {
     setSelectedBoundaryId(null);
     setSelectedThroughPathId(null);
     setHighlightedRoleDomainId(item.id);
-    setCanvasFocusRequest({ mode: "domain", key: `${item.id}:${Date.now()}` });
+    requestCanvasFocus("domain");
     setNavigatorOpen(false);
-    setInspectorOpen(true);
-    setTabletInspectorExpanded(true);
+    openInspector();
   };
 
   const selectThroughPath = (id: string) => {
     setSelectedThroughPathId(id);
     setHighlightedRoleDomainId(null);
     setNavigatorOpen(false);
-    setInspectorOpen(true);
-    setTabletInspectorExpanded(true);
+    openInspector();
   };
 
   const addThroughPath = () => {
@@ -1064,8 +1070,7 @@ export default function FloorRebarCalculator() {
     setTopState((current) => ({ ...current, throughPaths: [...current.throughPaths, next] }));
     setSelectedThroughPathId(next.id);
     setNavigatorOpen(false);
-    setInspectorOpen(true);
-    setTabletInspectorExpanded(true);
+    openInspector();
   };
 
   useEffect(() => {
@@ -1213,7 +1218,7 @@ export default function FloorRebarCalculator() {
         <div className="flex items-center gap-2">
           <span className="text-xs text-slate-600">对齐：</span>
           {FLOOR_DOCK_ALIGNMENTS.map((alignment) => (
-            <button key={alignment} type="button" onClick={() => setDockAlignment(alignment)} aria-pressed={dockAlignment === alignment} className={`min-h-9 rounded-lg border px-2.5 text-xs font-medium ${dockAlignment === alignment ? "border-orange-500 bg-white text-orange-700" : "border-slate-300 bg-white text-slate-600"}`}>{floorDockAlignmentLabel(alignment)}</button>
+            <button key={alignment} type="button" onClick={() => setDockAlignment(alignment)} aria-pressed={dockAlignment === alignment} className={`rounded-lg border px-2.5 text-xs font-medium ${touchInput ? "min-h-11" : "min-h-9"} ${dockAlignment === alignment ? "border-orange-500 bg-white text-orange-700" : "border-slate-300 bg-white text-slate-600"}`}>{floorDockAlignmentLabel(alignment)}</button>
           ))}
         </div>
       </div>
@@ -1228,8 +1233,8 @@ export default function FloorRebarCalculator() {
         <p className="mt-2 rounded-lg bg-rose-50 p-2 text-xs leading-5 text-rose-800">无法拼接：{dockSourceSlab.name}移动到{dockTargetSlab.name}{floorDockDirectionLabel(dockHoverDirection)}后，将与{new Intl.ListFormat("zh-CN").format(dockPreview.conflicts)}发生面积重叠。</p>
       )}
       <div className="mt-3 flex flex-wrap gap-2">
-        <button type="button" onClick={cancelDock} className="min-h-10 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700">取消</button>
-        <button type="button" onClick={confirmDock} disabled={!dockPreview.valid} className="min-h-10 rounded-xl bg-orange-600 px-5 text-sm font-semibold text-white disabled:opacity-40">确认拼接</button>
+        <button type="button" onClick={cancelDock} className={`rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 ${touchInput ? "min-h-11" : "min-h-10"}`}>取消</button>
+        <button type="button" onClick={confirmDock} disabled={!dockPreview.valid} className={`rounded-xl bg-orange-600 px-5 text-sm font-semibold text-white disabled:opacity-40 ${touchInput ? "min-h-11" : "min-h-10"}`}>确认拼接</button>
       </div>
     </div>
   ) : stage === "plan" && editMode === "multi" && multiSelection.size >= 2 ? (
@@ -1237,7 +1242,7 @@ export default function FloorRebarCalculator() {
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm font-semibold text-slate-800">对齐 {multiSelection.size} 个板区：</span>
         {(["left", "right", "top", "bottom"] as FloorMultiAlignKind[]).map((kind) => (
-          <button key={kind} type="button" onClick={() => setMultiAlignKind(kind)} aria-pressed={multiAlignKind === kind} className={`min-h-10 rounded-xl border px-3 text-xs font-semibold ${multiAlignKind === kind ? "border-violet-500 bg-white text-violet-700" : "border-slate-300 bg-white text-slate-700"}`}>{kind === "left" ? "左对齐" : kind === "right" ? "右对齐" : kind === "top" ? "上对齐" : "下对齐"}</button>
+          <button key={kind} type="button" onClick={() => setMultiAlignKind(kind)} aria-pressed={multiAlignKind === kind} className={`rounded-xl border px-3 text-xs font-semibold ${touchInput ? "min-h-11" : "min-h-10"} ${multiAlignKind === kind ? "border-violet-500 bg-white text-violet-700" : "border-slate-300 bg-white text-slate-700"}`}>{kind === "left" ? "左对齐" : kind === "right" ? "右对齐" : kind === "top" ? "上对齐" : "下对齐"}</button>
         ))}
       </div>
       {multiAlignPreview && (
@@ -1248,8 +1253,8 @@ export default function FloorRebarCalculator() {
             <p className="text-xs text-rose-700">对齐后{new Intl.ListFormat("zh-CN").format(multiAlignPreview.conflicts)}将发生面积重叠，禁止执行。</p>
           )}
           <div className="mt-2 flex gap-2">
-            <button type="button" onClick={() => setMultiAlignKind(null)} className="min-h-9 rounded-xl border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-600">取消</button>
-            <button type="button" onClick={confirmMultiAlign} disabled={!multiAlignPreview.valid} className="min-h-9 rounded-xl bg-violet-600 px-4 text-xs font-semibold text-white disabled:opacity-40">确认对齐</button>
+            <button type="button" onClick={() => setMultiAlignKind(null)} className={`rounded-xl border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-600 ${touchInput ? "min-h-11" : "min-h-9"}`}>取消</button>
+            <button type="button" onClick={confirmMultiAlign} disabled={!multiAlignPreview.valid} className={`rounded-xl bg-violet-600 px-4 text-xs font-semibold text-white disabled:opacity-40 ${touchInput ? "min-h-11" : "min-h-9"}`}>确认对齐</button>
           </div>
         </div>
       )}
@@ -1258,7 +1263,6 @@ export default function FloorRebarCalculator() {
 
   const canvasElement = (
     <FloorCanvas
-      key={canvasFocusRequest?.key ?? "floor-canvas"}
       state={canonicalPlan}
       selection={selection}
       selectedBoundaryId={selectedBoundaryId}
@@ -1274,6 +1278,8 @@ export default function FloorRebarCalculator() {
       highlightedRoleDomainId={highlightedRoleDomainId}
       highlightedThroughPathId={selectedThroughPathId}
       initialFitMode={canvasFocusRequest?.mode}
+      focusRequest={canvasFocusRequest}
+      compactHeight={touchInput && profile.shortViewport}
       editMode={stage === "plan" ? editMode : "move"}
       onEditModeChange={changeEditMode}
       dockSourceId={dockSourceId}
@@ -1296,16 +1302,17 @@ export default function FloorRebarCalculator() {
     />
   );
   const navigator = <FloorWorkspaceNavigator stage={stage} plan={state} selection={selection} geometryIssues={issues} bottomOverrides={new Set(Object.keys(bottomState.slabOverrides))} topOverrides={new Set(Object.keys(topState.slabOverrides))} roleItems={roleItems} throughItems={throughItems} selectedThroughPathId={selectedThroughPathId} onSelect={selectWorkspaceObject} onSelectRole={selectRoleItem} onSelectThrough={selectThroughPath} onAddSlab={addSlab} onAddOpening={addOpening} onDuplicate={duplicateSelected} onDelete={deleteSelected} onAddThrough={addThroughPath} />;
-  // UI V3（PRD 7/75-77/99）：Touch 输入不占布局宽度（单列+Overlay），Desktop 才用三栏。
+  // UI V3.1：Overlay/Drawer 按 Rail 分类只显示对应 Section。
+  const overlayNavigator = <FloorWorkspaceNavigator activeSection={navigatorSection} stage={stage} plan={state} selection={selection} geometryIssues={issues} bottomOverrides={new Set(Object.keys(bottomState.slabOverrides))} topOverrides={new Set(Object.keys(topState.slabOverrides))} roleItems={roleItems} throughItems={throughItems} selectedThroughPathId={selectedThroughPathId} onSelect={selectWorkspaceObject} onSelectRole={selectRoleItem} onSelectThrough={selectThroughPath} onAddSlab={addSlab} onAddOpening={addOpening} onDuplicate={duplicateSelected} onDelete={deleteSelected} onAddThrough={addThroughPath} />;
+  // UI V3.1（PRD 4/30/40）：业务布局只由 profile.input 决定；Inspector 统一 Overlay 不再占列。
+  // Desktop：52px Rail | Canvas | 44px Inspector Handle；navigatorCollapsed=false 时 Rail 展开为 240px。
   const gridClass = touchInput
     ? ""
-    : (navigatorCollapsed
-      ? (inspectorCollapsed
-        ? "xl:grid-cols-[52px_minmax(0,1fr)_44px]"
-        : "xl:grid-cols-[52px_minmax(0,1fr)_370px]")
-      : (inspectorCollapsed
-        ? "xl:grid-cols-[240px_minmax(0,1fr)_44px]"
-        : "xl:grid-cols-[240px_minmax(0,1fr)_370px]"));
+    : navigatorCollapsed
+      ? "xl:grid-cols-[52px_minmax(0,1fr)_44px]"
+      : "xl:grid-cols-[240px_minmax(0,1fr)_44px]";
+  const desktopNavigatorClass = touchInput ? "hidden" : "hidden xl:block xl:col-start-1";
+  const canvasColumnClass = touchInput ? "relative min-w-0" : "relative min-w-0 xl:col-start-2";
 
   return (
     <main className={workspaceFullscreen ? "h-full" : "w-full max-w-none px-3 py-3 sm:px-4 lg:px-5 lg:py-4"}>
@@ -1326,53 +1333,50 @@ export default function FloorRebarCalculator() {
         />
       )) : <>
         <div className={`mb-2 flex items-center gap-2 ${touchInput ? "" : "xl:hidden"} ${workspaceFullscreen ? "hidden" : ""}`}>
-          <button type="button" onClick={() => setNavigatorOpen(true)} className="inline-flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 text-left text-sm font-semibold text-slate-800"><Menu size={17} /><span className="min-w-0 flex-1 truncate">当前：{selectedSlab?.name ?? selectedOpening?.name ?? selectedThroughPath?.name ?? "请选择对象"}</span><ChevronRight size={16} /></button>
-          <button type="button" onClick={() => { setInspectorCollapsed(false); setInspectorOpen(true); }} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white md:hidden"><Settings2 size={17} />编辑</button>
-          <button type="button" aria-expanded={!inspectorCollapsed && tabletInspectorExpanded} onClick={() => { if (inspectorCollapsed) { setInspectorCollapsed(false); setTabletInspectorExpanded(true); } else { setTabletInspectorExpanded((value) => !value); } }} className={`hidden min-h-11 items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 md:inline-flex ${touchInput ? "" : "xl:hidden"}`}><Settings2 size={17} />{inspectorCollapsed || !tabletInspectorExpanded ? "展开编辑" : "收起编辑"}</button>
+          <button type="button" onClick={() => openNavigatorOverlay(null)} className="inline-flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 text-left text-sm font-semibold text-slate-800"><Menu size={17} /><span className="min-w-0 flex-1 truncate">当前：{selectedSlab?.name ?? selectedOpening?.name ?? selectedThroughPath?.name ?? "请选择对象"}</span><ChevronRight size={16} /></button>
+          <button type="button" onClick={openInspector} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white md:hidden"><Settings2 size={17} />编辑</button>
+          <button type="button" aria-expanded={inspectorOpen} onClick={() => { if (inspectorOpen) closeInspector(); else openInspector(); }} className={`hidden min-h-11 items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 md:inline-flex ${touchInput ? "" : "xl:hidden"}`}><Settings2 size={17} />{inspectorOpen ? "收起编辑" : "展开编辑"}</button>
         </div>
 
         <div className={`relative grid min-w-0 gap-4 ${workspaceFullscreen ? "h-full" : gridClass}`} data-testid="floor-workspace-grid">
-          <aside className={`relative hidden min-h-[480px] overflow-hidden rounded-2xl border border-slate-200 bg-white xl:sticky xl:top-20 xl:col-start-1 xl:row-start-1 xl:block xl:h-[calc(100dvh-15rem)] xl:max-h-[calc(100dvh-15rem)] ${workspaceFullscreen ? "xl:hidden" : ""}`}>
+          <aside className={`relative min-h-[480px] overflow-hidden rounded-2xl border border-slate-200 bg-white xl:sticky xl:top-20 xl:row-start-1 xl:h-[calc(100dvh-15rem)] xl:max-h-[calc(100dvh-15rem)] ${desktopNavigatorClass} ${workspaceFullscreen ? "xl:hidden" : ""}`}>
             <button type="button" aria-label={navigatorCollapsed ? "展开左侧导航" : "收起左侧导航"} onClick={() => setNavigatorCollapsed((value) => !value)} className={`absolute right-1 top-1 z-10 flex size-10 items-center justify-center rounded-xl bg-white/90 text-slate-600 shadow-sm ${navigatorCollapsed ? "xl:static xl:mb-1 xl:size-8 xl:bg-transparent xl:shadow-none xl:hover:bg-slate-100" : ""}`}>{navigatorCollapsed ? <ChevronRight size={17} /> : <ChevronLeft size={17} />}</button>
-            {navigatorCollapsed ? <FloorWorkspaceNavigator compact onOpenOverlay={() => setNavigatorOpen(true)} stage={stage} plan={state} selection={selection} geometryIssues={issues} bottomOverrides={new Set(Object.keys(bottomState.slabOverrides))} topOverrides={new Set(Object.keys(topState.slabOverrides))} roleItems={roleItems} throughItems={throughItems} selectedThroughPathId={selectedThroughPathId} onSelect={selectWorkspaceObject} onSelectRole={selectRoleItem} onSelectThrough={selectThroughPath} onAddSlab={addSlab} onAddOpening={addOpening} onDuplicate={duplicateSelected} onDelete={deleteSelected} onAddThrough={addThroughPath} /> : navigator}
+            {navigatorCollapsed ? <FloorWorkspaceNavigator compact onOpenOverlay={openNavigatorOverlay} stage={stage} plan={state} selection={selection} geometryIssues={issues} bottomOverrides={new Set(Object.keys(bottomState.slabOverrides))} topOverrides={new Set(Object.keys(topState.slabOverrides))} roleItems={roleItems} throughItems={throughItems} selectedThroughPathId={selectedThroughPathId} onSelect={selectWorkspaceObject} onSelectRole={selectRoleItem} onSelectThrough={selectThroughPath} onAddSlab={addSlab} onAddOpening={addOpening} onDuplicate={duplicateSelected} onDelete={deleteSelected} onAddThrough={addThroughPath} /> : navigator}
           </aside>
 
-          <section className={workspaceFullscreen ? "h-full" : "relative min-w-0 space-y-3 xl:col-start-2"}>
+          <section className={workspaceFullscreen ? "h-full" : `${canvasColumnClass} space-y-3`}>
             {canvasElement}
             {stage === "plan" && !workspaceFullscreen && <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] text-slate-600 lg:hidden">{[["板区", state.slabs.length], ["洞口", state.openings.length], ["建筑外边", stats.exterior], ["内墙", stats.inner], ["连续板边", stats.continuous], ["洞口边", stats.opening]].map(([label, value]) => <span key={String(label)} className="rounded-full bg-slate-100 px-2.5 py-1"><strong className="text-slate-900">{value}</strong> {label}</span>)}</div>}
             {/* UI V3（PRD 70-73）：Summary 属于 Canvas 列，不再横跨三栏。 */}
-            {!workspaceFullscreen && <FloorWorkspaceSummary stage={stage} bottom={bottomCalculation} top={topCalculation} geometryErrorCount={errors.length + invalidDrafts.size} onShowDetails={() => setDetailsExpanded((value) => !value)} onShowIssues={() => { if (stage === "plan") { setFloorSectionOpen(true); setInspectorOpen(true); setTabletInspectorExpanded(true); } else { setDetailsExpanded(true); } }} />}
+            {!workspaceFullscreen && <FloorWorkspaceSummary stage={stage} bottom={bottomCalculation} top={topCalculation} geometryErrorCount={errors.length + invalidDrafts.size} onShowDetails={() => setDetailsExpanded((value) => !value)} onShowIssues={() => { if (stage === "plan") { openInspector(); setFloorSectionOpen(true); } else { setDetailsExpanded(true); } }} />}
+            {/* UI V3.1（PRD 36）：Detailed Results 也属于 Canvas Main Column。 */}
+            {!workspaceFullscreen && detailsExpanded && stage === "bottom" && <FloorBottomResults plan={state} calculation={bottomCalculation} invalidDraftCount={invalidDrafts.size + invalidBottomDrafts.size} />}
+            {!workspaceFullscreen && detailsExpanded && stage === "top" && <FloorTopResults plan={state} calculation={topCalculation} invalidDraftCount={invalidDrafts.size + invalidTopDrafts.size} />}
           </section>
 
-          {!workspaceFullscreen && inspectorOpen && <button type="button" aria-label="关闭属性面板遮罩" onClick={() => setInspectorOpen(false)} className="fixed inset-0 z-[60] bg-slate-950/40 md:hidden" />}
-          {!workspaceFullscreen && !inspectorCollapsed && (
+          {!workspaceFullscreen && inspectorOpen && profile.viewport === "phone" && <button type="button" aria-label="关闭属性面板遮罩" onClick={closeInspector} className="fixed inset-0 z-[60] bg-slate-950/40" />}
+          {!workspaceFullscreen && inspectorOpen && touchInput && profile.viewport !== "phone" && <button type="button" aria-label="关闭属性面板遮罩" onClick={closeInspector} className="fixed inset-0 z-[60] bg-slate-950/10" />}
+          {!workspaceFullscreen && inspectorOpen && (
             <aside className={[
               "flex flex-col border border-slate-200 bg-white",
               profile.viewport === "phone"
-                ? `${inspectorOpen ? "fixed inset-x-0 bottom-0 z-[70] block max-h-[82dvh] overflow-hidden rounded-t-3xl" : "hidden"}`
-                : touchInput
-                  ? `${tabletInspectorExpanded ? "absolute bottom-24 right-3 top-2 z-[70] block w-[min(400px,88vw)] overflow-hidden rounded-2xl shadow-2xl" : "hidden"}`
-                  : `${tabletInspectorExpanded ? "absolute bottom-24 right-3 top-2 z-[70] block w-[min(400px,88vw)] overflow-hidden rounded-2xl shadow-2xl" : "hidden"} xl:static xl:inset-auto xl:z-auto xl:col-start-3 xl:row-start-1 xl:block xl:w-auto xl:overflow-hidden xl:rounded-2xl xl:shadow-none`,
+                ? "fixed inset-x-0 bottom-0 z-[70] block max-h-[82dvh] overflow-hidden rounded-t-3xl"
+                : "absolute right-[56px] top-24 z-[70] block max-h-[min(560px,calc(100dvh-13rem))] w-[min(400px,88vw)] overflow-hidden rounded-2xl shadow-2xl",
             ].join(" ")}>
-              <div className="flex min-h-14 items-center justify-between border-b border-slate-200 px-4 md:hidden"><strong className="text-sm text-slate-950">编辑：{inspectorTitle}</strong><button type="button" onClick={() => setInspectorOpen(false)} className="min-h-11 rounded-xl px-3 text-sm font-semibold text-slate-600">关闭</button></div>
-              <div className="hidden min-h-12 items-center justify-between border-b border-slate-200 px-3 md:flex xl:hidden"><span className="text-xs font-semibold text-slate-500">参数面板</span><button type="button" onClick={() => setTabletInspectorExpanded(false)} aria-label="关闭参数面板" className="inline-flex min-h-11 items-center gap-1 rounded-lg border border-slate-200 px-2 text-xs font-semibold text-slate-600">关闭</button></div>
-              <div className="hidden min-h-10 items-center justify-between border-b border-slate-200 px-3 xl:flex"><span className="text-xs font-semibold text-slate-500">参数面板</span><button type="button" onClick={() => setInspectorCollapsed(true)} aria-label="收起参数面板" data-testid="collapse-inspector-handle" className="inline-flex min-h-8 items-center gap-1 rounded-lg border border-slate-200 px-2 text-xs font-semibold text-slate-600">收起<ChevronRight size={13} /></button></div>
-              <div className="min-h-0 flex-1 overflow-y-auto pb-[max(16px,env(safe-area-inset-bottom))] xl:overflow-visible xl:pb-0">{inspector}</div>
+              <div className="flex min-h-14 items-center justify-between border-b border-slate-200 px-4"><strong className="text-sm text-slate-950">{profile.viewport === "phone" ? `编辑：${inspectorTitle}` : "参数面板"}</strong><button type="button" onClick={closeInspector} aria-label={profile.viewport === "phone" ? "关闭" : "关闭参数面板"} className="inline-flex min-h-11 items-center gap-1 rounded-lg border border-slate-200 px-3 text-sm font-semibold text-slate-600">关闭</button></div>
+              <div className="min-h-0 flex-1 overflow-y-auto pb-[max(16px,env(safe-area-inset-bottom))]">{inspector}</div>
             </aside>
           )}
-          {!workspaceFullscreen && inspectorCollapsed && !touchInput && (
+          {!workspaceFullscreen && !touchInput && (
             <aside className="hidden xl:block xl:col-start-3">
-              <button type="button" onClick={() => { setInspectorCollapsed(false); setTabletInspectorExpanded(true); }} aria-label="打开参数面板" data-testid="open-inspector-handle" className="flex h-full min-h-14 w-full flex-col items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white text-xs font-semibold text-slate-600 hover:bg-slate-50"><ChevronLeft size={16} /><span className="[writing-mode:vertical-rl]">参数</span></button>
+              <button type="button" onClick={openInspector} aria-label="打开参数面板" data-testid="open-inspector-handle" className="flex h-full min-h-14 w-full flex-col items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white text-xs font-semibold text-slate-600 hover:bg-slate-50"><ChevronLeft size={16} /><span className="[writing-mode:vertical-rl]">参数</span></button>
             </aside>
           )}
         </div>
 
-        {!workspaceFullscreen && detailsExpanded && stage === "bottom" && <FloorBottomResults plan={state} calculation={bottomCalculation} invalidDraftCount={invalidDrafts.size + invalidBottomDrafts.size} />}
-        {!workspaceFullscreen && detailsExpanded && stage === "top" && <FloorTopResults plan={state} calculation={topCalculation} invalidDraftCount={invalidDrafts.size + invalidTopDrafts.size} />}
-
-        {!workspaceFullscreen && <FloorWorkspaceDrawer open={navigatorOpen} title={stage === "plan" ? "楼层对象" : stage === "bottom" ? "地筋导航" : "面筋导航"} side="left" onClose={() => setNavigatorOpen(false)}>{navigator}</FloorWorkspaceDrawer>}
+        {!workspaceFullscreen && <FloorWorkspaceDrawer open={navigatorOpen} title={navigatorSection ? FLOOR_NAVIGATOR_SECTION_LABELS[navigatorSection] : stage === "plan" ? "楼层对象" : stage === "bottom" ? "地筋导航" : "面筋导航"} side="left" onClose={closeNavigatorOverlay}>{overlayNavigator}</FloorWorkspaceDrawer>}
       </>}
-      <p className={`mt-5 text-xs text-slate-500 ${workspaceFullscreen ? "hidden" : ""}`}>当前显示边界 {displays.length} 段；正式板筋计算使用原子边界 {atomic.length} 段。显示段ID不会用于保存支承或钢筋业务规则。</p>
+      {process.env.NODE_ENV === "development" && !workspaceFullscreen && <p className="mt-5 text-xs text-slate-500">当前显示边界 {displays.length} 段；正式板筋计算使用原子边界 {atomic.length} 段。显示段ID不会用于保存支承或钢筋业务规则。</p>}
       </div>
     </main>
   );

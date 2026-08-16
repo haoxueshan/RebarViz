@@ -193,6 +193,8 @@ export function FloorCanvas({
   highlightedRoleDomainId,
   highlightedThroughPathId,
   initialFitMode = "floor",
+  focusRequest = null,
+  compactHeight = false,
   editMode = "move",
   onEditModeChange,
   dockSourceId = null,
@@ -229,6 +231,10 @@ export function FloorCanvas({
   highlightedRoleDomainId?: string | null;
   highlightedThroughPathId?: string | null;
   initialFitMode?: "floor" | "selection" | "domain";
+  /** UI V3.1：显式 Viewport Focus Request，只更新视口不 remount 组件（替代 React key）。 */
+  focusRequest?: { id: number; mode: "floor" | "selection" | "domain" } | null;
+  /** UI V3.1：Touch 短横屏（如 1366×768）使用紧凑高度策略，不用 600px 最小高度。 */
+  compactHeight?: boolean;
   editMode?: "move" | "dock" | "multi";
   onEditModeChange?: (mode: "move" | "dock" | "multi") => void;
   dockSourceId?: string | null;
@@ -258,6 +264,10 @@ export function FloorCanvas({
   const gestureRef = useRef<FloorCanvasGestureState | null>(null);
   const pendingRef = useRef<{ viewport?: FloorCanvasViewport; preview?: { objectId: string; x: number; y: number } | null } | null>(null);
   const rafRef = useRef<number | null>(null);
+  // UI V3.1：Command Bar 真实高度测量（ResizeObserver），Fit 后主对象不被遮挡。
+  const commandBarWrapRef = useRef<HTMLDivElement>(null);
+  const [commandBarHeight, setCommandBarHeight] = useState(0);
+  const commandBarHeightRef = useRef(0);
   const transformRef = useRef<{ scale: number }>({ scale: 1 });
   const [fitMode, setFitMode] = useState<FloorCanvasFitMode>(initialFitMode);
   const [viewport, setViewport] = useState<FloorCanvasViewport>({ zoom: 1, centerX: 0, centerY: 0 });
@@ -330,11 +340,50 @@ export function FloorCanvas({
     : fitMode === "domain" && highlightedRoleDomain
       ? highlightedRoleDomain.id
       : fitMode;
+
+  // UI V3.1：Navigator 选择等通过 focusRequest 只更新 Viewport，不 remount Canvas。
   useEffect(() => {
-    setViewport(viewportForBounds(bounds));
+    if (!focusRequest) return;
+    setFitMode(focusRequest.mode);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusRequest?.id]);
+
+  useEffect(() => {
+    const base = viewportForBounds(bounds);
+    setViewport({ ...base, centerY: base.centerY + barShiftMmRef.current });
     // 只有Fit模式/选中对象变化时才重新适配；Zoom/Pan由用户操作更新Viewport。
+    // Command Bar 出现后的偏移通过 barShiftMmRef 一并带入。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [boundsKey]);
+
+  // UI V3.1：Command Bar 真实高度测量，出现时把视口中心向上平移一半高度，
+  // 保证 Fit 后的主要对象不被底部 Command Bar 遮挡（只改 Viewport，不改 Geometry）。
+  const barShiftMmRef = useRef(0);
+  useEffect(() => {
+    const wrapper = commandBarWrapRef.current;
+    if (!wrapper || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const height = entries[0]?.contentRect.height;
+      if (height === undefined || !Number.isFinite(height)) return;
+      setCommandBarHeight(height);
+    });
+    observer.observe(wrapper);
+    return () => observer.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [Boolean(commandBar)]);
+
+  useEffect(() => {
+    const previous = commandBarHeightRef.current;
+    commandBarHeightRef.current = commandBarHeight;
+    const delta = commandBarHeight - previous;
+    if (delta <= 0) return;
+    const pxPerMm = effectiveScale * (svgWidthPx / SVG_WIDTH);
+    if (pxPerMm <= 0) return;
+    const shiftMm = (delta / 2) / pxPerMm;
+    barShiftMmRef.current += shiftMm;
+    setViewport((current) => ({ ...current, centerY: current.centerY + shiftMm }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [commandBarHeight]);
 
   useEffect(() => {
     const svg = svgRef.current;
@@ -682,9 +731,11 @@ export function FloorCanvas({
   const dockSource = state.slabs.find((slab) => slab.id === dockSourceId) ?? null;
   const dockTarget = state.slabs.find((slab) => slab.id === dockTargetId) ?? null;
   const dockGhost = dockPreview?.sourcePreview ?? null;
+  // UI V3.1：实例 ID 用于回归验证 Navigator 选择不 remount Canvas。
+  const instanceIdRef = useRef(`floor-canvas-${Math.random().toString(36).slice(2, 10)}`);
 
   return (
-    <div className={`rounded-2xl border border-slate-200 bg-slate-50 ${fullscreen ? "flex h-full min-h-0 flex-col" : ""}`} data-testid="floor-canvas-card">
+    <div className={`rounded-2xl border border-slate-200 bg-slate-50 ${fullscreen ? "flex h-full min-h-0 flex-col" : ""}`} data-testid="floor-canvas-card" data-canvas-instance-id={instanceIdRef.current}>
       {!fullscreen && <div className="flex min-h-9 items-center justify-between gap-3 border-b border-slate-200 bg-white px-3 py-1.5">
         <h2 className="min-w-0 truncate text-sm font-semibold text-slate-900">{topCalculation ? "整层面筋净跨路径" : bottomCalculation ? "整层地筋净跨路径" : "整层板区平面"}</h2>
         <div className="flex shrink-0 items-center gap-2">
@@ -721,12 +772,12 @@ export function FloorCanvas({
         />
       </div>
       <div className={`relative min-h-0 overflow-hidden ${fullscreen ? "flex-1" : ""}`}>
-        {commandBar && <div className="pointer-events-none absolute inset-x-0 bottom-4 z-30 flex justify-center">{commandBar}</div>}
+        {commandBar && <div ref={commandBarWrapRef} className="pointer-events-none absolute inset-x-0 bottom-[calc(12px+env(safe-area-inset-bottom))] z-30 flex justify-center">{commandBar}</div>}
         <svg
           ref={svgRef}
           viewBox={`0 0 ${SVG_WIDTH} ${SVG_HEIGHT}`}
           preserveAspectRatio="xMidYMid meet"
-          className={`block w-full touch-none select-none bg-white ${fullscreen ? "h-full" : "h-[clamp(420px,62dvh,640px)] md:h-[clamp(560px,72dvh,760px)] lg:h-[clamp(600px,76dvh,840px)] xl:h-[max(68dvh,calc(100dvh-15rem))] xl:min-h-[600px]"}`}
+          className={`block w-full touch-none select-none bg-white ${fullscreen ? "h-full" : compactHeight ? "h-[clamp(420px,58dvh,520px)]" : inputProfile === "touch" ? "h-[clamp(520px,68dvh,720px)]" : "h-[max(58dvh,calc(100dvh-15rem))] min-h-[480px]"}`}
           role="img"
           aria-label="整层板区、洞口、正式钢筋Piece和支承关系布局预览"
           data-floor-canvas-fit={fitMode}

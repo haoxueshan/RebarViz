@@ -210,14 +210,14 @@ test.describe("Floor Print V1整层冻结快照打印", () => {
       localStorage.removeItem("rebarviz:floor-rebar:role:v1");
       sessionStorage.clear();
     });
-    // UI V3：桌面默认 Canvas First，本用例需展开 Inspector 与 Navigator。
+    // UI V3.1：Inspector 为 Overlay，本用例需展开 Inspector 与 Navigator。
     await page.evaluate(() => {
-      localStorage.setItem("floorInspectorCollapsed", "false");
+      localStorage.setItem("floorWorkspaceInspectorOpen", "true");
       localStorage.setItem("floorNavigatorCollapsed", "false");
     });
     await page.waitForTimeout(250);
     await page.evaluate(() => {
-      localStorage.setItem("floorInspectorCollapsed", "false");
+      localStorage.setItem("floorWorkspaceInspectorOpen", "true");
       localStorage.setItem("floorNavigatorCollapsed", "false");
     });
     await page.reload();

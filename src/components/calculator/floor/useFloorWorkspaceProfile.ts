@@ -13,9 +13,18 @@ export type FloorWorkspaceViewportProfile = "phone" | "tablet" | "desktop" | "wi
 export type FloorWorkspaceProfile = {
   input: FloorWorkspaceInputProfile;
   viewport: FloorWorkspaceViewportProfile;
+  /** 横屏：宽度 > 高度（Landscape，如 1366×768 Touch）。 */
+  landscape: boolean;
+  /** 高度不足（<820px）：需要压缩 Canvas 高度策略，不能用 600px 最小高度。 */
+  shortViewport: boolean;
 };
 
-const FALLBACK_PROFILE: FloorWorkspaceProfile = { input: "desktop", viewport: "desktop" };
+const FALLBACK_PROFILE: FloorWorkspaceProfile = {
+  input: "desktop",
+  viewport: "desktop",
+  landscape: true,
+  shortViewport: false,
+};
 
 function viewportForWidth(width: number): FloorWorkspaceViewportProfile {
   if (width < 768) return "phone";
@@ -32,7 +41,12 @@ export function useFloorWorkspaceProfile(): FloorWorkspaceProfile {
     const noHover = window.matchMedia("(hover: none)");
     const apply = () => {
       const input: FloorWorkspaceInputProfile = coarse.matches || noHover.matches ? "touch" : "desktop";
-      setProfile({ input, viewport: viewportForWidth(window.innerWidth) });
+      setProfile({
+        input,
+        viewport: viewportForWidth(window.innerWidth),
+        landscape: window.innerWidth > window.innerHeight,
+        shortViewport: window.innerHeight < 820,
+      });
     };
     apply();
     coarse.addEventListener?.("change", apply);

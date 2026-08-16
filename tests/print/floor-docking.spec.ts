@@ -79,14 +79,14 @@ test("Floor Docking V1一键修复5mm Near Miss", async ({ page }) => {
     { id: "a", name: "板区A", type: "room", x: 0, y: 0, width: 4200, height: 3600 },
     { id: "b", name: "板区B", type: "room", x: 0, y: 3605, width: 3600, height: 3600 },
   ], 0);
-  // UI V3：桌面默认 Canvas First，一键修复需要 Inspector（楼层设置）展开。
-  await page.evaluate(() => localStorage.setItem("floorInspectorCollapsed", "false"));
+  // UI V3.1：Inspector 为 Overlay，一键修复需要展开（首块板区默认选中）。
+  await page.evaluate(() => localStorage.setItem("floorWorkspaceInspectorOpen", "true"));
   await page.waitForTimeout(250);
-  await page.evaluate(() => localStorage.setItem("floorInspectorCollapsed", "false"));
+  await page.evaluate(() => localStorage.setItem("floorWorkspaceInspectorOpen", "true"));
   await page.reload();
 
   await expect(page.locator("[data-near-miss]")).toHaveCount(1);
-  // UI V3：Inspector 默认展开（已设 floorInspectorCollapsed=false），首块板区默认选中。
+  // UI V3.1：Inspector 为 Overlay（已设 floorWorkspaceInspectorOpen=true），首块板区默认选中。
   await page.getByRole("button", { name: "楼层设置" }).click();
   const suggestion = page.getByTestId("dock-suggestion-button");
   await expect(suggestion).toContainText("将板区B拼到板区A北侧");

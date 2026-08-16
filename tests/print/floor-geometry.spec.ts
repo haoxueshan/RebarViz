@@ -14,16 +14,16 @@ async function openMobileInspector(page: import("@playwright/test").Page) {
   return page.getByTestId("floor-workspace-inspector");
 }
 
-/** UI V3：桌面默认 Canvas First（Inspector 收起），既有桌面用例显式展开三栏。 */
+/** UI V3.1：Inspector 为 Overlay（默认关闭），既有桌面用例显式展开。 */
 async function installExpandedWorkspace(page: import("@playwright/test").Page) {
   await page.evaluate(() => {
-    localStorage.setItem("floorInspectorCollapsed", "false");
+    localStorage.setItem("floorWorkspaceInspectorOpen", "true");
     localStorage.setItem("floorNavigatorCollapsed", "false");
   });
   // 等待页面首轮 hydrate/persist 完成后再写一次，避免被初始状态覆盖。
   await page.waitForTimeout(250);
   await page.evaluate(() => {
-    localStorage.setItem("floorInspectorCollapsed", "false");
+    localStorage.setItem("floorWorkspaceInspectorOpen", "true");
     localStorage.setItem("floorNavigatorCollapsed", "false");
   });
 }
@@ -92,6 +92,9 @@ test("数字空草稿明确无效，失焦后恢复旧值且移动端没有横�
   await widthInput.fill("");
   await expect(widthInput).toHaveAttribute("aria-invalid", "true");
   await page.getByRole("button", { name: "关闭", exact: true }).click();
+  // UI V3.1：关闭即卸载 bottom sheet，重新打开验证失焦恢复旧值。
+  await expect(page.getByTestId("floor-workspace-inspector")).toHaveCount(0);
+  await openMobileInspector(page);
   await expect(widthInput).not.toHaveAttribute("aria-invalid", "true");
   await expect(widthInput).toHaveValue("4200");
   const dimensions = await page.evaluate(() => ({ clientWidth: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth }));
@@ -319,6 +322,9 @@ test("Top数字空草稿明确无效，失焦后恢复旧值且390px页面不横
   await expect(extra).toHaveAttribute("aria-invalid", "true");
   await expect(page.getByText("面筋结果无效")).toBeVisible();
   await page.getByRole("button", { name: "关闭", exact: true }).click();
+  // UI V3.1：关闭即卸载 bottom sheet，重新打开验证失焦恢复旧值。
+  await expect(page.getByTestId("floor-workspace-inspector")).toHaveCount(0);
+  await openMobileInspector(page);
   await expect(extra).not.toHaveAttribute("aria-invalid", "true");
   await expect(extra).toHaveValue("250");
   const dimensions = await page.evaluate(() => ({

@@ -1,7 +1,7 @@
 "use client";
 
 import { Eye, Focus, Layers3, Maximize2, Minimize2, Minus, Move, Plus, Redo2, Settings2, Undo2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FloorCanvasFitMode } from "@/lib/floor-2d";
 import type { FloorWorkspaceInputProfile } from "./useFloorWorkspaceProfile";
 
@@ -52,6 +52,31 @@ export function FloorCanvasToolbar({
   inputProfile?: FloorWorkspaceInputProfile;
 }) {
   const [viewOpen, setViewOpen] = useState(false);
+  // UI V3.1：Popover 使用 fixed 定位（相对视图按钮计算），避免被 Chrome 行 overflow-x-auto 裁剪。
+  const viewButtonRef = useRef<HTMLButtonElement>(null);
+  const [popoverPos, setPopoverPos] = useState<{ top: number; right: number } | null>(null);
+  const toggleView = () => {
+    setViewOpen((value) => {
+      const next = !value;
+      if (next && viewButtonRef.current) {
+        const rect = viewButtonRef.current.getBoundingClientRect();
+        setPopoverPos({ top: rect.bottom + 6, right: Math.max(8, window.innerWidth - rect.right) });
+      } else {
+        setPopoverPos(null);
+      }
+      return next;
+    });
+  };
+  useEffect(() => {
+    if (!viewOpen) return;
+    const close = () => setViewOpen(false);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [viewOpen]);
   const touch = inputProfile === "touch";
   const buttonClass = `shrink-0 rounded-md px-2.5 text-xs font-semibold ${touch ? "min-h-11" : "min-h-9"}`;
   const iconClass = `inline-flex shrink-0 items-center rounded-md border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-700 disabled:opacity-35 ${touch ? "min-h-11" : "min-h-9"}`;
@@ -84,11 +109,11 @@ export function FloorCanvasToolbar({
       </div>
       <div className="h-6 w-px shrink-0 bg-slate-200" />
       <div className="relative shrink-0">
-        <button type="button" onClick={() => setViewOpen((value) => !value)} aria-expanded={viewOpen} aria-label="视图" title="视图与移动锁轴" className={`${iconClass} ${viewOpen ? "bg-blue-50 text-blue-700" : ""}`}><Settings2 size={14} /></button>
-        {viewOpen && (
+        <button ref={viewButtonRef} type="button" onClick={toggleView} aria-expanded={viewOpen} aria-label="视图" title="视图与移动锁轴" className={`${iconClass} ${viewOpen ? "bg-blue-50 text-blue-700" : ""}`}><Settings2 size={14} /></button>
+        {viewOpen && popoverPos && (
           <>
-            <button type="button" aria-label="关闭视图菜单" onClick={() => setViewOpen(false)} className="fixed inset-0 z-30 cursor-default" />
-            <div className="absolute right-0 top-full z-40 mt-1.5 w-44 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl shadow-slate-900/10" data-testid="canvas-view-popover">
+            <button type="button" aria-label="关闭视图菜单" onClick={() => setViewOpen(false)} className="fixed inset-0 z-40 cursor-default" />
+            <div className="fixed z-50 w-44 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl shadow-slate-900/10" style={{ top: popoverPos.top, right: popoverPos.right }} data-testid="canvas-view-popover">
               <p className="px-2 pb-1 pt-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">画布取景</p>
               <button type="button" onClick={() => runFit("floor")} aria-pressed={fitMode === "floor"} className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs font-semibold ${fitMode === "floor" ? "bg-blue-50 text-blue-700" : "text-slate-700 hover:bg-slate-50"}`}>适合楼层</button>
               <button type="button" onClick={() => runFit("selection")} aria-pressed={fitMode === "selection"} className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs font-semibold ${fitMode === "selection" ? "bg-blue-50 text-blue-700" : "text-slate-700 hover:bg-slate-50"}`}><Focus size={13} />选中</button>

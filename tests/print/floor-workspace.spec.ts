@@ -67,15 +67,17 @@ async function installMultiBlockWorkspace(page: import("@playwright/test").Page)
       },
     }));
     localStorage.removeItem(roleKey);
-    // 显式用户设置：平板也展开 Inspector（Canvas First 首访默认由专用用例验证）。
-    localStorage.setItem("floorInspectorCollapsed", "false");
+    // 显式用户设置：非手机展开 Inspector Overlay 与完整 Navigator（Canvas First 首访默认由专用用例验证）。
+    // 手机不预开 Inspector：bottom sheet 会遮罩全屏阻塞后续操作。
+    localStorage.removeItem("floorWorkspaceInspectorOpen");
     localStorage.setItem("floorNavigatorCollapsed", "false");
+    if (window.innerWidth >= 640) localStorage.setItem("floorWorkspaceInspectorOpen", "true");
   }, { draftKey: DRAFT_KEY, bottomKey: BOTTOM_KEY, topKey: TOP_KEY, roleKey: ROLE_KEY });
   // 等待页面首轮 hydrate/persist 完成后再写一次，避免被初始状态覆盖。
   await page.waitForTimeout(250);
   await page.evaluate(() => {
-    localStorage.setItem("floorInspectorCollapsed", "false");
     localStorage.setItem("floorNavigatorCollapsed", "false");
+    if (window.innerWidth >= 640) localStorage.setItem("floorWorkspaceInspectorOpen", "true");
   });
   await page.reload();
 }
@@ -175,13 +177,13 @@ test("正方形和不规则Role区域在Navigator定位并共享人工主筋方�
       },
     }));
     localStorage.removeItem(roleKey);
-    // UI V3：桌面默认 Canvas First（Navigator Rail / Inspector 收起），本用例需完整三栏。
-    localStorage.setItem("floorInspectorCollapsed", "false");
+    // UI V3.1：Navigator 完整展开 + Inspector Overlay 打开，本用例需两者。
+    localStorage.setItem("floorWorkspaceInspectorOpen", "true");
     localStorage.setItem("floorNavigatorCollapsed", "false");
   }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
   await page.waitForTimeout(250);
   await page.evaluate(() => {
-    localStorage.setItem("floorInspectorCollapsed", "false");
+    localStorage.setItem("floorWorkspaceInspectorOpen", "true");
     localStorage.setItem("floorNavigatorCollapsed", "false");
   });
   await page.reload();
@@ -247,6 +249,8 @@ test("Tablet竖横屏切换保持stage、selection和数字输入，并支持Esc
   await expect(page.getByTestId("floor-workspace-left-drawer")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("floor-workspace-left-drawer")).toHaveCount(0);
+  // UI V3.1：Escape 统一关闭全部浮层（含 Inspector），此处重新展开编辑。
+  await page.getByRole("button", { name: "展开编辑" }).click();
 
   await currentObject.click();
   const drawer = page.getByTestId("floor-workspace-left-drawer");
@@ -343,7 +347,7 @@ test("楼层阶段选中板区直接看到净尺寸，修改后Canvas实时变�
     localStorage.removeItem(bottomKey);
     localStorage.removeItem(topKey);
     localStorage.removeItem(roleKey);
-    localStorage.setItem("floorInspectorCollapsed", "false");
+    localStorage.setItem("floorWorkspaceInspectorOpen", "true");
   }, { draftKey: DRAFT_KEY, bottomKey: BOTTOM_KEY, topKey: TOP_KEY, roleKey: ROLE_KEY });
   await page.reload();
   const editor = page.getByTestId("floor-size-editor");
@@ -375,8 +379,10 @@ test("正方形板区进入地筋即可直接点击主筋方向按钮", async ({
     localStorage.removeItem(bottomKey);
     localStorage.removeItem(topKey);
     localStorage.removeItem(roleKey);
-    localStorage.setItem("floorInspectorCollapsed", "false");
+    localStorage.setItem("floorWorkspaceInspectorOpen", "true");
   }, { draftKey: DRAFT_KEY, bottomKey: BOTTOM_KEY, topKey: TOP_KEY, roleKey: ROLE_KEY });
+  await page.waitForTimeout(250);
+  await page.evaluate(() => localStorage.setItem("floorWorkspaceInspectorOpen", "true"));
   await page.reload();
   await page.getByRole("button", { name: /2\. 地筋/ }).click();
   const xButton = page.getByTestId("floor-workspace-inspector").getByRole("button", { name: "东西向主筋" });
@@ -540,7 +546,7 @@ test("平板横屏1024×768 Canvas全宽，Editor Overlay收起/展开不改变C
   await expect(inspector).toBeVisible();
 });
 
-test("桌面1440×900保持Navigator|Canvas|Editor三栏", async ({ page }) => {
+test("桌面1440×900保持Navigator|Canvas列与Inspector Overlay（V3.1）", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await installMultiBlockWorkspace(page);
   const navigator = page.getByTestId("floor-workspace-navigator");
@@ -554,10 +560,10 @@ test("桌面1440×900保持Navigator|Canvas|Editor三栏", async ({ page }) => {
   expect(navBox).not.toBeNull();
   expect(canvasBox).not.toBeNull();
   expect(editorBox).not.toBeNull();
+  // Navigator 列在 Canvas 左侧；Inspector 为 Overlay 覆盖 Canvas 右侧且不压缩 Canvas。
   expect(navBox!.x).toBeLessThan(canvasBox!.x);
-  expect(canvasBox!.x).toBeLessThan(editorBox!.x);
-  expect(Math.abs(navBox!.y - canvasBox!.y)).toBeLessThan(50);
-  expect(Math.abs(canvasBox!.y - editorBox!.y)).toBeLessThan(50);
+  expect(editorBox!.x).toBeGreaterThan(canvasBox!.x + canvasBox!.width - 500);
+  expect(editorBox!.y).toBeGreaterThanOrEqual(canvasBox!.y);
 });
 
 test("桌面1366×768 Navigator充分利用垂直空间且不溢出视口", async ({ page }) => {

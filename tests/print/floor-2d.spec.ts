@@ -102,7 +102,7 @@ test("Display边可合并但点击与编辑精确落到对应Atomic段", async (
       },
     }));
     localStorage.setItem(roleKey, JSON.stringify({ schemaVersion: 1, savedAt: new Date().toISOString(), state: { mainDirectionOverrides: { "role:a": "x", "role:b": "x", "role:c": "x", "role:d": "x" } } }));
-    localStorage.setItem("floorInspectorCollapsed", "false");
+    localStorage.setItem("floorWorkspaceInspectorOpen", "true");
   }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
   await page.reload();
 
@@ -123,7 +123,7 @@ test("pointercancel恢复拖动起点且不会把中间位置保存为草稿", a
   await page.evaluate(({ draftKey, roleKey }) => {
     localStorage.removeItem(draftKey);
     localStorage.removeItem(roleKey);
-    localStorage.setItem("floorInspectorCollapsed", "false");
+    localStorage.setItem("floorWorkspaceInspectorOpen", "true");
   }, { draftKey: DRAFT_KEY, roleKey: ROLE_KEY });
   await page.reload();
   const slab = page.getByRole("button", { name: "选择板区 板区A" });
