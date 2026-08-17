@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_FLOOR_BOTTOM_STATE, type FloorBottomState } from "./floor-bottom-calculator";
+import { resolveFloorGeometryTolerance } from "./floor-geometry-tolerance";
 import { DEFAULT_FLOOR_PLAN_STATE, type FloorPlanState } from "./floor-plan";
+import { createFloorDraftRecord } from "./floor-plan-storage";
 import {
   createBlankFloorPlanState,
   createFloorProjectFile,
@@ -136,11 +138,14 @@ describe("Floor Project File 工程文件", () => {
     expect(result).toEqual({ ok: false, error: "not-floor-file" });
   });
 
-  it("未知 schemaVersion 返回 unsupported-schema", () => {
-    const { plan, bottom, top, role } = buildRichInputs();
-    const file = createFloorProjectFile({ projectName: "测试", plan, bottom, top, role, bottomRoleReviewRequired: false, topRoleReviewRequired: false });
-    const future = { ...file, schemaVersion: 99 };
-    const result = parseFloorProjectFile(JSON.stringify(future));
+  it.each([0, -1, 0.5, "1", null, 2, 99])("schemaVersion=%j 一律返回 unsupported-schema", (schemaVersion) => {
+    const text = JSON.stringify({
+      format: FLOOR_PROJECT_FILE_FORMAT,
+      schemaVersion,
+      meta: { projectName: "测试", exportedAt: new Date(0).toISOString(), app: "RebarViz" },
+      data: { plan: createFloorDraftRecord(buildRichPlan()) },
+    });
+    const result = parseFloorProjectFile(text);
     expect(result).toEqual({ ok: false, error: "unsupported-schema" });
   });
 
@@ -215,5 +220,114 @@ describe("Floor Project File 工程文件", () => {
     const name = floorProjectFileName("A栋/一层:楼板?", new Date("2026-08-16T10:00:00Z"));
     expect(name).toBe("RebarViz_A栋_一层_楼板__2026-08-16.json");
     expect(floorProjectFileName("", new Date("2026-08-16T10:00:00Z"))).toBe(`RebarViz_${FLOOR_DEFAULT_PROJECT_NAME}_2026-08-16.json`);
+  });
+
+  // —— Floor Project File V1.1 稳定性修复 ——
+
+  it("标准工程 Plan 是 {} 返回 corrupted", () => {
+    const text = JSON.stringify({ format: FLOOR_PROJECT_FILE_FORMAT, schemaVersion: 1, data: { plan: {} } });
+    const result = parseFloorProjectFile(text);
+    expect(result).toEqual({ ok: false, error: "corrupted" });
+  });
+
+  it("标准工程 Plan.state 是 {} 返回 corrupted", () => {
+    const text = JSON.stringify({ format: FLOOR_PROJECT_FILE_FORMAT, schemaVersion: 1, data: { plan: { schemaVersion: 2, state: {} } } });
+    const result = parseFloorProjectFile(text);
+    expect(result).toEqual({ ok: false, error: "corrupted" });
+  });
+
+  it("标准工程 Plan.state 缺少 slabs 返回 corrupted", () => {
+    const state = { ...buildRichPlan() } as unknown as Record<string, unknown>;
+    delete state.slabs;
+    const text = JSON.stringify({ format: FLOOR_PROJECT_FILE_FORMAT, schemaVersion: 1, data: { plan: { schemaVersion: 2, state } } });
+    const result = parseFloorProjectFile(text);
+    expect(result).toEqual({ ok: false, error: "corrupted" });
+  });
+
+  it("标准工程 Plan.state 缺少 openings 返回 corrupted", () => {
+    const state = { ...buildRichPlan() } as unknown as Record<string, unknown>;
+    delete state.openings;
+    const text = JSON.stringify({ format: FLOOR_PROJECT_FILE_FORMAT, schemaVersion: 1, data: { plan: { schemaVersion: 2, state } } });
+    const result = parseFloorProjectFile(text);
+    expect(result).toEqual({ ok: false, error: "corrupted" });
+  });
+
+  it("标准工程 Plan.state 缺少 supportRules 返回 corrupted", () => {
+    const state = { ...buildRichPlan() } as unknown as Record<string, unknown>;
+    delete state.supportRules;
+    const text = JSON.stringify({ format: FLOOR_PROJECT_FILE_FORMAT, schemaVersion: 1, data: { plan: { schemaVersion: 2, state } } });
+    const result = parseFloorProjectFile(text);
+    expect(result).toEqual({ ok: false, error: "corrupted" });
+  });
+
+  it("标准工程 Plan.state.coordinateModel 非法返回 corrupted", () => {
+    const text = JSON.stringify({
+      format: FLOOR_PROJECT_FILE_FORMAT,
+      schemaVersion: 1,
+      data: { plan: { schemaVersion: 2, state: { ...buildRichPlan(), coordinateModel: "legacy-model-v9" } } },
+    });
+    const result = parseFloorProjectFile(text);
+    expect(result).toEqual({ ok: false, error: "corrupted" });
+  });
+
+  it("普通 { slabs: [] } 不误判为 Legacy，返回 not-floor-file", () => {
+    expect(parseFloorProjectFile(JSON.stringify({ slabs: [] }))).toEqual({ ok: false, error: "not-floor-file" });
+    expect(parseFloorProjectFile(JSON.stringify({ state: {} }))).toEqual({ ok: false, error: "not-floor-file" });
+    expect(parseFloorProjectFile(JSON.stringify({ data: [] }))).toEqual({ ok: false, error: "not-floor-file" });
+    expect(parseFloorProjectFile(JSON.stringify({ projectName: "test" }))).toEqual({ ok: false, error: "not-floor-file" });
+    expect(parseFloorProjectFile(JSON.stringify({ hello: "world" }))).toEqual({ ok: false, error: "not-floor-file" });
+  });
+
+  it("真正裸 FloorPlanState 仍然兼容且标记 legacy", () => {
+    const plan = buildRichPlan();
+    const result = parseFloorProjectFile(JSON.stringify(plan));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.project.legacy).toBe(true);
+    expect(result.project.planState.slabs.map((slab) => slab.id)).toEqual(["s-keep-1", "s-keep-2"]);
+  });
+
+  it("真正 FloorDraftRecord 仍然兼容且标记 legacy", () => {
+    const plan = buildRichPlan();
+    const draft = { schemaVersion: 2, savedAt: "2026-08-16T10:00:00.000Z", state: plan };
+    const result = parseFloorProjectFile(JSON.stringify(draft));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.project.legacy).toBe(true);
+    expect(result.project.planState).toEqual(plan);
+  });
+
+  it("Canonical Export：导出 Plan 使用几何容差纠偏后的 canonical Plan", () => {
+    // 板区A east=4200、板区B west=4205：5mm 微小 gap，overlapToleranceMm=10 应纠偏为精确共边。
+    const raw: FloorPlanState = {
+      ...structuredClone(DEFAULT_FLOOR_PLAN_STATE),
+      slabs: [
+        { id: "s-a", name: "板区A", type: "room", x: 0, y: 0, width: 4200, height: 3600 },
+        { id: "s-b", name: "板区B", type: "room", x: 4205, y: 0, width: 3600, height: 3600 },
+      ],
+      openings: [],
+      supportRules: [],
+      overlapToleranceMm: 10,
+    };
+    const resolved = resolveFloorGeometryTolerance(raw);
+    expect(resolved.plan.slabs[1].x).toBe(4200);
+    expect(resolved.plan).not.toEqual(raw);
+    const file = createFloorProjectFile({
+      projectName: "测试",
+      plan: resolved.plan,
+      bottom: structuredClone(DEFAULT_FLOOR_BOTTOM_STATE),
+      top: structuredClone(DEFAULT_FLOOR_TOP_STATE),
+      role: structuredClone(DEFAULT_FLOOR_REBAR_ROLE_STATE),
+      bottomRoleReviewRequired: false,
+      topRoleReviewRequired: false,
+    });
+    // 导出 Plan 必须等于 canonical Plan，而不是原始带 5mm gap 的 state。
+    expect(file.data.plan.state).toEqual(resolved.plan);
+    expect(file.data.plan.state.slabs[1].x).toBe(4200);
+    // Round Trip 后保持 canonical 坐标。
+    const parsed = parseFloorProjectFile(serializeFloorProjectFile(file));
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.project.planState).toEqual(resolved.plan);
   });
 });

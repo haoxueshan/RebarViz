@@ -508,9 +508,16 @@ export default function FloorRebarCalculator() {
     if (window.innerWidth >= 640 && window.localStorage.getItem("floorWorkspaceInspectorOpen") === "true") setInspectorOpen(true);
     // UI V5：Wide（≥1600px）首访默认 Inspector Dock 展开。
     if (window.innerWidth >= 1600 && window.localStorage.getItem("floorWorkspaceInspectorOpen") === null) setInspectorOpen(true);
-    // UI V5+ 工程名称：独立 project-meta 存储。
-    const projectMeta = parseFloorProjectMetaRecord(JSON.parse(window.localStorage.getItem(FLOOR_PROJECT_META_KEY) ?? "null"));
-    if (projectMeta) setProjectName(projectMeta.projectName);
+    // UI V5+ 工程名称：独立 project-meta 存储；损坏的 meta 不影响 Floor Workspace。
+    try {
+      const metaRaw = window.localStorage.getItem(FLOOR_PROJECT_META_KEY);
+      if (metaRaw) {
+        const projectMeta = parseFloorProjectMetaRecord(JSON.parse(metaRaw));
+        if (projectMeta) setProjectName(projectMeta.projectName);
+      }
+    } catch {
+      setProjectName(FLOOR_DEFAULT_PROJECT_NAME);
+    }
   }, []);
 
   const toleranceResult = useMemo(() => resolveFloorGeometryTolerance(state), [state]);
@@ -726,8 +733,10 @@ export default function FloorRebarCalculator() {
   };
 
   const addSlab = () => {
+    // 空白工程的第一个板区从原点创建，后续板区继续放在已有 bounds 右侧。
+    const isFirstSlab = state.slabs.length === 0;
     const bounds = floorPlanBounds(state.slabs);
-    const next: FloorSlab = { id: nextObjectId("slab"), name: nextAvailableFloorName(state.slabs.map((slab) => slab.name), "板区"), type: "room", x: bounds.maxX, y: bounds.minY, width: 3600, height: 3600 };
+    const next: FloorSlab = { id: nextObjectId("slab"), name: nextAvailableFloorName(state.slabs.map((slab) => slab.name), "板区"), type: "room", x: isFirstSlab ? 0 : bounds.maxX, y: isFirstSlab ? 0 : bounds.minY, width: 3600, height: 3600 };
     applyStateWithHistory({ ...state, slabs: [...state.slabs, next] });
     setSelection({ kind: "slab", id: next.id });
     setSelectedBoundaryId(null);
@@ -1052,9 +1061,10 @@ export default function FloorRebarCalculator() {
   };
 
   const handleExportFloorProject = () => {
+    // 导出必须使用几何容差纠偏后的 canonical Plan，与正式计算及 Floor Draft 自动保存语义一致。
     const project = createFloorProjectFile({
       projectName,
-      plan: state,
+      plan: canonicalPlan,
       bottom: bottomState,
       top: topState,
       role: roleState,
@@ -1603,7 +1613,7 @@ export default function FloorRebarCalculator() {
     <>
       <FloorWorkspaceShell workflow={workflow} body={workspaceBody} status={statusBar} fullscreen={workspaceFullscreen} />
       <FloorIssueCenter open={issueCenterOpen} issues={filteredIssueCenterItems} onClose={() => setIssueCenterOpen(false)} onLocate={locateWorkspaceIssue} />
-      <FloorNewProjectDialog open={newProjectOpen} currentProjectName={projectName} onCancel={() => setNewProjectOpen(false)} onConfirm={handleNewFloorProject} />
+      {newProjectOpen && <FloorNewProjectDialog currentProjectName={projectName} onCancel={() => setNewProjectOpen(false)} onConfirm={handleNewFloorProject} />}
       <FloorImportProjectDialog open={importDialog.open} fileName={importDialog.fileName} project={importDialog.project} errorMessage={importDialog.errorMessage} onCancel={() => setImportDialog({ open: false, fileName: "", project: null, errorMessage: null })} onConfirm={confirmImportProject} onExportCurrent={() => { handleExportFloorProject(); }} />
     </>
   );

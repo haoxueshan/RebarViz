@@ -272,4 +272,143 @@ test.describe("Floor Project IO 工程文件", () => {
     await expect(page.getByTestId("floor-project-menu")).toBeVisible();
     await expect(page.getByTestId("floor-wide-navigator")).toBeVisible();
   });
+
+  // —— Floor Project File V1.1 稳定性修复 ——
+
+  test("Case A：损坏的 Project Meta 不影响页面，工程名 fallback 为未命名楼板", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await installRichWorkspace(page);
+    // 保留正常 Plan/Bottom/Top/Role，仅破坏 meta JSON。
+    await page.evaluate((metaKey) => localStorage.setItem(metaKey, "{broken"), META_KEY);
+    const consoleErrors: string[] = [];
+    page.on("pageerror", (error) => consoleErrors.push(error.message));
+    await page.reload();
+
+    // 页面正常：原板区仍存在，工程名 fallback。
+    await expect(page.getByRole("button", { name: "选择板区 板区A" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "选择板区 板区B" })).toBeVisible();
+    await expect(page.getByTestId("floor-project-menu-button")).toContainText("未命名楼板");
+    // 无白屏：Canvas 工作区存在，且无未捕获异常。
+    await expect(page.getByTestId("floor-canvas-column")).toBeVisible();
+    expect(consoleErrors).toEqual([]);
+    // 四个核心数据未被破坏。
+    const draft = await page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? "{}"), DRAFT_KEY);
+    expect(draft.state.slabs.map((slab: { id: string }) => slab.id)).toEqual(["a", "b"]);
+  });
+
+  test("Case B：新建 Dialog 取消后再次打开恢复默认名称与空白模式", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await installRichWorkspace(page);
+
+    await page.getByTestId("floor-project-menu-button").click();
+    await page.getByRole("button", { name: "新建楼板布局" }).click();
+    const dialog = page.getByTestId("floor-new-project-dialog");
+    await expect(dialog).toBeVisible();
+    // 第一次：输入并选择示例，然后取消。
+    await page.getByTestId("new-project-name-input").fill("A栋一层");
+    await dialog.getByText("使用默认示例布局").click();
+    await dialog.getByRole("button", { name: "取消" }).click();
+    await expect(dialog).toHaveCount(0);
+
+    // 第二次打开：必须恢复默认状态。
+    await page.getByTestId("floor-project-menu-button").click();
+    await page.getByRole("button", { name: "新建楼板布局" }).click();
+    await expect(page.getByTestId("new-project-name-input")).toHaveValue("未命名楼板");
+    const radios = page.getByTestId("floor-new-project-dialog").getByRole("radio");
+    await expect(radios).toHaveCount(2);
+    await expect(radios.first()).toBeChecked();
+    await expect(radios.nth(1)).not.toBeChecked();
+  });
+
+  test("Case C：空白工程第一个板区从原点 (0,0) 创建", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await installRichWorkspace(page);
+
+    await page.getByTestId("floor-project-menu-button").click();
+    await page.getByRole("button", { name: "新建楼板布局" }).click();
+    await page.getByTestId("new-project-confirm").click();
+    await expect(page.getByTestId("floor-canvas-empty")).toBeVisible();
+    await page.getByTestId("floor-canvas-empty").getByRole("button", { name: "新增板区" }).click();
+
+    // autosave 为 300ms debounce，轮询读取 Floor Draft。
+    await expect.poll(async () =>
+      page.evaluate((key) => {
+        const raw = localStorage.getItem(key);
+        if (!raw) return null;
+        const saved = JSON.parse(raw);
+        return saved.state?.slabs?.[0] ?? null;
+      }, DRAFT_KEY),
+    ).toMatchObject({ x: 0, y: 0, width: 3600, height: 3600 });
+  });
+
+  test("Case D：损坏标准 Project 不覆盖当前工程", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await installRichWorkspace(page);
+
+    await page.getByTestId("floor-project-menu-button").click();
+    await page.getByTestId("floor-project-file-input").setInputFiles({
+      name: "broken-project.json",
+      mimeType: "application/json",
+      buffer: Buffer.from(JSON.stringify({
+        format: "rebarviz-floor-layout",
+        schemaVersion: 1,
+        data: { plan: { schemaVersion: 2, state: {} } },
+      }), "utf-8"),
+    });
+    await expect(page.getByTestId("floor-import-error")).toContainText("不完整或已损坏");
+    await page.getByRole("button", { name: "取消" }).click();
+
+    // 原板区仍存在，localStorage 未被替换。
+    await expect(page.getByRole("button", { name: "选择板区 板区A" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "选择板区 板区B" })).toBeVisible();
+    const draft = await page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? "{}"), DRAFT_KEY);
+    expect(draft.state.slabs.map((slab: { id: string }) => slab.id)).toEqual(["a", "b"]);
+    const meta = await page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? "{}"), META_KEY);
+    expect(meta.projectName).toBe("当前工程");
+  });
+
+  test("Case E：普通 JSON 不误判 Legacy，当前工程保持不变", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await installRichWorkspace(page);
+
+    await page.getByTestId("floor-project-menu-button").click();
+    await page.getByTestId("floor-project-file-input").setInputFiles({
+      name: "plain.json",
+      mimeType: "application/json",
+      buffer: Buffer.from(JSON.stringify({ slabs: [] }), "utf-8"),
+    });
+    await expect(page.getByTestId("floor-import-error")).toContainText("不是有效的 RebarViz 楼板布局文件");
+    await page.getByRole("button", { name: "取消" }).click();
+    await expect(page.getByRole("button", { name: "选择板区 板区A" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "选择板区 板区B" })).toBeVisible();
+  });
+
+  test("Case F：导入确认后立即刷新，Plan/Bottom/Top/Through/工程名全部保持", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await installRichWorkspace(page);
+
+    await page.getByTestId("floor-project-menu-button").click();
+    await page.getByTestId("floor-project-file-input").setInputFiles({
+      name: "RebarViz_导入测试工程_2026-08-16.json",
+      mimeType: "application/json",
+      buffer: Buffer.from(buildValidProjectFile(), "utf-8"),
+    });
+    await expect(page.getByTestId("floor-import-project-dialog")).toBeVisible();
+    await page.getByTestId("floor-import-confirm").click();
+    // Autosave Race 核心验收：确认后立即刷新。
+    await page.reload();
+
+    await expect(page.getByRole("button", { name: "选择板区 客厅" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "选择板区 卧室" })).toBeVisible();
+    const draft = await page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? "{}"), DRAFT_KEY);
+    expect(draft.state.slabs.map((slab: { id: string }) => slab.id)).toEqual(["imp-s1", "imp-s2"]);
+    expect(draft.state.openings.map((opening: { id: string }) => opening.id)).toEqual(["imp-o1"]);
+    const bottom = await page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? "{}"), BOTTOM_KEY);
+    expect(bottom.state.slabOverrides["imp-s1"]).toMatchObject({ mainDiameter: 16, xSpacing: 150 });
+    const top = await page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? "{}"), TOP_KEY);
+    expect(top.state.slabOverrides["imp-s2"]).toMatchObject({ mainDiameter: 12, xSpacing: 260 });
+    expect(top.state.throughPaths.map((path: { id: string }) => path.id)).toEqual(["imp-tp1"]);
+    const meta = await page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? "{}"), META_KEY);
+    expect(meta.projectName).toBe("导入测试工程");
+  });
 });

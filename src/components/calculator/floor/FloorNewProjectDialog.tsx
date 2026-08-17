@@ -8,14 +8,13 @@ export type FloorNewProjectMode = "blank" | "example";
 
 /**
  * UI V5+ 新建楼板布局 Dialog：工程名称 + 起始方式（空白/默认示例）。
+ * 由父组件条件渲染：每次打开重新挂载，输入状态自动重置。
  */
 export function FloorNewProjectDialog({
-  open,
   currentProjectName,
   onCancel,
   onConfirm,
 }: {
-  open: boolean;
   currentProjectName: string;
   onCancel: () => void;
   onConfirm: (name: string, mode: FloorNewProjectMode) => void;
@@ -23,7 +22,6 @@ export function FloorNewProjectDialog({
   const [name, setName] = useState(FLOOR_DEFAULT_PROJECT_NAME);
   const [mode, setMode] = useState<FloorNewProjectMode>("blank");
 
-  if (!open) return null;
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="新建楼板布局">
       <button type="button" aria-label="关闭新建对话框" onClick={onCancel} className="absolute inset-0 bg-slate-950/40" />

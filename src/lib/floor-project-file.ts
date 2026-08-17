@@ -25,6 +25,7 @@ import {
 } from "./floor-bottom-storage";
 import {
   createFloorDraftRecord,
+  FLOOR_DRAFT_SCHEMA_VERSION,
   parseFloorDraftRecord,
 } from "./floor-plan-storage";
 import {
@@ -164,17 +165,66 @@ export function createFloorProjectFile(input: {
   };
 }
 
+function isObjectLike(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+/**
+ * 标准工程文件 Plan 最低结构校验：必须是 FloorDraft V2 Record，
+ * 且 state 具备 FloorPlanState 的三个数组字段与坐标模型（若存在）。
+ * 标准工程文件禁止把损坏数据静默 Normalize 成默认布局。
+ */
+function isStrictFloorDraftPlanRecord(value: unknown): boolean {
+  if (!isObjectLike(value)) return false;
+  const candidate = value as { schemaVersion?: unknown; state?: unknown };
+  if (candidate.schemaVersion !== FLOOR_DRAFT_SCHEMA_VERSION) return false;
+  if (!isObjectLike(candidate.state)) return false;
+  const state = candidate.state as { slabs?: unknown; openings?: unknown; supportRules?: unknown; coordinateModel?: unknown };
+  if (!Array.isArray(state.slabs)) return false;
+  if (!Array.isArray(state.openings)) return false;
+  if (!Array.isArray(state.supportRules)) return false;
+  if (state.coordinateModel !== undefined && state.coordinateModel !== "net-layout-v1") return false;
+  return true;
+}
+
+/** 旧 FloorDraftRecord 的 state 特征：坐标模型或 slabs 数组（结合 Draft Schema 标记识别）。 */
+function hasLegacyPlanShape(state: Record<string, unknown>): boolean {
+  return state.coordinateModel === "net-layout-v1" || Array.isArray(state.slabs);
+}
+
+/**
+ * 旧版“仅楼层草稿文件”识别（收紧）：
+ * - FloorDraftRecord：schemaVersion === Draft Schema 且 state 具备 FloorPlan 特征；
+ * - 裸 FloorPlanState：coordinateModel + slabs + openings 三个特征同时满足。
+ * 普通 JSON（如 { slabs: [] }）不再误判为 Legacy。
+ */
 function parseLegacyPlan(value: unknown): ReturnType<typeof parseFloorDraftRecord> {
-  // 兼容旧版“仅楼层草稿文件”：直接是 FloorDraftRecord 或裸 FloorPlanState。
-  if (value && typeof value === "object") {
-    const candidate = value as { state?: unknown; slabs?: unknown; coordinateModel?: unknown };
-    if (candidate.state && typeof candidate.state === "object") {
-      const draft = parseFloorDraftRecord(candidate);
-      return draft;
-    }
-    if (candidate.coordinateModel === "net-layout-v1" || Array.isArray(candidate.slabs)) {
-      return { schemaVersion: 2, savedAt: new Date(0).toISOString(), state: normalizeFloorPlanState(value) };
-    }
+  if (!isObjectLike(value)) return null;
+  const candidate = value as {
+    schemaVersion?: unknown; savedAt?: unknown; state?: unknown;
+    slabs?: unknown; openings?: unknown; coordinateModel?: unknown;
+  };
+  if (
+    candidate.schemaVersion === FLOOR_DRAFT_SCHEMA_VERSION &&
+    isObjectLike(candidate.state) &&
+    hasLegacyPlanShape(candidate.state)
+  ) {
+    return {
+      schemaVersion: FLOOR_DRAFT_SCHEMA_VERSION,
+      savedAt: typeof candidate.savedAt === "string" ? candidate.savedAt : new Date(0).toISOString(),
+      state: normalizeFloorPlanState(candidate.state),
+    };
+  }
+  if (
+    candidate.coordinateModel === "net-layout-v1" &&
+    Array.isArray(candidate.slabs) &&
+    Array.isArray(candidate.openings)
+  ) {
+    return {
+      schemaVersion: FLOOR_DRAFT_SCHEMA_VERSION,
+      savedAt: new Date(0).toISOString(),
+      state: normalizeFloorPlanState(value),
+    };
   }
   return null;
 }
@@ -192,12 +242,14 @@ export function parseFloorProjectFile(text: string): FloorProjectParseResult {
   // 标准工程文件路径。
   if (candidate.format !== undefined) {
     if (candidate.format !== FLOOR_PROJECT_FILE_FORMAT) return { ok: false, error: "not-floor-file" };
-    if (typeof candidate.schemaVersion !== "number" || candidate.schemaVersion > FLOOR_PROJECT_FILE_SCHEMA_VERSION) {
+    // schemaVersion 严格：当前仅支持 V1，0/-1/0.5/"1"/2/99 一律拒绝。
+    if (candidate.schemaVersion !== FLOOR_PROJECT_FILE_SCHEMA_VERSION) {
       return { ok: false, error: "unsupported-schema" };
     }
-    if (!candidate.data || typeof candidate.data !== "object") return { ok: false, error: "corrupted" };
+    if (!isObjectLike(candidate.data)) return { ok: false, error: "corrupted" };
     const data = candidate.data as { plan?: unknown; bottom?: unknown; top?: unknown; role?: unknown };
-    if (!data.plan) return { ok: false, error: "missing-plan" };
+    if (data.plan === undefined || data.plan === null) return { ok: false, error: "missing-plan" };
+    if (!isStrictFloorDraftPlanRecord(data.plan)) return { ok: false, error: "corrupted" };
     const planRecord = parseFloorDraftRecord(data.plan);
     if (!planRecord) return { ok: false, error: "missing-plan" };
     const slabIds = new Set(planRecord.state.slabs.map((slab) => slab.id));
