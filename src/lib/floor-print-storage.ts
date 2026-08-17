@@ -203,6 +203,19 @@ export function removeFloorPrintSnapshot(storage: WritableStorage, id: string): 
   if (storage.getItem(FLOOR_PRINT_LAST_ID_KEY) === id) storage.removeItem(FLOOR_PRINT_LAST_ID_KEY);
 }
 
+/**
+ * 只清理旧版打印快照（前缀 rebarviz:floor-print:snapshot: 与 last-id）。
+ * 禁止触碰 Floor 工程数据（rebarviz:floor-rebar:*）与其他业务存储。
+ */
+export function clearLegacyFloorPrintSnapshots(storage: Pick<Storage, "length" | "key" | "removeItem">): void {
+  const keys: string[] = [];
+  for (let index = 0; index < storage.length; index += 1) {
+    const key = storage.key(index);
+    if (key && (key.startsWith(FLOOR_PRINT_SNAPSHOT_KEY_PREFIX) || key === FLOOR_PRINT_LAST_ID_KEY)) keys.push(key);
+  }
+  keys.forEach((key) => storage.removeItem(key));
+}
+
 export function createFloorPrintSettingsRecord(
   options: FloorPrintOptions,
   savedAt = new Date().toISOString(),

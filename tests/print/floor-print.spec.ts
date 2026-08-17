@@ -7,6 +7,53 @@ type FloorDraftInput = {
   opening?: { x: number; y: number; width: number; height: number };
 };
 
+/** 从 IndexedDB 读取打印快照（V1.2 起主存储，sessionStorage 仅 legacy fallback）。 */
+async function readSnapshotFromIndexedDb(page: Page, id: string): Promise<unknown> {
+  return page.evaluate(async (snapshotId) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("rebarviz-floor-print", 1);
+      request.onupgradeneeded = () => {
+        if (!request.result.objectStoreNames.contains("snapshots")) request.result.createObjectStore("snapshots", { keyPath: "id" });
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error ?? new Error("open failed"));
+    });
+    try {
+      return await new Promise<unknown>((resolve, reject) => {
+        const request = db.transaction("snapshots", "readonly").objectStore("snapshots").get(snapshotId);
+        request.onsuccess = () => resolve(request.result ?? null);
+        request.onerror = () => reject(request.error ?? new Error("get failed"));
+      });
+    } finally {
+      db.close();
+    }
+  }, id);
+}
+
+/** 向 IndexedDB 写回修改后的快照（用于冻结数据不变性测试）。 */
+async function writeSnapshotToIndexedDb(page: Page, id: string, snapshot: unknown): Promise<void> {
+  await page.evaluate(async ({ snapshotId, value }) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("rebarviz-floor-print", 1);
+      request.onupgradeneeded = () => {
+        if (!request.result.objectStoreNames.contains("snapshots")) request.result.createObjectStore("snapshots", { keyPath: "id" });
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error ?? new Error("open failed"));
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const transaction = db.transaction("snapshots", "readwrite");
+        transaction.objectStore("snapshots").put({ ...(value as Record<string, unknown>), id: snapshotId });
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error ?? new Error("put failed"));
+      });
+    } finally {
+      db.close();
+    }
+  }, { snapshotId: id, value: snapshot });
+}
+
 async function openFloorBom(page: Page, input: FloorDraftInput): Promise<void> {
   await page.goto("/calculator/floor");
   await page.evaluate(({ width, height, opening }) => {
@@ -83,8 +130,8 @@ test.describe("Floor Print V1整层冻结快照打印", () => {
     await expect(page.locator('tr[data-print-mark="M01"]').first()).toBeVisible();
     await expect(page.getByText("郝家住宅")).toBeVisible();
 
-    const before = await page.evaluate((id) => JSON.parse(sessionStorage.getItem(`rebarviz:floor-print:snapshot:${id}`) ?? "null"), snapshotId);
-    expect(before.summary.totalPieceCount).toBeGreaterThan(0);
+    const before = await readSnapshotFromIndexedDb(page, snapshotId);
+    expect((before as { summary: { totalPieceCount: number } }).summary.totalPieceCount).toBeGreaterThan(0);
     await page.evaluate(() => {
       const draft = JSON.parse(localStorage.getItem("rebarviz:floor-rebar:draft:v1") ?? "null");
       draft.state.slabs[0].width = 9999;
@@ -92,7 +139,7 @@ test.describe("Floor Print V1整层冻结快照打印", () => {
     });
     await page.reload();
     await expect(page.getByText("郝家住宅")).toBeVisible();
-    const after = await page.evaluate((id) => JSON.parse(sessionStorage.getItem(`rebarviz:floor-print:snapshot:${id}`) ?? "null"), snapshotId);
+    const after = await readSnapshotFromIndexedDb(page, snapshotId);
     expect(after).toEqual(before);
     await makeA3Pdf(page, testInfo);
   });
@@ -100,22 +147,21 @@ test.describe("Floor Print V1整层冻结快照打印", () => {
   test("同一Mark在两个分离空间带各标一次但BOM仍只有一行", async ({ page }) => {
     await openFloorBom(page, { width: 8000, height: 4000 });
     const snapshotId = await generateSnapshot(page);
-    await page.evaluate((id) => {
-      const key = `rebarviz:floor-print:snapshot:${id}`;
-      const snapshot = JSON.parse(sessionStorage.getItem(key) ?? "null");
-      const pieces = snapshot.bottom.pieces.filter((piece: { mark: string }) => piece.mark === "D01");
-      pieces.forEach((piece: { direction: "x" | "y"; runStartMm: number; runEndMm: number }, index: number) => {
-        const firstBand = index < Math.ceil(pieces.length / 2);
-        if (piece.direction === "x") {
-          piece.runStartMm = firstBand ? 0 : 6000;
-          piece.runEndMm = firstBand ? 2000 : 8000;
-        } else {
-          piece.runStartMm = firstBand ? 0 : 3000;
-          piece.runEndMm = firstBand ? 1000 : 4000;
-        }
-      });
-      sessionStorage.setItem(key, JSON.stringify(snapshot));
-    }, snapshotId);
+    const snapshot = await readSnapshotFromIndexedDb(page, snapshotId) as {
+      bottom: { pieces: Array<{ mark: string; direction: "x" | "y"; runStartMm: number; runEndMm: number }> };
+    };
+    const pieces = snapshot.bottom.pieces.filter((piece) => piece.mark === "D01");
+    pieces.forEach((piece, index) => {
+      const firstBand = index < Math.ceil(pieces.length / 2);
+      if (piece.direction === "x") {
+        piece.runStartMm = firstBand ? 0 : 6000;
+        piece.runEndMm = firstBand ? 2000 : 8000;
+      } else {
+        piece.runStartMm = firstBand ? 0 : 3000;
+        piece.runEndMm = firstBand ? 1000 : 4000;
+      }
+    });
+    await writeSnapshotToIndexedDb(page, snapshotId, snapshot);
     await page.reload();
     await expect(page.locator('svg[data-floor-print-plan="bottom"] [data-mark-label="D01"]')).toHaveCount(2);
     await expect(page.locator('tr[data-print-mark="D01"]')).toHaveCount(1);
@@ -141,10 +187,8 @@ test.describe("Floor Print V1整层冻结快照打印", () => {
     await page.getByTestId("generate-floor-print-preview").click();
     await page.waitForURL(/\/calculator\/floor\/print\?id=/);
     await expect(page.locator("[data-print-piece-id]").first()).toBeAttached();
-    const snapshot = await page.evaluate(() => {
-      const id = new URL(location.href).searchParams.get("id");
-      return JSON.parse(sessionStorage.getItem(`rebarviz:floor-print:snapshot:${id}`) ?? "null");
-    });
+    const snapshotId = new URL(page.url()).searchParams.get("id") ?? "";
+    const snapshot = await readSnapshotFromIndexedDb(page, snapshotId) as { bottom: { pieces: Array<{ direction: "x" | "y"; positionMm: number; runStartMm: number; runEndMm: number; id: string }> } };
     const byPosition = new Map<string, Array<{ start: number; end: number; id: string }>>();
     for (const piece of snapshot.bottom.pieces) {
       const key = `${piece.direction}:${piece.positionMm}`;
@@ -244,7 +288,10 @@ test.describe("Floor Print V1整层冻结快照打印", () => {
     await expect(page.locator('svg[data-floor-print-plan="top"] [data-mark="T01"] [data-through-outer="true"]')).not.toHaveCount(0);
     await expect(page.locator('svg[data-floor-print-plan="top"] [data-mark="T01"] [data-through-inner="true"]')).not.toHaveCount(0);
     await expect(page.locator('tr[data-print-mark="T01"]')).toContainText("通墙面筋 · 通墙01");
-    const frozen = await page.evaluate((id) => JSON.parse(sessionStorage.getItem(`rebarviz:floor-print:snapshot:${id}`) ?? "null"), snapshotId);
+    const frozen = await readSnapshotFromIndexedDb(page, snapshotId) as {
+      schemaVersion: number;
+      summary: { topThroughPieceCount: number };
+    };
     expect(frozen.schemaVersion).toBe(2);
     expect(frozen.summary.topThroughPieceCount).toBeGreaterThan(0);
 
@@ -254,7 +301,7 @@ test.describe("Floor Print V1整层冻结快照打印", () => {
       localStorage.setItem("rebarviz:floor-rebar:top:v1", JSON.stringify(record));
     });
     await page.reload();
-    const after = await page.evaluate((id) => JSON.parse(sessionStorage.getItem(`rebarviz:floor-print:snapshot:${id}`) ?? "null"), snapshotId);
+    const after = await readSnapshotFromIndexedDb(page, snapshotId);
     expect(after).toEqual(frozen);
   });
 

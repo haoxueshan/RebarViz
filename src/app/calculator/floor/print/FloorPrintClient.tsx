@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { FloorPrintReport } from "@/components/calculator/floor/FloorPrintReport";
 import type { FloorPrintSnapshot } from "@/lib/floor-print";
-import { loadFloorPrintSnapshot } from "@/lib/floor-print-storage";
+import { loadFloorPrintSnapshotAnywhere } from "@/lib/floor-print-snapshot-db";
 
 export default function FloorPrintClient() {
   const router = useRouter();
@@ -14,7 +14,11 @@ export default function FloorPrintClient() {
   const [snapshot, setSnapshot] = useState<FloorPrintSnapshot | null | undefined>(undefined);
 
   useEffect(() => {
-    setSnapshot(loadFloorPrintSnapshot(window.sessionStorage, snapshotId));
+    let cancelled = false;
+    loadFloorPrintSnapshotAnywhere(snapshotId)
+      .then((loaded) => { if (!cancelled) setSnapshot(loaded); })
+      .catch(() => { if (!cancelled) setSnapshot(null); });
+    return () => { cancelled = true; };
   }, [snapshotId]);
 
   if (snapshot === undefined) {
@@ -33,10 +37,9 @@ export default function FloorPrintClient() {
     );
   }
 
+  // 打印预览已完整渲染后，用户点击直接调用 window.print()（iPad/Safari 不再依赖双 RAF 延迟）。
   const print = () => {
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => window.print());
-    });
+    window.print();
   };
 
   return (

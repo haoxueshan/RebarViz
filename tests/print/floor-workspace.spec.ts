@@ -351,8 +351,8 @@ test("楼层阶段选中板区直接看到净尺寸，修改后Canvas实时变�
 
 test("正方形板区进入地筋即可直接点击主筋方向按钮", async ({ page }) => {
   await page.setViewportSize({ width: 1024, height: 768 });
-  await page.goto("/calculator/floor");
-  await page.evaluate(({ draftKey, bottomKey, topKey, roleKey }) => {
+  // 在每次导航前写入测试草稿：避免应用首次 autosave（约 300ms）把默认布局回写覆盖测试数据。
+  await page.addInitScript(({ draftKey, bottomKey, topKey, roleKey }) => {
     localStorage.setItem(draftKey, JSON.stringify({
       schemaVersion: 2,
       savedAt: new Date().toISOString(),
@@ -371,9 +371,7 @@ test("正方形板区进入地筋即可直接点击主筋方向按钮", async ({
     localStorage.removeItem(roleKey);
     localStorage.setItem("floorWorkspaceInspectorOpen", "true");
   }, { draftKey: DRAFT_KEY, bottomKey: BOTTOM_KEY, topKey: TOP_KEY, roleKey: ROLE_KEY });
-  await page.waitForTimeout(250);
-  await page.evaluate(() => localStorage.setItem("floorWorkspaceInspectorOpen", "true"));
-  await page.reload();
+  await page.goto("/calculator/floor");
   await page.getByRole("button", { name: /2\. 地筋/ }).click();
   await page.getByTestId("floor-workspace-inspector").getByRole("tab", { name: "主副筋" }).click();
   const xButton = page.getByTestId("floor-workspace-inspector").getByRole("button", { name: "东西向主筋" });

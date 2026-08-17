@@ -39,13 +39,16 @@ const DISPLAY_LABELS: Array<[keyof FloorPrintOptions["display"], string]> = [
 export function FloorPrintDialog({
   open,
   eligibility,
+  generating = false,
   onClose,
   onGenerate,
 }: {
   open: boolean;
   eligibility: FloorPrintEligibility;
+  /** 正在生成冻结快照：禁用生成按钮，防止重复点击。 */
+  generating?: boolean;
   onClose: () => void;
-  onGenerate: (project: FloorPrintProjectInfo, options: FloorPrintOptions) => void;
+  onGenerate: (project: FloorPrintProjectInfo, options: FloorPrintOptions) => void | Promise<void>;
 }) {
   const [options, setOptions] = useState<FloorPrintOptions>(() => {
     if (typeof window === "undefined") return structuredClone(DEFAULT_FLOOR_PRINT_OPTIONS);
@@ -150,15 +153,15 @@ export function FloorPrintDialog({
           <button type="button" onClick={onClose} className="min-h-11 flex-1 rounded-xl border border-slate-300 font-semibold text-slate-700">取消</button>
           <button
             type="button"
-            disabled={!eligibility.eligible}
+            disabled={!eligibility.eligible || generating}
             onClick={() => {
               saveFloorPrintSettings(window.localStorage, options);
-              onGenerate(project, options);
+              void onGenerate(project, options);
             }}
             className="inline-flex min-h-11 flex-[1.5] items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
             data-testid="generate-floor-print-preview"
           >
-            <Printer size={17} />生成打印预览
+            <Printer size={17} />{generating ? "正在生成…" : "生成打印预览"}
           </button>
         </div>
       </div>

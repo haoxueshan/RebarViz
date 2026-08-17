@@ -1534,22 +1534,42 @@ export default function FloorRebarCalculator() {
   );
   const statusBar = <FloorWorkspaceStatusBar stage={stage} mode={commandModeLabel} selectionLabel={currentSelectionLabel} detail={statusDetail} issueCount={currentStageIssueCount} zoomPercent={canvasZoomPercent} saved={draftSavedAt !== null} flash={statusFlash} bottom={bottomCalculation} top={topCalculation} onOpenIssues={() => openIssueCenter(stage)} onOpenBom={() => { setBomFilter(stage === "top" ? "top" : "bottom"); changeStage("bom"); }} />;
 
-  const workspaceBody = stage === "bom" ? (
-    <div className="h-full overflow-y-auto bg-slate-100 p-3 sm:p-4" data-testid="floor-bom-workspace">
-      {state.slabs.length === 0 ? (
-        <div className="mx-auto max-w-md rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center" data-testid="floor-bom-empty"><p className="font-bold text-slate-900">尚未创建板区</p><p className="mt-1 text-xs text-slate-500">料单根据板区、地筋与面筋设置生成，请先创建板区。</p></div>
+  // UI V1.2：Touch 工程入口（新建/导入/导出）独立于计算 Stage，所有阶段（含料单）都存在。
+  // 覆盖设备：Touch Phone / Touch Tablet（768×1024、820×1180、1024×768 等）。
+  const touchWorkspaceActionBar = !workspaceFullscreen && (touchInput || profile.viewport === "phone") ? (
+    <div className="flex shrink-0 items-center gap-2 border-b border-slate-200 bg-white p-2" data-testid="floor-touch-action-bar">
+      <FloorProjectMenu compact projectName={projectName} onAction={(action) => { if (action === "new") setNewProjectOpen(true); else if (action === "export") handleExportFloorProject(); }} onImportFile={handleImportFile} />
+      {stage === "bom" ? (
+        <strong className="ml-1 min-w-0 flex-1 truncate text-sm font-bold text-slate-900">料单</strong>
       ) : (
-        <FloorBomPanel plan={state} bottom={bottomCalculation} top={topCalculation} bottomRoleReviewRequired={bottomRoleReviewRequired} topRoleReviewRequired={topRoleReviewRequired} invalidDraftCount={invalidDrafts.size + invalidBottomDrafts.size + invalidTopDrafts.size} initialFilter={bomFilter} />
+        <>
+          <button type="button" onClick={() => openNavigatorOverlay(null)} className="inline-flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-left text-sm font-semibold text-slate-800"><Menu size={17} /><span className="min-w-0 flex-1 truncate">当前：{currentSelectionLabel}</span><ChevronRight size={16} /></button>
+          <button type="button" aria-expanded={inspectorOpen} onClick={() => { if (inspectorOpen) closeInspector(); else openInspector(); }} className={`inline-flex min-h-11 items-center gap-2 rounded-lg px-4 text-sm font-semibold ${inspectorOpen ? "border border-slate-300 bg-white text-slate-700" : "bg-blue-600 text-white"}`}><Settings2 size={17} />{profile.viewport === "phone" ? "编辑" : inspectorOpen ? "收起编辑" : "展开编辑"}</button>
+        </>
       )}
     </div>
-  ) : (
+  ) : null;
+
+  const workspaceBody = (
     <div className="flex h-full min-h-0 flex-col">
-      {!workspaceFullscreen && <div className={`flex items-center gap-2 border-b border-slate-200 bg-white p-2 ${touchInput ? "" : "xl:hidden"}`}>
-        {profile.viewport === "phone" && <FloorProjectMenu compact projectName={projectName} onAction={(action) => { if (action === "new") setNewProjectOpen(true); else if (action === "export") handleExportFloorProject(); }} onImportFile={handleImportFile} />}
-        <button type="button" onClick={() => openNavigatorOverlay(null)} className="inline-flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-left text-sm font-semibold text-slate-800"><Menu size={17} /><span className="min-w-0 flex-1 truncate">当前：{currentSelectionLabel}</span><ChevronRight size={16} /></button>
-        <button type="button" aria-expanded={inspectorOpen} onClick={() => { if (inspectorOpen) closeInspector(); else openInspector(); }} className={`inline-flex min-h-11 items-center gap-2 rounded-lg px-4 text-sm font-semibold ${inspectorOpen ? "border border-slate-300 bg-white text-slate-700" : "bg-blue-600 text-white"}`}><Settings2 size={17} />{profile.viewport === "phone" ? "编辑" : inspectorOpen ? "收起编辑" : "展开编辑"}</button>
-      </div>}
-      <div className={`relative grid min-h-0 min-w-0 flex-1 gap-2 bg-slate-100 p-2 ${workspaceFullscreen ? "h-full" : gridClass}`} data-testid="floor-workspace-grid">
+      {touchWorkspaceActionBar}
+      {stage === "bom" ? (
+        <div className="min-h-0 flex-1 overflow-y-auto bg-slate-100 p-3 sm:p-4" data-testid="floor-bom-workspace">
+          {state.slabs.length === 0 ? (
+            <div className="mx-auto max-w-md rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center" data-testid="floor-bom-empty"><p className="font-bold text-slate-900">尚未创建板区</p><p className="mt-1 text-xs text-slate-500">料单根据板区、地筋与面筋设置生成，请先创建板区。</p></div>
+          ) : (
+            <FloorBomPanel plan={state} bottom={bottomCalculation} top={topCalculation} bottomRoleReviewRequired={bottomRoleReviewRequired} topRoleReviewRequired={topRoleReviewRequired} invalidDraftCount={invalidDrafts.size + invalidBottomDrafts.size + invalidTopDrafts.size} initialFilter={bomFilter} />
+          )}
+        </div>
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col">
+          {!workspaceFullscreen && !touchInput && profile.viewport !== "phone" && (
+            <div className="flex items-center gap-2 border-b border-slate-200 bg-white p-2 xl:hidden">
+              <button type="button" onClick={() => openNavigatorOverlay(null)} className="inline-flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-left text-sm font-semibold text-slate-800"><Menu size={17} /><span className="min-w-0 flex-1 truncate">当前：{currentSelectionLabel}</span><ChevronRight size={16} /></button>
+              <button type="button" aria-expanded={inspectorOpen} onClick={() => { if (inspectorOpen) closeInspector(); else openInspector(); }} className={`inline-flex min-h-11 items-center gap-2 rounded-lg px-4 text-sm font-semibold ${inspectorOpen ? "border border-slate-300 bg-white text-slate-700" : "bg-blue-600 text-white"}`}><Settings2 size={17} />{inspectorOpen ? "收起编辑" : "展开编辑"}</button>
+            </div>
+          )}
+          <div className={`relative grid min-h-0 min-w-0 flex-1 gap-2 bg-slate-100 p-2 ${workspaceFullscreen ? "h-full" : gridClass}`} data-testid="floor-workspace-grid">
         <aside className={`min-h-0 overflow-hidden border-r border-slate-200 bg-white ${desktopNavigatorClass} ${workspaceFullscreen ? "xl:hidden" : ""}`}>
           {/* UI V5：Wide（≥1600px）渲染完整 Navigator Dock；其余桌面渲染 52px Rail（JS 条件渲染避免重复 DOM）。 */}
           {!touchInput && profile.viewport === "wide" ? (
@@ -1604,8 +1624,10 @@ export default function FloorRebarCalculator() {
         {!workspaceFullscreen && !touchInput && !inspectorOpen && (
           <button type="button" onClick={openInspector} aria-label="打开参数面板" data-testid="open-inspector-handle" className="absolute right-2 top-1/2 z-20 hidden -translate-y-1/2 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-3 text-xs font-semibold text-slate-600 shadow-sm hover:bg-slate-50 xl:inline-flex"><ChevronLeft size={14} /><span className="[writing-mode:vertical-rl]">属性</span></button>
         )}
-      </div>
-      {!workspaceFullscreen && useSheetNavigation && <FloorWorkspaceDrawer open={navigatorOpen} title={paletteTitle} side="left" onClose={closeNavigatorOverlay}>{overlayNavigator}</FloorWorkspaceDrawer>}
+          </div>
+          {!workspaceFullscreen && useSheetNavigation && <FloorWorkspaceDrawer open={navigatorOpen} title={paletteTitle} side="left" onClose={closeNavigatorOverlay}>{overlayNavigator}</FloorWorkspaceDrawer>}
+        </div>
+      )}
     </div>
   );
 

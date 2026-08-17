@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 
 const DRAFT_KEY = "rebarviz:floor-rebar:draft:v1";
@@ -110,7 +111,7 @@ test.describe("Floor Project IO 工程文件", () => {
     expect(download.suggestedFilename()).toMatch(/^RebarViz_当前工程_\d{4}-\d{2}-\d{2}\.json$/);
 
     const path = await download.path();
-    const text = path ? require("fs").readFileSync(path, "utf-8") : "";
+    const text = path ? readFileSync(path, "utf-8") : "";
     expect(text).toContain('"format": "rebarviz-floor-layout"');
     const parsed = JSON.parse(text);
     expect(parsed.schemaVersion).toBe(1);

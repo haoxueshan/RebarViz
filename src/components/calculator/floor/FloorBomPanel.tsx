@@ -1,7 +1,7 @@
 "use client";
 
 import { FileText, Printer } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { FloorBottomCalculation } from "@/lib/floor-bottom-calculator";
 import type { FloorPlanState } from "@/lib/floor-plan";
@@ -13,7 +13,10 @@ import {
   type FloorPrintOptions,
   type FloorPrintProjectInfo,
 } from "@/lib/floor-print";
-import { saveFloorPrintSnapshot } from "@/lib/floor-print-storage";
+import {
+  FloorPrintStorageError,
+  persistFloorPrintSnapshot,
+} from "@/lib/floor-print-snapshot-db";
 import type { FloorTopCalculation } from "@/lib/floor-top-calculator";
 import { FloorPrintDialog } from "./FloorPrintDialog";
 
@@ -73,6 +76,8 @@ export function FloorBomPanel({
   const router = useRouter();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [buildError, setBuildError] = useState<string | null>(null);
+  const [generatingPrint, setGeneratingPrint] = useState(false);
+  const generatingPrintRef = useRef(false);
   const [previewFilter, setPreviewFilter] = useState<"all" | "bottom" | "top" | "through">(initialFilter);
   const [previewQuery, setPreviewQuery] = useState("");
   const eligibility = useMemo(() => getFloorPrintEligibility({
@@ -103,7 +108,11 @@ export function FloorBomPanel({
     });
   }, [content, previewFilter, previewQuery]);
 
-  const generate = (project: FloorPrintProjectInfo, options: FloorPrintOptions) => {
+  const generate = async (project: FloorPrintProjectInfo, options: FloorPrintOptions) => {
+    // 防止快速连点产生多个巨大快照。
+    if (generatingPrintRef.current) return;
+    generatingPrintRef.current = true;
+    setGeneratingPrint(true);
     try {
       const snapshot = buildFloorPrintSnapshot({
         plan,
@@ -115,11 +124,15 @@ export function FloorBomPanel({
         project,
         options,
       });
-      saveFloorPrintSnapshot(window.sessionStorage, snapshot);
+      // 主存储 IndexedDB；不可用时 sessionStorage 单快照 fallback。
+      await persistFloorPrintSnapshot(snapshot);
       setBuildError(null);
       router.push(`/calculator/floor/print?id=${encodeURIComponent(snapshot.id)}`);
     } catch (error) {
-      setBuildError(error instanceof Error ? error.message : "打印快照生成失败。");
+      setBuildError(error instanceof FloorPrintStorageError ? error.message : "打印快照生成失败，请重试。");
+    } finally {
+      generatingPrintRef.current = false;
+      setGeneratingPrint(false);
     }
   };
 
@@ -171,7 +184,7 @@ export function FloorBomPanel({
         </>
       )}
 
-      <FloorPrintDialog open={dialogOpen} eligibility={eligibility} onClose={() => setDialogOpen(false)} onGenerate={generate} />
+      <FloorPrintDialog open={dialogOpen} eligibility={eligibility} generating={generatingPrint} onClose={() => setDialogOpen(false)} onGenerate={generate} />
     </div>
   );
 }
