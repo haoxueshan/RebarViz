@@ -114,6 +114,7 @@ import {
 import {
   resolveFloorGeometryTolerance,
 } from "@/lib/floor-geometry-tolerance";
+import { floorPhysicalSharedBand } from "@/lib/floor-physical-layout";
 import {
   createFloorHistory,
   pushFloorHistory,
@@ -695,6 +696,15 @@ export default function FloorRebarCalculator() {
     [multiAlignKind, multiSelection, state],
   );
   const dockSuggestions = useMemo(() => suggestFloorDockFixes(canonicalPlan), [canonicalPlan]);
+  // Floor Physical V1.3：Dock 落位后源/目标之间将形成的物理墙带（净跨 Gap 仍为 0）。
+  const dockResultBand = useMemo(() => {
+    if (!dockPreview?.valid || !dockSourceId || !dockTargetId) return null;
+    const positioned = {
+      ...state,
+      slabs: state.slabs.map((slab) => slab.id === dockPreview.sourceSlabId ? { ...slab, x: dockPreview.x, y: dockPreview.y } : slab),
+    };
+    return floorPhysicalSharedBand(positioned, dockPreview.sourceSlabId, dockPreview.targetSlabId);
+  }, [dockPreview, dockSourceId, dockTargetId, state]);
   const sideRelations = useMemo(
     () => selectedSlab ? describeFloorSlabSideRelations(canonicalPlan, selectedSlab.id) : [],
     [canonicalPlan, selectedSlab],
@@ -1364,6 +1374,7 @@ export default function FloorRebarCalculator() {
       ) : null}
       <section className="space-y-3 border-t border-slate-200 pt-4">
         <h3 className="text-sm font-semibold text-slate-900">楼层设置</h3>
+        <p className="rounded-lg bg-slate-50 px-2 py-1.5 text-[11px] leading-4 text-slate-500">板区尺寸为净尺寸；坐标为净跨拓扑坐标，墙厚由平面物理布局自动展开。</p>
         {field("inner-wall", "内墙厚度", state.innerWallThickness, (value) => setState((current) => ({ ...current, innerWallThickness: value })), 1)}
         {field("outer-wall", "外墙厚度", state.outerWallThickness, (value) => setState((current) => ({ ...current, outerWallThickness: value })), 1)}
         {field("snap", "自动吸附距离", state.snapDistanceMm, (value) => setState((current) => ({ ...current, snapDistanceMm: value })), 0)}
@@ -1417,7 +1428,7 @@ export default function FloorRebarCalculator() {
         {Math.max(Math.abs(dockPreview.moveXmm), Math.abs(dockPreview.moveYmm)) > state.snapDistanceMm && <span className="rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-700">该操作将移动板区{formatMm(Math.max(Math.abs(dockPreview.moveXmm), Math.abs(dockPreview.moveYmm)))}mm</span>}
       </div>
       {dockPreview.valid ? (
-        <p className="mt-2 rounded-lg bg-emerald-50 p-2 text-xs leading-5 text-emerald-800">拼接后将形成精确 0mm 共享板边（Gap=0 / Overlap=0）。</p>
+        <p className="mt-2 rounded-lg bg-emerald-50 p-2 text-xs leading-5 text-emerald-800">{dockResultBand?.hasInner ? `净跨已对齐（Net Gap 0mm）· 将形成内墙 ${formatMm(dockResultBand.gapMm)}mm 物理墙带` : "连续楼板 · 净跨 Gap 0mm · 物理间距 0mm"}</p>
       ) : (
         <p className="mt-2 rounded-lg bg-rose-50 p-2 text-xs leading-5 text-rose-800">无法拼接：{dockSourceSlab.name}移动到{dockTargetSlab.name}{floorDockDirectionLabel(dockHoverDirection)}后，将与{new Intl.ListFormat("zh-CN").format(dockPreview.conflicts)}发生面积重叠。</p>
       )}

@@ -293,3 +293,25 @@ describe("Floor Print平铺Piece", () => {
     expect(printPieces.every((piece) => piece.mark.startsWith("D"))).toBe(true);
   });
 });
+
+describe("Floor Print 物理墙体几何", () => {
+  it("快照几何内嵌 Physical Layout：墙体真实比例、净跨不写回", () => {
+    const state = plan();
+    state.slabs = [
+      { ...slab("a", 4200, 3600), x: 0, y: 0 },
+      { ...slab("b", 3600, 3000), x: 4200, y: 0 },
+    ];
+    const input = snapshotInput(state);
+    const content = buildFloorPrintContent(state, input.bottom, input.top);
+    expect(content.geometry.physical).toBeDefined();
+    const physical = content.geometry.physical!;
+    expect(physical.slabs.find((item) => item.slabId === "a")!.x).toBe(0);
+    expect(physical.slabs.find((item) => item.slabId === "b")!.x).toBe(4440);
+    expect(physical.walls.filter((wall) => wall.kind === "inner-wall")).toHaveLength(1);
+    expect(physical.walls.find((wall) => wall.kind === "inner-wall")!.thicknessMm).toBe(240);
+    expect(physical.walls.find((wall) => wall.kind === "outer-wall" && wall.side === "west")!.thicknessMm).toBe(370);
+    expect(physical.floorBounds.maxX - physical.floorBounds.minX).toBe(8780);
+    // 净跨数据不写回快照 slab。
+    expect(content.geometry.slabs.find((item) => item.id === "b")!.x).toBe(4200);
+  });
+});

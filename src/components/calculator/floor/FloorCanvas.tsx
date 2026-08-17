@@ -14,7 +14,6 @@ import {
   type FloorSlab,
 } from "@/lib/floor-plan";
 import {
-  calculateFloorCanvasBounds,
   chooseFloorGridStep,
   floorOpeningTouchesFloor,
   type FloorCanvasFitMode,
@@ -25,6 +24,12 @@ import {
   zoomViewportAt,
   type FloorCanvasViewport,
 } from "@/lib/floor-canvas-viewport";
+import {
+  buildFloorPhysicalLayout,
+  floorPhysicalSharedBand,
+  mapFloorNetAxisPoint,
+  type FloorPhysicalLayout,
+} from "@/lib/floor-physical-layout";
 import {
   addFloorCanvasGesturePointer,
   createFloorCanvasGesture,
@@ -65,6 +70,9 @@ type DragState = {
   lastClientY: number;
   startX: number;
   startY: number;
+  /** 拖动开始时的物理显示位置（Physical Layout 预览基准，PRD V1.3 42）。 */
+  startPhysicalX: number;
+  startPhysicalY: number;
   pixelsPerWorldX: number;
   pixelsPerWorldY: number;
   activated: boolean;
@@ -291,16 +299,41 @@ export function FloorCanvas({
   const [svgWidthPx, setSvgWidthPx] = useState(SVG_WIDTH);
   const [selectedPieceId, setSelectedPieceId] = useState<string | null>(null);
   const highlightedRoleDomain = roleDomains.find((domain) => domain.id === highlightedRoleDomainId);
+  // Floor Physical V1.3：墙体几何唯一来源；canonicalPlan 变化后重新派生，不写任何 State。
+  const physicalLayout: FloorPhysicalLayout = useMemo(() => buildFloorPhysicalLayout(state), [state]);
+  // Dock Ghost 的物理位置：源板放到 Dock 预览坐标后重新派生（与最终 Drop 结果一致）。
+  const dockPreviewPlan = useMemo(() => {
+    if (!dockPreview) return state;
+    return {
+      ...state,
+      slabs: state.slabs.map((slab) => slab.id === dockPreview.sourceSlabId ? { ...slab, x: dockPreview.x, y: dockPreview.y } : slab),
+    };
+  }, [dockPreview, state]);
+  const dockPreviewLayout = useMemo(
+    () => (dockPreview ? buildFloorPhysicalLayout(dockPreviewPlan) : null),
+    [dockPreview, dockPreviewPlan],
+  );
   const bounds = useMemo(() => {
     if (fitMode === "selection" && selection) {
-      const object = selection.kind === "slab"
-        ? state.slabs.find((slab) => slab.id === selection.id)
-        : state.openings.find((opening) => opening.id === selection.id);
-      if (object) return { minX: object.x, minY: object.y, maxX: object.x + object.width, maxY: object.y + object.height };
+      const physical = selection.kind === "slab"
+        ? physicalLayout.slabs.find((slab) => slab.slabId === selection.id)
+        : physicalLayout.openings.find((opening) => opening.openingId === selection.id);
+      if (physical) return { minX: physical.x, minY: physical.y, maxX: physical.x + physical.width, maxY: physical.y + physical.height };
     }
-    if (fitMode === "domain" && highlightedRoleDomain) return { minX: highlightedRoleDomain.minX, minY: highlightedRoleDomain.minY, maxX: highlightedRoleDomain.maxX, maxY: highlightedRoleDomain.maxY };
-    return calculateFloorCanvasBounds(state, fitMode === "all" ? "all" : "floor");
-  }, [fitMode, highlightedRoleDomain, selection, state]);
+    if (fitMode === "domain" && highlightedRoleDomain) {
+      const domainSlabs = physicalLayout.slabs.filter((slab) => highlightedRoleDomain.slabIds.includes(slab.slabId));
+      if (domainSlabs.length > 0) {
+        return domainSlabs.reduce((acc, slab) => ({
+          minX: Math.min(acc.minX, slab.x),
+          minY: Math.min(acc.minY, slab.y),
+          maxX: Math.max(acc.maxX, slab.x + slab.width),
+          maxY: Math.max(acc.maxY, slab.y + slab.height),
+        }), { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity });
+      }
+    }
+    // 默认取景包含外墙实体尺寸；all 模式还纳入物理洞口。
+    return fitMode === "all" ? physicalLayout.bounds : physicalLayout.floorBounds;
+  }, [fitMode, highlightedRoleDomain, physicalLayout, selection]);
   const displayBoundaries = useMemo(() => buildFloorDisplayBoundarySegments(state), [state]);
   const atomicBoundaries = useMemo(() => buildFloorAtomicBoundarySegments(state), [state]);
   const atomicById = useMemo(() => new Map(atomicBoundaries.map((segment) => [segment.id, segment])), [atomicBoundaries]);
@@ -359,36 +392,39 @@ export function FloorCanvas({
   useEffect(() => {
     if (!focusRequest) return;
     if (focusRequest.mode === "floor") {
-      const base = viewportForBounds(calculateFloorCanvasBounds(state, "floor"));
+      const base = viewportForBounds(physicalLayout.floorBounds);
       applyViewportImmediate({ ...base, centerY: base.centerY + barShiftMmRef.current });
       return;
     }
     if (focusRequest.mode === "selection" && selection) {
-      const object = selection.kind === "slab"
-        ? state.slabs.find((slab) => slab.id === selection.id)
-        : state.openings.find((opening) => opening.id === selection.id);
-      if (object) {
+      const physical = selection.kind === "slab"
+        ? physicalLayout.slabs.find((slab) => slab.slabId === selection.id)
+        : physicalLayout.openings.find((opening) => opening.openingId === selection.id);
+      if (physical) {
         const boundsForTarget = expandViewportBounds({
-          minX: object.x,
-          minY: object.y,
-          maxX: object.x + object.width,
-          maxY: object.y + object.height,
+          minX: physical.x,
+          minY: physical.y,
+          maxX: physical.x + physical.width,
+          maxY: physical.y + physical.height,
         }, 1.8);
         applyViewportImmediate(viewportForBounds(boundsForTarget));
       }
       return;
     }
     if (focusRequest.mode === "domain" && highlightedRoleDomain) {
-      const domainBounds = expandViewportBounds({
-        minX: highlightedRoleDomain.minX,
-        minY: highlightedRoleDomain.minY,
-        maxX: highlightedRoleDomain.maxX,
-        maxY: highlightedRoleDomain.maxY,
-      }, 1.8);
-      applyViewportImmediate(viewportForBounds(domainBounds));
+      const domainSlabs = physicalLayout.slabs.filter((slab) => highlightedRoleDomain.slabIds.includes(slab.slabId));
+      if (domainSlabs.length > 0) {
+        const raw = domainSlabs.reduce((acc, slab) => ({
+          minX: Math.min(acc.minX, slab.x),
+          minY: Math.min(acc.minY, slab.y),
+          maxX: Math.max(acc.maxX, slab.x + slab.width),
+          maxY: Math.max(acc.maxY, slab.y + slab.height),
+        }), { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity });
+        applyViewportImmediate(viewportForBounds(expandViewportBounds(raw, 1.8)));
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusRequest?.id, selection, highlightedRoleDomain, state]);
+  }, [focusRequest?.id, selection, highlightedRoleDomain, physicalLayout]);
 
   useEffect(() => {
     const base = viewportForBounds(bounds);
@@ -600,6 +636,9 @@ export function FloorCanvas({
     const rect = svg.getBoundingClientRect();
     const content = svgContentRect(rect);
     const touchCandidate = event.pointerType === "touch";
+    const physical = nextSelection.kind === "slab"
+      ? physicalLayout.slabs.find((slab) => slab.slabId === object.id)
+      : physicalLayout.openings.find((opening) => opening.openingId === object.id);
     dragRef.current = {
       pointerId: event.pointerId,
       pointerType: event.pointerType,
@@ -610,6 +649,8 @@ export function FloorCanvas({
       lastClientY: event.clientY,
       startX: object.x,
       startY: object.y,
+      startPhysicalX: physical?.x ?? object.x,
+      startPhysicalY: physical?.y ?? object.y,
       pixelsPerWorldX: SVG_WIDTH / content.width / effectiveScale,
       pixelsPerWorldY: SVG_HEIGHT / content.height / effectiveScale,
       activated: !touchCandidate,
@@ -776,11 +817,21 @@ export function FloorCanvas({
 
   const pieceCoordinates = ({ piece, positionMm }: DrawablePiece) => {
     const xDirection = piece.direction === "x";
+    // Floor Physical V1.3：正式计算值不变，仅绘图位置从净拓扑映射到物理平面。
+    const prefer = piece.slabIds;
+    if (xDirection) {
+      return {
+        x1: toX(mapFloorNetAxisPoint("x", piece.runStartMm, state, physicalLayout, prefer)),
+        y1: toY(mapFloorNetAxisPoint("y", positionMm, state, physicalLayout, prefer)),
+        x2: toX(mapFloorNetAxisPoint("x", piece.runEndMm, state, physicalLayout, prefer)),
+        y2: toY(mapFloorNetAxisPoint("y", positionMm, state, physicalLayout, prefer)),
+      };
+    }
     return {
-      x1: toX(xDirection ? piece.runStartMm : positionMm),
-      y1: toY(xDirection ? positionMm : piece.runStartMm),
-      x2: toX(xDirection ? piece.runEndMm : positionMm),
-      y2: toY(xDirection ? positionMm : piece.runEndMm),
+      x1: toX(mapFloorNetAxisPoint("x", positionMm, state, physicalLayout, prefer)),
+      y1: toY(mapFloorNetAxisPoint("y", piece.runStartMm, state, physicalLayout, prefer)),
+      x2: toX(mapFloorNetAxisPoint("x", positionMm, state, physicalLayout, prefer)),
+      y2: toY(mapFloorNetAxisPoint("y", piece.runEndMm, state, physicalLayout, prefer)),
     };
   };
 
@@ -788,7 +839,6 @@ export function FloorCanvas({
     ? roleDomains.find((domain) => domain.shape === "irregular" && domain.slabIds.includes(selection.id))
     : undefined;
 
-  const dockSource = state.slabs.find((slab) => slab.id === dockSourceId) ?? null;
   const dockTarget = state.slabs.find((slab) => slab.id === dockTargetId) ?? null;
   const dockGhost = dockPreview?.sourcePreview ?? null;
   // UI V3.1：实例 ID 用于回归验证 Navigator 选择不 remount Canvas。
@@ -815,29 +865,33 @@ export function FloorCanvas({
             setFitMode(mode);
             // UI V3.1：Fit 按钮是显式一次性取景，即使 fitMode 未变化也要立即更新 Viewport。
             if (mode === "selection" && selection) {
-              const object = selection.kind === "slab"
-                ? state.slabs.find((slab) => slab.id === selection.id)
-                : state.openings.find((opening) => opening.id === selection.id);
-              if (object) {
+              const physical = selection.kind === "slab"
+                ? physicalLayout.slabs.find((slab) => slab.slabId === selection.id)
+                : physicalLayout.openings.find((opening) => opening.openingId === selection.id);
+              if (physical) {
                 applyViewportImmediate(viewportForBounds({
-                  minX: object.x,
-                  minY: object.y,
-                  maxX: object.x + object.width,
-                  maxY: object.y + object.height,
+                  minX: physical.x,
+                  minY: physical.y,
+                  maxX: physical.x + physical.width,
+                  maxY: physical.y + physical.height,
                 }));
                 return;
               }
             }
             if (mode === "domain" && highlightedRoleDomain) {
-              applyViewportImmediate(viewportForBounds({
-                minX: highlightedRoleDomain.minX,
-                minY: highlightedRoleDomain.minY,
-                maxX: highlightedRoleDomain.maxX,
-                maxY: highlightedRoleDomain.maxY,
-              }));
-              return;
+              const domainSlabs = physicalLayout.slabs.filter((slab) => highlightedRoleDomain.slabIds.includes(slab.slabId));
+              if (domainSlabs.length > 0) {
+                const raw = domainSlabs.reduce((acc, slab) => ({
+                  minX: Math.min(acc.minX, slab.x),
+                  minY: Math.min(acc.minY, slab.y),
+                  maxX: Math.max(acc.maxX, slab.x + slab.width),
+                  maxY: Math.max(acc.maxY, slab.y + slab.height),
+                }), { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity });
+                applyViewportImmediate(viewportForBounds(raw));
+                return;
+              }
             }
-            const base = viewportForBounds(calculateFloorCanvasBounds(state, mode === "all" ? "all" : "floor"));
+            const base = viewportForBounds(mode === "all" ? physicalLayout.bounds : physicalLayout.floorBounds);
             applyViewportImmediate({ ...base, centerY: base.centerY + barShiftMmRef.current });
           }}
           zoomPercent={viewport.zoom * 100}
@@ -922,7 +976,7 @@ export function FloorCanvas({
           onDoubleClick={(event) => {
             if (event.target !== event.currentTarget) return;
             setFitMode("floor");
-            applyViewportImmediate(viewportForBounds(calculateFloorCanvasBounds(state, "floor")));
+            applyViewportImmediate(viewportForBounds(physicalLayout.floorBounds));
           }}
         >
         <defs>
@@ -954,10 +1008,13 @@ export function FloorCanvas({
             const multiSelected = editMode === "multi" && multiSelection.has(slab.id);
             const ghostDimmed = dockGhost?.id === slab.id;
             const interactive = editMode === "move";
+            const physical = physicalLayout.slabs.find((item) => item.slabId === slab.id);
+            const drawX = physical?.x ?? slab.x;
+            const drawY = physical?.y ?? slab.y;
             return (
               <rect
                 key={slab.id}
-                x={toX(slab.x)} y={toY(slab.y + slab.height)}
+                x={toX(drawX)} y={toY(drawY + slab.height)}
                 width={Math.max(slab.width * effectiveScale, 1)} height={Math.max(slab.height * effectiveScale, 1)}
                 fill={slabFill(slab.type, selected)} fillOpacity={ghostDimmed ? 0.25 : highlightedRoleDomain ? domainHighlighted ? 1 : 0.42 : 1}
                 stroke={dockSourceSelected ? "#f97316" : dockTargetSelected ? "#0ea5e9" : multiSelected ? "#8b5cf6" : selected ? "#2563eb" : domainHighlighted ? "#4f46e5" : "#94a3b8"}
@@ -968,6 +1025,8 @@ export function FloorCanvas({
                 role="button" aria-label={`选择板区 ${slab.name}`} tabIndex={0}
                 data-dock-role={dockSourceSelected ? "source" : dockTargetSelected ? "target" : undefined}
                 data-multi-selected={multiSelected ? "true" : undefined}
+                data-net-x={slab.x} data-net-y={slab.y}
+                data-physical-x={drawX} data-physical-y={drawY}
                 onPointerDown={(event) => {
                   if (editMode === "dock") { event.stopPropagation(); onDockPick?.(slab.id); return; }
                   if (editMode === "multi") { event.stopPropagation(); onMultiToggle?.(slab.id); return; }
@@ -983,36 +1042,42 @@ export function FloorCanvas({
                   event.stopPropagation();
                   if (editMode !== "move") return;
                   applyViewportImmediate(viewportForBounds(expandViewportBounds({
-                    minX: slab.x,
-                    minY: slab.y,
-                    maxX: slab.x + slab.width,
-                    maxY: slab.y + slab.height,
+                    minX: drawX,
+                    minY: drawY,
+                    maxX: drawX + slab.width,
+                    maxY: drawY + slab.height,
                   }, 1.8)));
                 }}
                 onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { setSelectedPieceId(null); onSelect({ kind: "slab", id: slab.id }); } }}
               />
             );
           })}
-          {state.openings.map((opening) => (
-            <rect
-              key={`opening-fill-${opening.id}`}
-              x={toX(opening.x)} y={toY(opening.y + opening.height)}
-              width={Math.max(opening.width * effectiveScale, 1)} height={Math.max(opening.height * effectiveScale, 1)}
-              fill="url(#opening-hatch-v22)" stroke="transparent" className="cursor-move touch-none"
-              style={{ pointerEvents: "all" }}
-              pointerEvents="all"
-              role="button" aria-label={`选择洞口 ${opening.name}`} tabIndex={0}
-              onPointerDown={(event) => {
-                if (event.pointerType === "touch" && dragRef.current && dragRef.current.pointerId !== event.pointerId) {
-                  event.stopPropagation();
-                  upgradeTouchDragToGesture(event);
-                  return;
-                }
-                beginDrag(event, { kind: "opening", id: opening.id }, opening);
-              }}
-              onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { setSelectedPieceId(null); onSelect({ kind: "opening", id: opening.id }); } }}
-            />
-          ))}
+          {state.openings.map((opening) => {
+            const physical = physicalLayout.openings.find((item) => item.openingId === opening.id);
+            const drawX = physical?.x ?? opening.x;
+            const drawY = physical?.y ?? opening.y;
+            return (
+              <rect
+                key={`opening-fill-${opening.id}`}
+                x={toX(drawX)} y={toY(drawY + opening.height)}
+                width={Math.max(opening.width * effectiveScale, 1)} height={Math.max(opening.height * effectiveScale, 1)}
+                fill="url(#opening-hatch-v22)" stroke="transparent" className="cursor-move touch-none"
+                style={{ pointerEvents: "all" }}
+                pointerEvents="all"
+                role="button" aria-label={`选择洞口 ${opening.name}`} tabIndex={0}
+                data-physical-x={drawX} data-physical-y={drawY}
+                onPointerDown={(event) => {
+                  if (event.pointerType === "touch" && dragRef.current && dragRef.current.pointerId !== event.pointerId) {
+                    event.stopPropagation();
+                    upgradeTouchDragToGesture(event);
+                    return;
+                  }
+                  beginDrag(event, { kind: "opening", id: opening.id }, opening);
+                }}
+                onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { setSelectedPieceId(null); onSelect({ kind: "opening", id: opening.id }); } }}
+              />
+            );
+          })}
         </g>
 
         {dragPreview && (() => {
@@ -1030,46 +1095,78 @@ export function FloorCanvas({
           const conflict = Boolean(dockPreviewResult && !dockPreviewResult.valid);
           const guideColor = conflict ? "#dc2626" : aligned ? "#16a34a" : "#2563eb";
           const conflictNames = dockPreviewResult ? dockPreviewResult.conflicts.join("、") : "";
+          // Floor Physical V1.3：Ghost 用物理坐标显示；净坐标仍写回 State。
+          const physicalSource = movingSlab
+            ? physicalLayout.slabs.find((item) => item.slabId === moving.id)
+            : physicalLayout.openings.find((item) => item.openingId === moving.id);
+          const sourcePhysicalX = physicalSource?.x ?? moving.x;
+          const sourcePhysicalY = physicalSource?.y ?? moving.y;
+          const physicalPreviewX = sourcePhysicalX + (previewX - moving.x);
+          const physicalPreviewY = sourcePhysicalY + (previewY - moving.y);
+          const positionedPlan = dockPreviewResult?.valid && movingSlab
+            ? stateWithPreviewSource(movingSlab, dockPreviewResult.x, dockPreviewResult.y)
+            : null;
+          const previewWalls = positionedPlan
+            ? buildFloorPhysicalLayout(positionedPlan).walls.filter((wall) => wall.slabIds.includes(moving.id))
+            : [];
+          const sharedBand = positionedPlan && guide
+            ? floorPhysicalSharedBand(positionedPlan, moving.id, guide.targetSlabId)
+            : null;
           const guideLabel = !guide
             ? ""
             : conflict
               ? `无法拼接：将与${conflictNames}重叠`
               : aligned
-                ? "✓ 精确共边 0mm"
+                ? sharedBand?.hasInner
+                  ? `✓ 净跨已对齐 · 内墙 ${formatMm(sharedBand.gapMm)}mm`
+                  : "✓ 连续楼板 · 物理间距 0mm"
                 : `松手将贴到${guide.targetSlabName}${floorDockDirectionLabel(guide.targetSide)}（差${formatMm(Math.abs(guide.gapMm))}mm）`;
           return (
             <g clipPath="url(#floor-plot-clip-v22)" data-floor-layer="drag-preview" pointerEvents="none" data-drag-preview="true" data-preview-x={dragPreview.x} data-preview-y={dragPreview.y}>
-              <rect x={toX(moving.x)} y={toY(moving.y + moving.height)} width={Math.max(moving.width * effectiveScale, 1)} height={Math.max(moving.height * effectiveScale, 1)} fill="#94a3b8" fillOpacity="0.22" />
-              <rect x={toX(previewX)} y={toY(previewY + moving.height)} width={Math.max(moving.width * effectiveScale, 1)} height={Math.max(moving.height * effectiveScale, 1)} fill={conflict ? "#fecaca" : "#3b82f6"} fillOpacity={conflict ? 0.6 : 0.35} stroke={guideColor} strokeWidth="3" strokeDasharray={aligned ? undefined : "8 5"} />
-              <text x={toX(previewX + moving.width / 2)} y={toY(previewY + moving.height / 2) + 5} textAnchor="middle" fontSize="13" fontWeight="800" fill={guideColor} style={{ paintOrder: "stroke", stroke: "white", strokeWidth: 4 }}>{moving.name}</text>
+              <rect x={toX(sourcePhysicalX)} y={toY(sourcePhysicalY + moving.height)} width={Math.max(moving.width * effectiveScale, 1)} height={Math.max(moving.height * effectiveScale, 1)} fill="#94a3b8" fillOpacity="0.22" />
+              <rect x={toX(physicalPreviewX)} y={toY(physicalPreviewY + moving.height)} width={Math.max(moving.width * effectiveScale, 1)} height={Math.max(moving.height * effectiveScale, 1)} fill={conflict ? "#fecaca" : "#3b82f6"} fillOpacity={conflict ? 0.6 : 0.35} stroke={guideColor} strokeWidth="3" strokeDasharray={aligned ? undefined : "8 5"} />
+              {previewWalls.map((wall) => (
+                <rect key={`preview-wall:${wall.id}`} x={toX(wall.x)} y={toY(wall.y + wall.height)} width={Math.max(wall.width * effectiveScale, 0)} height={Math.max(wall.height * effectiveScale, 0)} fill={wall.kind === "outer-wall" ? "#0f172a" : "#2563eb"} fillOpacity="0.55" />
+              ))}
+              <text x={toX(physicalPreviewX + moving.width / 2)} y={toY(physicalPreviewY + moving.height / 2) + 5} textAnchor="middle" fontSize="13" fontWeight="800" fill={guideColor} style={{ paintOrder: "stroke", stroke: "white", strokeWidth: 4 }}>{moving.name}</text>
               {guide && <g data-drag-guide={guide.axis} data-guide-gap={guide.gapMm}>
                 {guide.axis === "x"
-                  ? <line x1={toX(guide.coordinate)} y1={PLOT.y} x2={toX(guide.coordinate)} y2={PLOT.y + PLOT.height} stroke={guideColor} strokeWidth={aligned ? 3 : 2} strokeDasharray={aligned ? undefined : "6 4"} />
-                  : <line x1={PLOT.x} y1={toY(guide.coordinate)} x2={PLOT.x + PLOT.width} y2={toY(guide.coordinate)} stroke={guideColor} strokeWidth={aligned ? 3 : 2} strokeDasharray={aligned ? undefined : "6 4"} />}
-                <text x={guide.axis === "x" ? toX(guide.coordinate) + 8 : PLOT.x + PLOT.width - 8} y={guide.axis === "x" ? PLOT.y + 18 : toY(guide.coordinate) - 8} textAnchor={guide.axis === "x" ? "start" : "end"} fontSize="11" fontWeight="800" fill={guideColor} style={{ paintOrder: "stroke", stroke: "white", strokeWidth: 4 }}>{guideLabel}</text>
+                  ? <line x1={toX(mapFloorNetAxisPoint("x", guide.coordinate, state, physicalLayout, [guide.targetSlabId]))} y1={PLOT.y} x2={toX(mapFloorNetAxisPoint("x", guide.coordinate, state, physicalLayout, [guide.targetSlabId]))} y2={PLOT.y + PLOT.height} stroke={guideColor} strokeWidth={aligned ? 3 : 2} strokeDasharray={aligned ? undefined : "6 4"} />
+                  : <line x1={PLOT.x} y1={toY(mapFloorNetAxisPoint("y", guide.coordinate, state, physicalLayout, [guide.targetSlabId]))} x2={PLOT.x + PLOT.width} y2={toY(mapFloorNetAxisPoint("y", guide.coordinate, state, physicalLayout, [guide.targetSlabId]))} stroke={guideColor} strokeWidth={aligned ? 3 : 2} strokeDasharray={aligned ? undefined : "6 4"} />}
+                <text x={guide.axis === "x" ? toX(mapFloorNetAxisPoint("x", guide.coordinate, state, physicalLayout, [guide.targetSlabId])) + 8 : PLOT.x + PLOT.width - 8} y={guide.axis === "x" ? PLOT.y + 18 : toY(mapFloorNetAxisPoint("y", guide.coordinate, state, physicalLayout, [guide.targetSlabId])) - 8} textAnchor={guide.axis === "x" ? "start" : "end"} fontSize="11" fontWeight="800" fill={guideColor} style={{ paintOrder: "stroke", stroke: "white", strokeWidth: 4 }}>{guideLabel}</text>
               </g>}
             </g>
           );
         })()}
 
-        {dockGhost && <g clipPath="url(#floor-plot-clip-v22)" data-floor-layer="dock-ghost" pointerEvents="none" data-dock-ghost="true">
-          <rect
-            x={toX(dockGhost.x)} y={toY(dockGhost.y + dockGhost.height)}
-            width={Math.max(dockGhost.width * effectiveScale, 1)} height={Math.max(dockGhost.height * effectiveScale, 1)}
-            fill="#3b82f6" fillOpacity="0.35" stroke="#2563eb" strokeWidth="3" strokeDasharray="8 5"
-          />
-          <text x={toX(dockGhost.x + dockGhost.width / 2)} y={toY(dockGhost.y + dockGhost.height / 2) + 5} textAnchor="middle" fontSize="13" fontWeight="800" fill="#1d4ed8">{dockGhost.name} 预览</text>
-        </g>}
+        {dockGhost && (() => {
+          const ghostPhysical = dockPreviewLayout?.slabs.find((item) => item.slabId === dockGhost.id);
+          const ghostX = ghostPhysical?.x ?? dockGhost.x;
+          const ghostY = ghostPhysical?.y ?? dockGhost.y;
+          return (
+            <g clipPath="url(#floor-plot-clip-v22)" data-floor-layer="dock-ghost" pointerEvents="none" data-dock-ghost="true">
+              <rect
+                x={toX(ghostX)} y={toY(ghostY + dockGhost.height)}
+                width={Math.max(dockGhost.width * effectiveScale, 1)} height={Math.max(dockGhost.height * effectiveScale, 1)}
+                fill="#3b82f6" fillOpacity="0.35" stroke="#2563eb" strokeWidth="3" strokeDasharray="8 5"
+              />
+              <text x={toX(ghostX + dockGhost.width / 2)} y={toY(ghostY + dockGhost.height / 2) + 5} textAnchor="middle" fontSize="13" fontWeight="800" fill="#1d4ed8">{dockGhost.name} 预览</text>
+            </g>
+          );
+        })()}
 
         {editMode === "dock" && dockTarget && (() => {
           const target = dockTarget;
+          const targetPhysical = physicalLayout.slabs.find((item) => item.slabId === target.id);
+          const targetX = targetPhysical?.x ?? target.x;
+          const targetY = targetPhysical?.y ?? target.y;
           // PRD 67：Dock方向点击区至少 44-52px 屏幕尺寸（48px起）。
           const dockHit = Math.max(88, 48 / effectiveScale);
           const sides: Array<{ direction: FloorDockDirection; x: number; y: number; width: number; height: number; labelX: number; labelY: number }> = [
-            { direction: "north", x: toX(target.x), y: toY(target.y + target.height) - dockHit / 2, width: Math.max(target.width * effectiveScale, 1), height: dockHit, labelX: toX(target.x + target.width / 2), labelY: toY(target.y + target.height) - dockHit / 2 - 10 },
-            { direction: "south", x: toX(target.x), y: toY(target.y) - dockHit / 2, width: Math.max(target.width * effectiveScale, 1), height: dockHit, labelX: toX(target.x + target.width / 2), labelY: toY(target.y) + dockHit / 2 + 16 },
-            { direction: "west", x: toX(target.x) - dockHit / 2, y: toY(target.y + target.height), width: dockHit, height: Math.max(target.height * effectiveScale, 1), labelX: toX(target.x) - dockHit / 2 - 8, labelY: toY(target.y + target.height / 2) + 4 },
-            { direction: "east", x: toX(target.x + target.width) - dockHit / 2, y: toY(target.y + target.height), width: dockHit, height: Math.max(target.height * effectiveScale, 1), labelX: toX(target.x + target.width) + dockHit / 2 + 4, labelY: toY(target.y + target.height / 2) + 4 },
+            { direction: "north", x: toX(targetX), y: toY(targetY + target.height) - dockHit / 2, width: Math.max(target.width * effectiveScale, 1), height: dockHit, labelX: toX(targetX + target.width / 2), labelY: toY(targetY + target.height) - dockHit / 2 - 10 },
+            { direction: "south", x: toX(targetX), y: toY(targetY) - dockHit / 2, width: Math.max(target.width * effectiveScale, 1), height: dockHit, labelX: toX(targetX + target.width / 2), labelY: toY(targetY) + dockHit / 2 + 16 },
+            { direction: "west", x: toX(targetX) - dockHit / 2, y: toY(targetY + target.height), width: dockHit, height: Math.max(target.height * effectiveScale, 1), labelX: toX(targetX) - dockHit / 2 - 8, labelY: toY(targetY + target.height / 2) + 4 },
+            { direction: "east", x: toX(targetX + target.width) - dockHit / 2, y: toY(targetY + target.height), width: dockHit, height: Math.max(target.height * effectiveScale, 1), labelX: toX(targetX + target.width) + dockHit / 2 + 4, labelY: toY(targetY + target.height / 2) + 4 },
           ];
           return (
             <g clipPath="url(#floor-plot-clip-v22)" data-floor-layer="dock-hit">
@@ -1112,30 +1209,86 @@ export function FloorCanvas({
           })}
         </g>}
 
+        {/* Floor Physical V1.3：实体墙体层。真实比例占位，不再用 line stroke 代表墙宽。 */}
+        <g clipPath="url(#floor-plot-clip-v22)" data-floor-layer="physical-walls" pointerEvents="none">
+          {physicalLayout.walls.map((wall) => (
+            <rect
+              key={wall.id}
+              x={toX(wall.x)} y={toY(wall.y + wall.height)}
+              width={Math.max(wall.width * effectiveScale, 0)} height={Math.max(wall.height * effectiveScale, 0)}
+              fill={wall.kind === "outer-wall" ? "#0f172a" : "#2563eb"}
+              stroke={wall.kind === "outer-wall" ? "#0f172a" : "#2563eb"}
+              strokeWidth="1"
+              data-wall-id={wall.id}
+              data-wall-kind={wall.kind}
+              data-wall-orientation={wall.orientation}
+              data-wall-length-mm={wall.lengthMm}
+              data-wall-thickness-mm={wall.thicknessMm}
+              data-wall-x-mm={wall.x}
+              data-wall-y-mm={wall.y}
+            />
+          ))}
+        </g>
+
         <g clipPath="url(#floor-plot-clip-v22)" data-floor-layer="display-boundaries" pointerEvents="none">
-          {displayBoundaries.map((segment) => {
+          {displayBoundaries.filter((segment) => segment.support === "continuous" || segment.support === "opening-cut").map((segment) => {
             const style = wallStyle(segment, effectiveScale);
-            return <line key={segment.id} x1={toX(segment.startX)} y1={toY(segment.startY)} x2={toX(segment.endX)} y2={toY(segment.endY)} stroke={style.stroke} strokeWidth={style.width} strokeDasharray={style.dash} strokeLinecap="square" />;
+            if (segment.orientation === "vertical") {
+              const x = toX(mapFloorNetAxisPoint("x", segment.startX, state, physicalLayout, segment.slabIds));
+              return <line key={segment.id} x1={x} y1={toY(mapFloorNetAxisPoint("y", segment.startY, state, physicalLayout, segment.slabIds))} x2={x} y2={toY(mapFloorNetAxisPoint("y", segment.endY, state, physicalLayout, segment.slabIds))} stroke={style.stroke} strokeWidth={style.width} strokeDasharray={style.dash} strokeLinecap="square" />;
+            }
+            const y = toY(mapFloorNetAxisPoint("y", segment.startY, state, physicalLayout, segment.slabIds));
+            return <line key={segment.id} x1={toX(mapFloorNetAxisPoint("x", segment.startX, state, physicalLayout, segment.slabIds))} y1={y} x2={toX(mapFloorNetAxisPoint("x", segment.endX, state, physicalLayout, segment.slabIds))} y2={y} stroke={style.stroke} strokeWidth={style.width} strokeDasharray={style.dash} strokeLinecap="square" />;
           })}
           {state.openings.map((opening) => {
             const selected = selection?.kind === "opening" && selection.id === opening.id;
-            return <rect key={`opening-outline-${opening.id}`} x={toX(opening.x)} y={toY(opening.y + opening.height)} width={Math.max(opening.width * effectiveScale, 1)} height={Math.max(opening.height * effectiveScale, 1)} fill="none" stroke={selected ? "#e11d48" : "#64748b"} strokeWidth={selected ? 4 : 2.5} strokeDasharray="9 6" />;
+            const physical = physicalLayout.openings.find((item) => item.openingId === opening.id);
+            const drawX = physical?.x ?? opening.x;
+            const drawY = physical?.y ?? opening.y;
+            return <rect key={`opening-outline-${opening.id}`} x={toX(drawX)} y={toY(drawY + opening.height)} width={Math.max(opening.width * effectiveScale, 1)} height={Math.max(opening.height * effectiveScale, 1)} fill="none" stroke={selected ? "#e11d48" : "#64748b"} strokeWidth={selected ? 4 : 2.5} strokeDasharray="9 6" />;
           })}
           {displayBoundaries.filter((segment) => segment.support === "continuous").map((segment) => (
-            <text key={`continuous:${segment.id}`} x={toX((segment.startX + segment.endX) / 2)} y={toY((segment.startY + segment.endY) / 2) - 5} textAnchor="middle" fontSize="10" fontWeight="700" fill="#475569" style={{ paintOrder: "stroke", stroke: "white", strokeWidth: 3 }}>连续</text>
+            <text key={`continuous:${segment.id}`} x={toX(mapFloorNetAxisPoint("x", (segment.startX + segment.endX) / 2, state, physicalLayout, segment.slabIds))} y={toY(mapFloorNetAxisPoint("y", (segment.startY + segment.endY) / 2, state, physicalLayout, segment.slabIds)) - 5} textAnchor="middle" fontSize="10" fontWeight="700" fill="#475569" style={{ paintOrder: "stroke", stroke: "white", strokeWidth: 3 }}>连续</text>
           ))}
         </g>
 
         <g clipPath="url(#floor-plot-clip-v22)" data-floor-layer="selected-atomic-overlay" pointerEvents="none">
-          {selectedAtomicSegment && (
-            <line
-              key={`selected-atomic:${selectedAtomicSegment.id}`}
-              x1={toX(selectedAtomicSegment.startX)} y1={toY(selectedAtomicSegment.startY)}
-              x2={toX(selectedAtomicSegment.endX)} y2={toY(selectedAtomicSegment.endY)}
-              stroke="#f97316" strokeWidth="9" strokeLinecap="round"
-              data-selected-atomic-id={selectedAtomicSegment.id}
-            />
-          )}
+          {selectedAtomicSegment && (() => {
+            const selectedWall = physicalLayout.walls.find((wall) => wall.sourceAtomicIds.includes(selectedAtomicSegment.id));
+            if (selectedWall) {
+              return (
+                <rect
+                  key={`selected-wall:${selectedWall.id}`}
+                  x={toX(selectedWall.x)} y={toY(selectedWall.y + selectedWall.height)}
+                  width={Math.max(selectedWall.width * effectiveScale, 1)} height={Math.max(selectedWall.height * effectiveScale, 1)}
+                  fill="#f97316" fillOpacity="0.4" stroke="#f97316" strokeWidth="4"
+                  data-selected-atomic-id={selectedAtomicSegment.id}
+                />
+              );
+            }
+            if (selectedAtomicSegment.orientation === "vertical") {
+              const x = toX(mapFloorNetAxisPoint("x", selectedAtomicSegment.startX, state, physicalLayout, selectedAtomicSegment.slabIds));
+              return (
+                <line
+                  key={`selected-atomic:${selectedAtomicSegment.id}`}
+                  x1={x} y1={toY(mapFloorNetAxisPoint("y", selectedAtomicSegment.startY, state, physicalLayout, selectedAtomicSegment.slabIds))}
+                  x2={x} y2={toY(mapFloorNetAxisPoint("y", selectedAtomicSegment.endY, state, physicalLayout, selectedAtomicSegment.slabIds))}
+                  stroke="#f97316" strokeWidth="9" strokeLinecap="round"
+                  data-selected-atomic-id={selectedAtomicSegment.id}
+                />
+              );
+            }
+            const y = toY(mapFloorNetAxisPoint("y", selectedAtomicSegment.startY, state, physicalLayout, selectedAtomicSegment.slabIds));
+            return (
+              <line
+                key={`selected-atomic:${selectedAtomicSegment.id}`}
+                x1={toX(mapFloorNetAxisPoint("x", selectedAtomicSegment.startX, state, physicalLayout, selectedAtomicSegment.slabIds))} y1={y}
+                x2={toX(mapFloorNetAxisPoint("x", selectedAtomicSegment.endX, state, physicalLayout, selectedAtomicSegment.slabIds))} y2={y}
+                stroke="#f97316" strokeWidth="9" strokeLinecap="round"
+                data-selected-atomic-id={selectedAtomicSegment.id}
+              />
+            );
+          })()}
         </g>
 
         {!dragPreview && <g clipPath="url(#floor-plot-clip-v22)" data-floor-layer="through-pieces-visible" pointerEvents="none">
@@ -1148,8 +1301,14 @@ export function FloorCanvas({
           {throughPieces.flatMap((drawable) => drawable.piece.intermediateBoundaryIds.flatMap((boundaryId) => {
             const boundary = atomicById.get(boundaryId);
             if (!boundary) return [];
-            const x = toX(drawable.piece.direction === "x" ? boundary.startX : drawable.positionMm);
-            const y = toY(drawable.piece.direction === "x" ? drawable.positionMm : boundary.startY);
+            const wall = physicalLayout.walls.find((item) => item.sourceAtomicIds.includes(boundaryId));
+            const prefer = drawable.piece.slabIds;
+            const x = wall
+              ? toX(wall.x + wall.width / 2)
+              : toX(mapFloorNetAxisPoint("x", drawable.piece.direction === "x" ? boundary.startX : drawable.positionMm, state, physicalLayout, prefer));
+            const y = wall
+              ? toY(wall.y + wall.height / 2)
+              : toY(mapFloorNetAxisPoint("y", drawable.piece.direction === "x" ? drawable.positionMm : boundary.startY, state, physicalLayout, prefer));
             return [<g key={`${drawable.piece.id}:${boundaryId}`} data-through-crossing={boundaryId}><circle cx={x} cy={y} r="5" fill="white" stroke="#1d4ed8" strokeWidth="2.5" /><line x1={drawable.piece.direction === "x" ? x : x - 7} y1={drawable.piece.direction === "x" ? y - 7 : y} x2={drawable.piece.direction === "x" ? x : x + 7} y2={drawable.piece.direction === "x" ? y + 7 : y} stroke="#1d4ed8" strokeWidth="2" /></g>];
           }))}
         </g>}
@@ -1161,23 +1320,64 @@ export function FloorCanvas({
         </g>}
 
         {!dragPreview && <g clipPath="url(#floor-plot-clip-v22)" data-floor-layer="atomic-boundary-hit">
-          {atomicBoundaries.map((segment) => (
-            <line
-              key={`atomic-hit:${segment.id}`}
-              x1={toX(segment.startX)} y1={toY(segment.startY)} x2={toX(segment.endX)} y2={toY(segment.endY)}
-              stroke="transparent" strokeWidth={inputProfile === "touch" ? 34 : 22} pointerEvents="stroke" className="cursor-pointer"
-              data-atomic-boundary-id={segment.id} data-boundary-support={segment.support} data-boundary-kind={segment.geometryKind} data-atomic-hit-width={inputProfile === "touch" ? 34 : 22}
-              role="button" tabIndex={0} aria-label={`编辑${segment.geometryKind === "shared-slab" ? "共享板边" : segment.geometryKind === "opening-edge" ? "洞口边" : "建筑外边"} ${segment.id}`}
-              onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); setSelectedPieceId(null); onSelectBoundary(segment); }}
-              onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { setSelectedPieceId(null); onSelectBoundary(segment); } }}
-            />
-          ))}
+          {physicalLayout.walls.map((wall) => {
+            const segment = atomicById.get(wall.sourceAtomicIds[0]);
+            if (!segment) return null;
+            const hitSize = inputProfile === "touch" ? 34 : 22;
+            const hitWidth = Math.max(wall.width * effectiveScale, hitSize);
+            const hitHeight = Math.max(wall.height * effectiveScale, hitSize);
+            const centerX = toX(wall.x + wall.width / 2);
+            const centerY = toY(wall.y + wall.height / 2);
+            return (
+              <rect
+                key={`wall-hit:${wall.id}`}
+                x={centerX - hitWidth / 2} y={centerY - hitHeight / 2} width={hitWidth} height={hitHeight}
+                fill="transparent" pointerEvents="all" className="cursor-pointer"
+                data-atomic-boundary-id={segment.id} data-boundary-support={segment.support} data-boundary-kind={segment.geometryKind}
+                data-atomic-hit-width={inputProfile === "touch" ? 34 : 22}
+                role="button" tabIndex={0} aria-label={`编辑${segment.geometryKind === "shared-slab" ? "共享板边" : segment.geometryKind === "opening-edge" ? "洞口边" : "建筑外边"} ${segment.id}`}
+                onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); setSelectedPieceId(null); onSelectBoundary(segment); }}
+                onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { setSelectedPieceId(null); onSelectBoundary(segment); } }}
+              />
+            );
+          })}
+          {atomicBoundaries.filter((segment) => !physicalLayout.walls.some((wall) => wall.sourceAtomicIds.includes(segment.id))).map((segment) => {
+            if (segment.orientation === "vertical") {
+              const x = toX(mapFloorNetAxisPoint("x", segment.startX, state, physicalLayout, segment.slabIds));
+              return (
+                <line
+                  key={`atomic-hit:${segment.id}`}
+                  x1={x} y1={toY(mapFloorNetAxisPoint("y", segment.startY, state, physicalLayout, segment.slabIds))} x2={x} y2={toY(mapFloorNetAxisPoint("y", segment.endY, state, physicalLayout, segment.slabIds))}
+                  stroke="transparent" strokeWidth={inputProfile === "touch" ? 34 : 22} pointerEvents="stroke" className="cursor-pointer"
+                  data-atomic-boundary-id={segment.id} data-boundary-support={segment.support} data-boundary-kind={segment.geometryKind} data-atomic-hit-width={inputProfile === "touch" ? 34 : 22}
+                  role="button" tabIndex={0} aria-label={`编辑${segment.geometryKind === "shared-slab" ? "共享板边" : segment.geometryKind === "opening-edge" ? "洞口边" : "建筑外边"} ${segment.id}`}
+                  onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); setSelectedPieceId(null); onSelectBoundary(segment); }}
+                  onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { setSelectedPieceId(null); onSelectBoundary(segment); } }}
+                />
+              );
+            }
+            const y = toY(mapFloorNetAxisPoint("y", segment.startY, state, physicalLayout, segment.slabIds));
+            return (
+              <line
+                key={`atomic-hit:${segment.id}`}
+                x1={toX(mapFloorNetAxisPoint("x", segment.startX, state, physicalLayout, segment.slabIds))} y1={y} x2={toX(mapFloorNetAxisPoint("x", segment.endX, state, physicalLayout, segment.slabIds))} y2={y}
+                stroke="transparent" strokeWidth={inputProfile === "touch" ? 34 : 22} pointerEvents="stroke" className="cursor-pointer"
+                data-atomic-boundary-id={segment.id} data-boundary-support={segment.support} data-boundary-kind={segment.geometryKind} data-atomic-hit-width={inputProfile === "touch" ? 34 : 22}
+                role="button" tabIndex={0} aria-label={`编辑${segment.geometryKind === "shared-slab" ? "共享板边" : segment.geometryKind === "opening-edge" ? "洞口边" : "建筑外边"} ${segment.id}`}
+                onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); setSelectedPieceId(null); onSelectBoundary(segment); }}
+                onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { setSelectedPieceId(null); onSelectBoundary(segment); } }}
+              />
+            );
+          })}
         </g>}
 
         <g clipPath="url(#floor-plot-clip-v22)" data-floor-layer="labels" pointerEvents="none">
           {state.slabs.map((slab) => {
-            const centerX = toX(slab.x + slab.width / 2);
-            const centerY = toY(slab.y + slab.height / 2);
+            const physical = physicalLayout.slabs.find((item) => item.slabId === slab.id);
+            const drawX = physical?.x ?? slab.x;
+            const drawY = physical?.y ?? slab.y;
+            const centerX = toX(drawX + slab.width / 2);
+            const centerY = toY(drawY + slab.height / 2);
             const selected = selection?.kind === "slab" && selection.id === slab.id;
             const shortName = slab.name.length > 10 ? `${slab.name.slice(0, 9)}…` : slab.name;
             if (!selected) return <text key={`label-${slab.id}`} x={centerX} y={centerY + 5} textAnchor="middle" fontSize="14" fontWeight="700" fill="#0f172a" style={{ paintOrder: "stroke", stroke: "white", strokeWidth: 4, strokeLinejoin: "round" }}>{shortName}</text>;
@@ -1190,8 +1390,11 @@ export function FloorCanvas({
             return <g key={`label-${slab.id}`}><rect x={centerX - 78} y={centerY - 30} width="156" height="60" rx="8" fill="white" fillOpacity="0.94" stroke="#93c5fd" /><text x={centerX} y={centerY - 8} textAnchor="middle" fontSize="14" fontWeight="800" fill="#0f172a">{shortName}</text><text x={centerX} y={centerY + 14} textAnchor="middle" fontSize="12" fontWeight="700" fill="#334155">{formatMm(slab.width)} × {formatMm(slab.height)} mm</text></g>;
           })}
           {state.openings.map((opening) => {
-            const centerX = toX(opening.x + opening.width / 2);
-            const centerY = toY(opening.y + opening.height / 2);
+            const physical = physicalLayout.openings.find((item) => item.openingId === opening.id);
+            const drawX = physical?.x ?? opening.x;
+            const drawY = physical?.y ?? opening.y;
+            const centerX = toX(drawX + opening.width / 2);
+            const centerY = toY(drawY + opening.height / 2);
             const selected = selection?.kind === "opening" && selection.id === opening.id;
             return <g key={`opening-label-${opening.id}`}><rect x={centerX - (selected ? 78 : 52)} y={centerY - (selected ? 37 : 20)} width={selected ? 156 : 104} height={selected ? 74 : 40} rx="7" fill="white" fillOpacity="0.9" /><text x={centerX} y={centerY - (selected ? 17 : 3)} textAnchor="middle" fontSize="13" fontWeight="700" fill="#881337">{opening.name}</text><text x={centerX} y={centerY + (selected ? 1 : 14)} textAnchor="middle" fontSize="10" fontWeight="700" fill="#64748b">VOID</text>{selected && <><text x={centerX} y={centerY + 18} textAnchor="middle" fontSize="10" fill="#64748b">X {formatMm(opening.x)} · Y {formatMm(opening.y)}</text><text x={centerX} y={centerY + 32} textAnchor="middle" fontSize="10" fill="#64748b">{formatMm(opening.width)} × {formatMm(opening.height)} mm</text></>}</g>;
           })}
@@ -1201,8 +1404,9 @@ export function FloorCanvas({
         {!dragPreview && <g clipPath="url(#floor-plot-clip-v22)" data-floor-layer="warnings" pointerEvents="none">
           {nearMisses.map((nearMiss, index) => {
             const vertical = nearMiss.orientation === "vertical";
-            const x = toX(vertical ? (nearMiss.coordinateA + nearMiss.coordinateB) / 2 : (nearMiss.overlapStartMm + nearMiss.overlapEndMm) / 2);
-            const y = toY(vertical ? (nearMiss.overlapStartMm + nearMiss.overlapEndMm) / 2 : (nearMiss.coordinateA + nearMiss.coordinateB) / 2);
+            const prefer = nearMiss.slabIds[0] ? [nearMiss.slabIds[0]] : undefined;
+            const x = toX(mapFloorNetAxisPoint("x", vertical ? (nearMiss.coordinateA + nearMiss.coordinateB) / 2 : (nearMiss.overlapStartMm + nearMiss.overlapEndMm) / 2, state, physicalLayout, prefer));
+            const y = toY(mapFloorNetAxisPoint("y", vertical ? (nearMiss.overlapStartMm + nearMiss.overlapEndMm) / 2 : (nearMiss.coordinateA + nearMiss.coordinateB) / 2, state, physicalLayout, prefer));
             return <g key={`near-miss:${nearMiss.slabIds.join(":")}:${index}`} data-near-miss={nearMiss.distanceMm}><circle cx={x} cy={y} r="12" fill="#fff" stroke="#dc2626" strokeWidth="3" /><text x={x} y={y + 5} textAnchor="middle" fontSize="14" fontWeight="900" fill="#dc2626">!</text><text x={x + 16} y={y - 10} fontSize="11" fontWeight="800" fill="#b91c1c" style={{ paintOrder: "stroke", stroke: "white", strokeWidth: 4 }}>⚠ {formatMm(nearMiss.distanceMm)}mm</text></g>;
           })}
         </g>}
@@ -1210,8 +1414,8 @@ export function FloorCanvas({
         {/* UI V3：图例与方向标识移入 PLOT 内部左上/左下，pointerEvents none 不拦截交互（PRD 123）。 */}
         <g aria-label="图例" fontSize="11" fill="#475569" pointerEvents="none">
           <rect x={PLOT.x + 10} y={PLOT.y + 8} width="470" height={rebarCalculation ? 52 : 32} rx="8" fill="white" fillOpacity="0.88" stroke="#e2e8f0" />
-          <line x1={PLOT.x + 22} y1={PLOT.y + 24} x2={PLOT.x + 57} y2={PLOT.y + 24} stroke="#0f172a" strokeWidth="7" /><text x={PLOT.x + 64} y={PLOT.y + 28}>建筑外边</text>
-          <line x1={PLOT.x + 142} y1={PLOT.y + 24} x2={PLOT.x + 177} y2={PLOT.y + 24} stroke="#2563eb" strokeWidth="7" /><text x={PLOT.x + 184} y={PLOT.y + 28}>内墙</text>
+          <rect x={PLOT.x + 22} y={PLOT.y + 19} width="34" height="10" fill="#0f172a" stroke="#0f172a" strokeWidth="1" /><text x={PLOT.x + 64} y={PLOT.y + 28}>建筑外边</text>
+          <rect x={PLOT.x + 142} y={PLOT.y + 19} width="34" height="10" fill="#2563eb" stroke="#2563eb" strokeWidth="1" /><text x={PLOT.x + 184} y={PLOT.y + 28}>内墙</text>
           <line x1={PLOT.x + 247} y1={PLOT.y + 24} x2={PLOT.x + 282} y2={PLOT.y + 24} stroke="#64748b" strokeWidth="2.5" strokeDasharray="9 6" /><text x={PLOT.x + 289} y={PLOT.y + 28}>连续</text>
           <line x1={PLOT.x + 352} y1={PLOT.y + 24} x2={PLOT.x + 387} y2={PLOT.y + 24} stroke="#94a3b8" strokeWidth="3" strokeDasharray="5 6" /><text x={PLOT.x + 394} y={PLOT.y + 28}>洞口裁断</text>
           {rebarCalculation && <>
@@ -1220,6 +1424,7 @@ export function FloorCanvas({
             {topCalculation && <><line x1={PLOT.x + 407} y1={PLOT.y + 46} x2={PLOT.x + 442} y2={PLOT.y + 46} stroke="#1d4ed8" strokeWidth="5" /><circle cx={PLOT.x + 424} cy={PLOT.y + 46} r="4" fill="white" stroke="#1d4ed8" strokeWidth="2" /><text x={PLOT.x + 449} y={PLOT.y + 50}>通墙面筋Piece</text></>}
           </>}
         </g>
+        <text x={PLOT.x + PLOT.width - 12} y={PLOT.y + 26} textAnchor="end" fontSize="10" fontWeight="600" fill="#64748b" pointerEvents="none">板区为净尺寸 · 墙体按真实厚度展开</text>
         <g aria-label="方向标识" fontSize="13" fill="#334155" pointerEvents="none">
           <rect x={PLOT.x + 10} y={PLOT.y + PLOT.height - 42} width="140" height="32" rx="8" fill="white" fillOpacity="0.88" stroke="#e2e8f0" />
           <line x1={PLOT.x + 22} y1={PLOT.y + PLOT.height - 26} x2={PLOT.x + 92} y2={PLOT.y + PLOT.height - 26} stroke="#2563eb" strokeWidth="3" /><path d={`M${PLOT.x + 92} ${PLOT.y + PLOT.height - 26} l-12 -6 v12 z`} fill="#2563eb" /><text x={PLOT.x + 22} y={PLOT.y + PLOT.height - 10}>西</text><text x={PLOT.x + 96} y={PLOT.y + PLOT.height - 10}>东 · X</text>

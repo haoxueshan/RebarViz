@@ -10,6 +10,10 @@ import {
   type FloorResolvedSupport,
 } from "./floor-plan";
 import { calculateFloorCanvasBounds } from "./floor-2d";
+import {
+  buildFloorPhysicalLayout,
+  type FloorPhysicalLayout,
+} from "./floor-physical-layout";
 import type { FloorBarLine, FloorBarPiece } from "./floor-rebar-types";
 import type { FloorBarRole } from "./floor-rebar-role";
 import type {
@@ -172,6 +176,8 @@ export type FloorPrintGeometry = {
     height: number;
   }>;
   boundaries: FloorPrintBoundary[];
+  /** Floor Physical V1.3：墙体真实物理几何（快照内派生副本）；旧快照无此字段时退化为线型绘制。 */
+  physical?: FloorPhysicalLayout | null;
 };
 
 export type FloorPrintBomRow = {
@@ -748,6 +754,7 @@ export function buildFloorPrintContent(
       endY: segment.endY,
       support: segment.support,
     })),
+    physical: buildFloorPhysicalLayout(plan),
   };
   const summary: FloorPrintSummary = {
     slabCount: plan.slabs.length,

@@ -307,7 +307,8 @@ test("Quick Dock：拖近共边松手精确0mm、一次Undo回原点（PRD 72/75
   await slabA.dispatchEvent("pointerdown", { pointerId: 51, pointerType: "mouse", isPrimary: true, buttons: 1, clientX: startX, clientY: startY, bubbles: true });
   await svg.dispatchEvent("pointermove", { pointerId: 51, pointerType: "mouse", buttons: 1, clientX: startX + dxPx, clientY: startY + dyPx, bubbles: true });
   await expect(page.locator("[data-drag-guide]")).toHaveCount(1);
-  await expect(page.locator("[data-drag-guide]")).toContainText("精确共边");
+  await expect(page.locator("[data-drag-guide]")).toContainText("净跨已对齐");
+  await expect(page.locator("[data-drag-guide]")).toContainText("内墙 240mm");
   await svg.dispatchEvent("pointerup", { pointerId: 51, pointerType: "mouse", buttons: 0, clientX: startX + dxPx, clientY: startY + dyPx, bubbles: true });
   await expect.poll(async () => (await savedSlabs(page)).find((slab) => slab.id === "a")?.x ?? 0).toBe(5000);
   await expect.poll(async () => (await savedSlabs(page)).find((slab) => slab.id === "a")?.y ?? 0).toBe(0);
@@ -910,8 +911,11 @@ test.describe("UI V3.1 Layout Logic Finalization", () => {
     await drawer.locator('[data-navigator-object-id="s12"]').click();
     await expect(drawer).toHaveCount(0);
     await expect(page.getByRole("button", { name: "选择板区 板区12" })).toHaveAttribute("stroke", "#2563eb");
-    // 聚焦：fitMode 变为 selection。
-    await expect(page.locator('svg[data-floor-canvas-fit="selection"]')).toBeVisible();
+    // 聚焦：V3.1 一次性取景——fitMode 不再永久切换为 selection，
+    // 视口中心直接对准板区12的物理位置（X: 9000 + 3×240 墙带中心，Y: 4800 + 2×240）。
+    const canvasSvg = page.locator("svg[data-floor-canvas-fit]");
+    await expect(canvasSvg).toHaveAttribute("data-viewport-center-x", "11220");
+    await expect(canvasSvg).toHaveAttribute("data-viewport-center-y", "6480");
   });
 });
 
