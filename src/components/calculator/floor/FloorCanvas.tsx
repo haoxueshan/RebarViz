@@ -56,6 +56,7 @@ export type FloorSelection =
 
 type DragState = {
   pointerId: number;
+  pointerType: string;
   selection: Exclude<FloorSelection, null>;
   startClientX: number;
   startClientY: number;
@@ -66,6 +67,8 @@ type DragState = {
   startY: number;
   pixelsPerWorldX: number;
   pixelsPerWorldY: number;
+  activated: boolean;
+  moved: boolean;
 };
 
 type FloorDragGuide = {
@@ -88,6 +91,7 @@ const SVG_HEIGHT = 650;
 const PLOT = { x: 32, y: 28, width: 936, height: 594 };
 const PLOT_CENTER_X = PLOT.x + PLOT.width / 2;
 const PLOT_CENTER_Y = PLOT.y + PLOT.height / 2;
+const TOUCH_DRAG_THRESHOLD_PX = 10;
 
 function formatMm(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
@@ -350,12 +354,41 @@ export function FloorCanvas({
       ? highlightedRoleDomain.id
       : fitMode;
 
-  // UI V3.1：Navigator 选择等通过 focusRequest 只更新 Viewport，不 remount Canvas。
+  // UI V3.1：Navigator 与一次性聚焦请求只更新 Viewport，不永久写入 fitMode；
+  // 这样点击不同板区时不会被持续 selection fit 反复重置视口。 
   useEffect(() => {
     if (!focusRequest) return;
-    setFitMode(focusRequest.mode);
+    if (focusRequest.mode === "floor") {
+      const base = viewportForBounds(calculateFloorCanvasBounds(state, "floor"));
+      applyViewportImmediate({ ...base, centerY: base.centerY + barShiftMmRef.current });
+      return;
+    }
+    if (focusRequest.mode === "selection" && selection) {
+      const object = selection.kind === "slab"
+        ? state.slabs.find((slab) => slab.id === selection.id)
+        : state.openings.find((opening) => opening.id === selection.id);
+      if (object) {
+        const boundsForTarget = expandViewportBounds({
+          minX: object.x,
+          minY: object.y,
+          maxX: object.x + object.width,
+          maxY: object.y + object.height,
+        }, 1.8);
+        applyViewportImmediate(viewportForBounds(boundsForTarget));
+      }
+      return;
+    }
+    if (focusRequest.mode === "domain" && highlightedRoleDomain) {
+      const domainBounds = expandViewportBounds({
+        minX: highlightedRoleDomain.minX,
+        minY: highlightedRoleDomain.minY,
+        maxX: highlightedRoleDomain.maxX,
+        maxY: highlightedRoleDomain.maxY,
+      }, 1.8);
+      applyViewportImmediate(viewportForBounds(domainBounds));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusRequest?.id]);
+  }, [focusRequest?.id, selection, highlightedRoleDomain, state]);
 
   useEffect(() => {
     const base = viewportForBounds(bounds);
@@ -566,8 +599,10 @@ export function FloorCanvas({
     if (!svg) return;
     const rect = svg.getBoundingClientRect();
     const content = svgContentRect(rect);
+    const touchCandidate = event.pointerType === "touch";
     dragRef.current = {
       pointerId: event.pointerId,
+      pointerType: event.pointerType,
       selection: nextSelection,
       startClientX: event.clientX,
       startClientY: event.clientY,
@@ -577,19 +612,33 @@ export function FloorCanvas({
       startY: object.y,
       pixelsPerWorldX: SVG_WIDTH / content.width / effectiveScale,
       pixelsPerWorldY: SVG_HEIGHT / content.height / effectiveScale,
+      activated: !touchCandidate,
+      moved: false,
     };
-    setDragPreview({ objectId: object.id, x: object.x, y: object.y });
-    try {
-      event.currentTarget.ownerSVGElement?.setPointerCapture(event.pointerId);
-    } catch {
-      // 部分触控取消/自动化事件不允许捕获；SVG内移动与cancel回滚仍然有效。
+    if (!touchCandidate) {
+      setDragPreview({ objectId: object.id, x: object.x, y: object.y });
+      onDragStateChange?.(true);
     }
-    onDragStateChange?.(true);
+    if (event.pointerType !== "mouse") {
+      try {
+        event.currentTarget.ownerSVGElement?.setPointerCapture(event.pointerId);
+      } catch {
+        // 部分触控取消/自动化事件不允许捕获；SVG内移动与cancel回滚仍然有效。
+      }
+    }
   };
 
   const finishDrag = (event: React.PointerEvent<SVGSVGElement>) => {
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
+    if (!drag.activated || !drag.moved) {
+      cancelPendingInteractionFrame();
+      dragRef.current = null;
+      setDragPreview(null);
+      onDragStateChange?.(false);
+      if (event.pointerType !== "mouse" && event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+      return;
+    }
     // PRD 18：先取消遗留的 Preview RAF，再用 PointerUp 坐标计算最终值，避免松手后旧帧回弹。
     cancelPendingInteractionFrame();
     const moved = dragPosition(event, drag);
@@ -612,7 +661,7 @@ export function FloorCanvas({
     dragRef.current = null;
     setDragPreview(null);
     onDragStateChange?.(false);
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    if (event.pointerType !== "mouse" && event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   };
 
   const cancelDrag = (event: React.PointerEvent<SVGSVGElement>) => {
@@ -762,7 +811,35 @@ export function FloorCanvas({
           axisLock={axisLock}
           onAxisLockChange={setAxisLock}
           fitMode={fitMode}
-          onFit={(mode) => setFitMode(mode)}
+          onFit={(mode) => {
+            setFitMode(mode);
+            // UI V3.1：Fit 按钮是显式一次性取景，即使 fitMode 未变化也要立即更新 Viewport。
+            if (mode === "selection" && selection) {
+              const object = selection.kind === "slab"
+                ? state.slabs.find((slab) => slab.id === selection.id)
+                : state.openings.find((opening) => opening.id === selection.id);
+              if (object) {
+                applyViewportImmediate(viewportForBounds({
+                  minX: object.x,
+                  minY: object.y,
+                  maxX: object.x + object.width,
+                  maxY: object.y + object.height,
+                }));
+                return;
+              }
+            }
+            if (mode === "domain" && highlightedRoleDomain) {
+              applyViewportImmediate(viewportForBounds({
+                minX: highlightedRoleDomain.minX,
+                minY: highlightedRoleDomain.minY,
+                maxX: highlightedRoleDomain.maxX,
+                maxY: highlightedRoleDomain.maxY,
+              }));
+              return;
+            }
+            const base = viewportForBounds(calculateFloorCanvasBounds(state, mode === "all" ? "all" : "floor"));
+            applyViewportImmediate({ ...base, centerY: base.centerY + barShiftMmRef.current });
+          }}
           zoomPercent={viewport.zoom * 100}
           onZoomIn={() => {
             const current = viewportRef.current;
@@ -789,6 +866,7 @@ export function FloorCanvas({
           ref={svgRef}
           viewBox={`0 0 ${SVG_WIDTH} ${SVG_HEIGHT}`}
           preserveAspectRatio="xMidYMid meet"
+          style={{ pointerEvents: "auto" }}
           className={`block h-full w-full touch-none select-none bg-white ${compactHeight ? "min-h-[280px]" : "min-h-[320px]"}`}
           role="img"
           aria-label="整层板区、洞口、正式钢筋Piece和支承关系布局预览"
@@ -814,6 +892,19 @@ export function FloorCanvas({
             if (drag && drag.pointerId === event.pointerId) {
               drag.lastClientX = event.clientX;
               drag.lastClientY = event.clientY;
+              if (event.pointerType === "touch" && !drag.activated) {
+                const dxPx = event.clientX - drag.startClientX;
+                const dyPx = event.clientY - drag.startClientY;
+                const distancePx = Math.hypot(dxPx, dyPx);
+                if (distancePx < TOUCH_DRAG_THRESHOLD_PX) return;
+                drag.activated = true;
+                drag.moved = true;
+                setDragPreview({ objectId: drag.selection.id, x: drag.startX, y: drag.startY });
+                onDragStateChange?.(true);
+              }
+              if (drag.activated) {
+                drag.moved = true;
+              }
               const moved = dragPosition(event, drag);
               scheduleFrame({ preview: { objectId: drag.selection.id, x: moved.x, y: moved.y } });
               return;
@@ -872,6 +963,8 @@ export function FloorCanvas({
                 stroke={dockSourceSelected ? "#f97316" : dockTargetSelected ? "#0ea5e9" : multiSelected ? "#8b5cf6" : selected ? "#2563eb" : domainHighlighted ? "#4f46e5" : "#94a3b8"}
                 strokeWidth={dockSourceSelected || dockTargetSelected || multiSelected ? 4 : selected ? 4 : domainHighlighted ? 3 : 1.5}
                 className={interactive ? "cursor-move touch-none" : editMode === "dock" ? "cursor-pointer touch-none" : "cursor-crosshair touch-none"}
+                style={{ pointerEvents: "all" }}
+                pointerEvents="all"
                 role="button" aria-label={`选择板区 ${slab.name}`} tabIndex={0}
                 data-dock-role={dockSourceSelected ? "source" : dockTargetSelected ? "target" : undefined}
                 data-multi-selected={multiSelected ? "true" : undefined}
@@ -906,6 +999,8 @@ export function FloorCanvas({
               x={toX(opening.x)} y={toY(opening.y + opening.height)}
               width={Math.max(opening.width * effectiveScale, 1)} height={Math.max(opening.height * effectiveScale, 1)}
               fill="url(#opening-hatch-v22)" stroke="transparent" className="cursor-move touch-none"
+              style={{ pointerEvents: "all" }}
+              pointerEvents="all"
               role="button" aria-label={`选择洞口 ${opening.name}`} tabIndex={0}
               onPointerDown={(event) => {
                 if (event.pointerType === "touch" && dragRef.current && dragRef.current.pointerId !== event.pointerId) {
