@@ -6,6 +6,7 @@ const BOTTOM_KEY = "rebarviz:floor-rebar:bottom:v1";
 const TOP_KEY = "rebarviz:floor-rebar:top:v1";
 const ROLE_KEY = "rebarviz:floor-rebar:role:v1";
 const META_KEY = "rebarviz:floor-rebar:project-meta:v1";
+const REAL_PROJECT_FIXTURE = "tests/fixtures/floor-project-real-export.json";
 
 function buildValidProjectFile(): string {
   return JSON.stringify({
@@ -120,6 +121,136 @@ test.describe("Floor Project IO 工程文件", () => {
     expect(parsed.meta.projectName).toBe("当前工程");
     // 状态栏闪示导出成功。
     await expect(page.getByTestId("status-flash")).toContainText("已导出");
+  });
+
+  test("工程菜单关闭后 file input 仍然永久挂载", async ({ page }) => {
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await page.goto("/calculator/floor");
+
+    await expect(page.getByTestId("floor-project-file-input")).toHaveCount(1);
+    await page.getByTestId("floor-project-menu-button").click();
+    await expect(page.getByTestId("floor-project-file-input")).toHaveCount(1);
+    await page.getByLabel("关闭工程菜单").click();
+    await expect(page.getByTestId("floor-project-file-input")).toHaveCount(1);
+  });
+
+  test("真实点击导入数据后 filechooser 选择合法工程并出现 Preview", async ({ page }) => {
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await page.goto("/calculator/floor");
+
+    await page.getByTestId("floor-project-menu-button").click();
+    const fileChooserPromise = page.waitForEvent("filechooser");
+    await page.getByRole("button", { name: "导入数据" }).click();
+    const chooser = await fileChooserPromise;
+    await chooser.setFiles(REAL_PROJECT_FIXTURE);
+
+    const dialog = page.getByTestId("floor-import-project-dialog");
+    await expect(dialog).toBeVisible();
+    await expect(page.getByTestId("floor-import-project-name")).toContainText("未命名楼板");
+    await expect(dialog).toContainText("12");
+    await expect(dialog).toContainText("2");
+    await expect(dialog).toContainText("通墙路径");
+
+    await page.getByTestId("floor-import-confirm").click();
+    await expect(page.getByRole("button", { name: "选择板区 板区01" })).toBeVisible();
+
+    const draft = await page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? "{}"), DRAFT_KEY);
+    expect(draft.state.slabs.length).toBe(12);
+    const top = await page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? "{}"), TOP_KEY);
+    expect(top.state.countMode).toBe("round");
+    expect(top.state.throughPaths.length).toBe(2);
+    const bottom = await page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? "{}"), BOTTOM_KEY);
+    expect(bottom.state.countMode).toBe("round");
+    const role = await page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? "{}"), ROLE_KEY);
+    expect(role.state.mainDirectionOverrides).toEqual(expect.objectContaining({ "role:slab-01|slab-02|slab-03": "x" }));
+
+    await page.reload();
+    await expect(page.getByRole("button", { name: "选择板区 板区01" })).toBeVisible();
+  });
+
+  test("Phone 390×844：真实 filechooser 导入合法工程并显示 Preview", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/calculator/floor");
+
+    await page.getByTestId("floor-project-menu-button").click();
+    const fileChooserPromise = page.waitForEvent("filechooser");
+    await page.getByRole("button", { name: "导入数据" }).click();
+    const chooser = await fileChooserPromise;
+    await chooser.setFiles(REAL_PROJECT_FIXTURE);
+
+    const dialog = page.getByTestId("floor-import-project-dialog");
+    await expect(dialog).toBeVisible();
+    await expect(page.getByTestId("floor-import-project-name")).toContainText("未命名楼板");
+    await expect(dialog).toContainText("12");
+    await expect(dialog).toContainText("2");
+  });
+
+  test("真实工程导出后再导入 round trip：保留核心结构与 ID", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/calculator/floor");
+    await page.evaluate(() => {
+      localStorage.setItem("rebarviz:floor-rebar:draft:v1", JSON.stringify({
+        schemaVersion: 2,
+        savedAt: new Date().toISOString(),
+        state: {
+          coordinateModel: "net-layout-v1",
+          slabs: [{ id: "r1", name: "板区R1", type: "room", x: 0, y: 0, width: 3000, height: 3000 }],
+          openings: [],
+          supportRules: [],
+          innerWallThickness: 200,
+          outerWallThickness: 300,
+          snapDistanceMm: 100,
+          overlapToleranceMm: 5,
+        },
+      }));
+      localStorage.setItem("rebarviz:floor-rebar:bottom:v1", JSON.stringify({
+        schemaVersion: 3,
+        savedAt: new Date().toISOString(),
+        roleReviewRequired: false,
+        state: { countMode: "round", defaults: { mainDiameter: 12, secondaryDiameter: 10, xSpacing: 200, ySpacing: 200 }, slabOverrides: {} },
+      }));
+      localStorage.setItem("rebarviz:floor-rebar:top:v1", JSON.stringify({
+        schemaVersion: 4,
+        savedAt: new Date().toISOString(),
+        roleReviewRequired: false,
+        state: { countMode: "round", topAnchorExtra: 250, defaults: { mainDiameter: 10, secondaryDiameter: 10, xSpacing: 200, ySpacing: 200, xExtraMode: "both", yExtraMode: "both" }, slabOverrides: {}, throughPaths: [] },
+      }));
+      localStorage.setItem("rebarviz:floor-rebar:role:v1", JSON.stringify({
+        schemaVersion: 1,
+        savedAt: new Date().toISOString(),
+        state: { mainDirectionOverrides: { r1: "x" } },
+      }));
+      localStorage.setItem("rebarviz:floor-rebar:project-meta:v1", JSON.stringify({ schemaVersion: 1, projectName: "RoundTrip" }));
+    });
+    await page.reload();
+
+    await page.getByTestId("floor-project-menu-button").click();
+    const exportDownloadPromise = page.waitForEvent("download");
+    await page.getByRole("button", { name: "导出数据" }).click();
+    const exportDownload = await exportDownloadPromise;
+    const exportPath = await exportDownload.path();
+    expect(exportPath).toBeTruthy();
+
+    const exportText = exportPath ? readFileSync(exportPath, "utf-8") : "";
+    const exported = JSON.parse(exportText);
+    expect(exported.data.plan.state.slabs).toHaveLength(1);
+    expect(exported.data.top.state.throughPaths).toEqual([]);
+
+    const fileChooserPromise = page.waitForEvent("filechooser");
+    // 导出动作会关闭工程菜单，导入前需要重新打开入口。
+    await page.getByTestId("floor-project-menu-button").click();
+    await page.getByRole("button", { name: "导入数据" }).click();
+    const chooser = await fileChooserPromise;
+    await chooser.setFiles(exportPath ?? REAL_PROJECT_FIXTURE);
+
+    await expect(page.getByTestId("floor-import-project-dialog")).toBeVisible();
+    await page.getByTestId("floor-import-confirm").click();
+    await expect(page.getByRole("button", { name: "选择板区 板区R1" })).toBeVisible();
+
+    const draftAfter = await page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? "{}"), DRAFT_KEY);
+    expect(draftAfter.state.slabs.map((slab: { id: string }) => slab.id)).toEqual(["r1"]);
+    await page.reload();
+    await expect(page.getByRole("button", { name: "选择板区 板区R1" })).toBeVisible();
   });
 
   test("导入：预览后确认，完整恢复布局/设置/ID", async ({ page }) => {

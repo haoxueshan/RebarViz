@@ -1,0 +1,111 @@
+{
+  "format": "rebarviz-floor-layout",
+  "schemaVersion": 1,
+  "meta": {
+    "projectName": "未命名楼板",
+    "exportedAt": "2026-08-17T00:00:00.000Z",
+    "app": "RebarViz"
+  },
+  "data": {
+    "plan": {
+      "schemaVersion": 2,
+      "savedAt": "2026-08-17T00:00:00.000Z",
+      "state": {
+        "coordinateModel": "net-layout-v1",
+        "slabs": [
+          { "id": "slab-01", "name": "板区01", "type": "room", "x": 0, "y": 0, "width": 3600, "height": 4200 },
+          { "id": "slab-02", "name": "板区02", "type": "room", "x": 3600, "y": 0, "width": 3600, "height": 4200 },
+          { "id": "slab-03", "name": "板区03", "type": "room", "x": 7200, "y": 0, "width": 3600, "height": 4200 },
+          { "id": "slab-04", "name": "板区04", "type": "room", "x": 0, "y": 4200, "width": 3600, "height": 4200 },
+          { "id": "slab-05", "name": "板区05", "type": "room", "x": 3600, "y": 4200, "width": 3600, "height": 4200 },
+          { "id": "slab-06", "name": "板区06", "type": "room", "x": 7200, "y": 4200, "width": 3600, "height": 4200 },
+          { "id": "slab-07", "name": "板区07", "type": "room", "x": 0, "y": 8400, "width": 3600, "height": 4200 },
+          { "id": "slab-08", "name": "板区08", "type": "room", "x": 3600, "y": 8400, "width": 3600, "height": 4200 },
+          { "id": "slab-09", "name": "板区09", "type": "room", "x": 7200, "y": 8400, "width": 3600, "height": 4200 },
+          { "id": "slab-10", "name": "板区10", "type": "room", "x": 0, "y": 12600, "width": 3600, "height": 4200 },
+          { "id": "slab-11", "name": "板区11", "type": "room", "x": 3600, "y": 12600, "width": 3600, "height": 4200 },
+          { "id": "slab-12", "name": "板区12", "type": "room", "x": 7200, "y": 12600, "width": 3600, "height": 4200 }
+        ],
+        "openings": [],
+        "supportRules": [
+          { "id": "rule-01", "target": { "kind": "slab-edge", "slabId": "slab-01", "side": "east", "range": { "mode": "offset", "startMm": 0, "endMm": 3000 } }, "support": "continuous" },
+          { "id": "rule-02", "target": { "kind": "slab-edge", "slabId": "slab-02", "side": "east", "range": { "mode": "offset", "startMm": 0, "endMm": 3000 } }, "support": "continuous" },
+          { "id": "rule-03", "target": { "kind": "slab-edge", "slabId": "slab-03", "side": "east", "range": { "mode": "offset", "startMm": 0, "endMm": 3000 } }, "support": "continuous" },
+          { "id": "rule-04", "target": { "kind": "slab-edge", "slabId": "slab-04", "side": "east", "range": { "mode": "offset", "startMm": 0, "endMm": 3000 } }, "support": "continuous" },
+          { "id": "rule-05", "target": { "kind": "slab-edge", "slabId": "slab-05", "side": "east", "range": { "mode": "offset", "startMm": 0, "endMm": 3000 } }, "support": "continuous" },
+          { "id": "rule-06", "target": { "kind": "slab-edge", "slabId": "slab-06", "side": "east", "range": { "mode": "offset", "startMm": 0, "endMm": 3000 } }, "support": "continuous" }
+        ],
+        "innerWallThickness": 200,
+        "outerWallThickness": 300,
+        "snapDistanceMm": 100,
+        "overlapToleranceMm": 5
+      }
+    },
+    "bottom": {
+      "schemaVersion": 3,
+      "savedAt": "2026-08-17T00:00:00.000Z",
+      "roleReviewRequired": false,
+      "state": {
+        "countMode": "round",
+        "defaults": {
+          "mainDiameter": 14,
+          "secondaryDiameter": 12,
+          "xSpacing": 180,
+          "ySpacing": 160
+        },
+        "slabOverrides": {}
+      }
+    },
+    "top": {
+      "schemaVersion": 4,
+      "savedAt": "2026-08-17T00:00:00.000Z",
+      "roleReviewRequired": false,
+      "state": {
+        "countMode": "round",
+        "topAnchorExtra": 250,
+        "defaults": {
+          "mainDiameter": 10,
+          "secondaryDiameter": 10,
+          "xSpacing": 200,
+          "ySpacing": 200,
+          "xExtraMode": "both",
+          "yExtraMode": "both"
+        },
+        "slabOverrides": {},
+        "throughPaths": [
+          {
+            "id": "through-01",
+            "name": "通墙01",
+            "direction": "y",
+            "slabIds": ["slab-01", "slab-02", "slab-03"],
+            "bandStartMm": 0,
+            "bandEndMm": 3600,
+            "enabled": true
+          },
+          {
+            "id": "through-02",
+            "name": "通墙02",
+            "direction": "y",
+            "slabIds": ["slab-08", "slab-09"],
+            "bandStartMm": 0,
+            "bandEndMm": 2600,
+            "enabled": true
+          }
+        ]
+      }
+    },
+    "role": {
+      "schemaVersion": 1,
+      "savedAt": "2026-08-17T00:00:00.000Z",
+      "state": {
+        "mainDirectionOverrides": {
+          "role:slab-01|slab-02|slab-03": "x",
+          "role:slab-04|slab-05|slab-06": "y",
+          "role:slab-07": "x",
+          "role:slab-08": "y",
+          "role:slab-09": "x"
+        }
+      }
+    }
+  }
+}
