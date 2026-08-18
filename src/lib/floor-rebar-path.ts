@@ -8,6 +8,7 @@ import {
   solveFloorTopology,
   type FloorSolvedConnection,
   type FloorSolvedSlab,
+  type FloorSolvedWall,
   type FloorTopologyConstraintIssue,
   type FloorTopologyExteriorRange,
   type FloorTopologySolution,
@@ -39,7 +40,8 @@ export type FloorRebarConnectionTransition = {
   overlapRangeEndMm: number;
 };
 
-export type FloorRebarPathEndpoint = {
+export type FloorRebarExteriorEndpoint = {
+  kind: "exterior";
   slabId: string;
   side: "west" | "east" | "south" | "north";
   runMm: number;
@@ -47,6 +49,22 @@ export type FloorRebarPathEndpoint = {
   exteriorRangeStartMm: number;
   exteriorRangeEndMm: number;
 };
+
+export type FloorRebarConnectionEndpoint = {
+  kind: "connection-boundary";
+  slabId: string;
+  otherSlabId: string;
+  side: "west" | "east" | "south" | "north";
+  runMm: number;
+  connectionId: string;
+  support: "inner-wall" | "continuous";
+  gapMm: number;
+  wallThicknessMm: number;
+  overlapRangeStartMm: number;
+  overlapRangeEndMm: number;
+};
+
+export type FloorRebarPathEndpoint = FloorRebarExteriorEndpoint | FloorRebarConnectionEndpoint;
 
 export type FloorRebarScanlineChain = {
   id: string;
@@ -75,7 +93,10 @@ export type FloorRebarPathIssueCode =
   | "rebar-path-connection-geometry-mismatch"
   | "rebar-path-connection-ambiguous"
   | "rebar-path-branch-ambiguous"
-  | "rebar-path-endpoint-unresolved";
+  | "rebar-path-endpoint-unresolved"
+  | "rebar-path-endpoint-ambiguous"
+  | "rebar-path-transition-clear-overlap"
+  | "rebar-path-chain-nonlinear";
 
 export type FloorRebarPathIssue = {
   level: "warning" | "error";
@@ -100,6 +121,8 @@ export type FloorRebarPathContext = {
   plan: FloorPlanState;
   solution: FloorTopologySolution;
   slabsById: ReadonlyMap<string, FloorSolvedSlab>;
+  solvedConnectionsById: ReadonlyMap<string, FloorSolvedConnection>;
+  wallsByConnectionId: ReadonlyMap<string, FloorSolvedWall>;
   exteriorRanges: readonly FloorTopologyExteriorRange[];
   topologyIssues: readonly FloorTopologyConstraintIssue[];
   isValid: boolean;
@@ -117,9 +140,17 @@ function compareString(left: string, right: string): number {
   return left.localeCompare(right);
 }
 
-/** Physical intervals are half-open. EPSILON only keeps a numerically exact lower boundary in range. */
+/** Snap only a value close to a formal boundary, then apply strict half-open membership. */
+function normalizeToFormalBoundary(value: number, start: number, end: number): number {
+  if (Math.abs(value - start) <= EPSILON) return start;
+  if (Math.abs(value - end) <= EPSILON) return end;
+  return value;
+}
+
 function containsHalfOpen(value: number, start: number, end: number): boolean {
-  return value >= start - EPSILON && value < end;
+  if (!(end - start > EPSILON)) return false;
+  const normalized = normalizeToFormalBoundary(value, start, end);
+  return normalized >= start && normalized < end;
 }
 
 function isTopologyError(issue: FloorTopologyConstraintIssue): boolean {
@@ -169,6 +200,8 @@ export function buildFloorRebarPathContextV3(plan: FloorPlanState): FloorRebarPa
     plan,
     solution,
     slabsById: new Map(solution.slabs.map((slab) => [slab.slabId, slab])),
+    solvedConnectionsById: new Map(solution.solvedConnections.map((connection) => [connection.connectionId, connection])),
+    wallsByConnectionId: new Map(solution.walls.map((wall) => [wall.connectionId, wall])),
     exteriorRanges: modelValid ? buildFloorTopologyExteriorRanges(plan, solution) : [],
     topologyIssues,
     isValid: modelValid && !hasTopologyErrors,
@@ -220,12 +253,72 @@ function rangeMatchesPosition(
   return containsHalfOpen(positionMm, tangentBase(slab, direction) + range.startMm, tangentBase(slab, direction) + range.endMm);
 }
 
-function resolveEndpoint(
+function connectionEndpointSide(
+  connection: FloorSolvedConnection,
+  slabId: string,
+): FloorEdgeSide | null {
+  if (connection.slabIds[0] === slabId) return connection.sideA;
+  if (connection.slabIds[1] === slabId) return connection.sideB;
+  return null;
+}
+
+function solvedConnectionWallThickness(
+  context: FloorRebarPathContext,
+  connection: FloorSolvedConnection,
+): { thicknessMm: number | null; issue: FloorRebarPathIssue | null } {
+  if (connection.support === "continuous") return { thicknessMm: 0, issue: null };
+  const wall = context.wallsByConnectionId.get(connection.connectionId);
+  if (!wall) {
+    return {
+      thicknessMm: null,
+      issue: {
+        level: "error",
+        code: "rebar-path-connection-geometry-mismatch",
+        message: `Solved inner wall is missing for connection ${connection.connectionId}.`,
+        connectionIds: [connection.connectionId],
+        slabIds: [...connection.slabIds].sort(compareString),
+      },
+    };
+  }
+  return { thicknessMm: wall.thicknessMm, issue: null };
+}
+
+function buildConnectionEndpoint(
+  span: FloorRebarClearSpan,
+  direction: FloorRebarScanDirection,
+  start: boolean,
+  connection: FloorSolvedConnection,
+  context: FloorRebarPathContext,
+): FloorRebarConnectionEndpoint | null {
+  const slabId = span.slabId;
+  const otherSlabId = connection.slabIds[0] === slabId ? connection.slabIds[1] : connection.slabIds[0];
+  const side = connectionEndpointSide(connection, slabId);
+  const expectedSide = endpointSide(direction, start);
+  if (!side || side !== expectedSide) return null;
+  const wall = solvedConnectionWallThickness(context, connection);
+  if (wall.thicknessMm === null) return null;
+  return {
+    kind: "connection-boundary",
+    slabId,
+    otherSlabId,
+    side,
+    runMm: start ? span.startMm : span.endMm,
+    connectionId: connection.connectionId,
+    support: connection.support,
+    gapMm: connection.gapMm,
+    wallThicknessMm: wall.thicknessMm,
+    overlapRangeStartMm: connection.rangeStartMm,
+    overlapRangeEndMm: connection.rangeEndMm,
+  };
+}
+
+function resolvePathEndpoint(
   span: FloorRebarClearSpan,
   direction: FloorRebarScanDirection,
   positionMm: number,
   start: boolean,
   context: FloorRebarPathContext,
+  boundaryConnections: readonly FloorSolvedConnection[],
 ): { endpoint: FloorRebarPathEndpoint | null; issue: FloorRebarPathIssue | null } {
   const slab = context.slabsById.get(span.slabId);
   if (!slab) {
@@ -240,12 +333,36 @@ function resolveEndpoint(
     };
   }
   const side = endpointSide(direction, start);
-  const matching = context.exteriorRanges
+  const exteriorCandidates = context.exteriorRanges
     .filter((range) => range.slabId === slab.slabId && range.side === side)
     .filter((range) => rangeMatchesPosition(positionMm, slab, direction, range))
     .sort((left, right) => left.startMm - right.startMm || left.endMm - right.endMm);
-  const range = matching[0];
-  if (!range) {
+  const connectionCandidates = boundaryConnections
+    .filter((connection) => connection.slabIds.includes(slab.slabId))
+    .filter((connection) => containsHalfOpen(positionMm, connection.rangeStartMm, connection.rangeEndMm))
+    .map((connection) => buildConnectionEndpoint(span, direction, start, connection, context))
+    .filter((endpoint): endpoint is FloorRebarConnectionEndpoint => endpoint !== null)
+    .sort((left, right) => left.connectionId.localeCompare(right.connectionId));
+  if (exteriorCandidates.length === 1 && connectionCandidates.length === 0) {
+    const range = exteriorCandidates[0];
+    const base = tangentBase(slab, direction);
+    return {
+      endpoint: {
+        kind: "exterior",
+        slabId: slab.slabId,
+        side,
+        runMm: start ? span.startMm : span.endMm,
+        support: "outer-wall",
+        exteriorRangeStartMm: base + range.startMm,
+        exteriorRangeEndMm: base + range.endMm,
+      },
+      issue: null,
+    };
+  }
+  if (exteriorCandidates.length === 0 && connectionCandidates.length === 1) {
+    return { endpoint: connectionCandidates[0], issue: null };
+  }
+  if (exteriorCandidates.length === 0 && connectionCandidates.length === 0) {
     return {
       endpoint: null,
       issue: {
@@ -256,40 +373,48 @@ function resolveEndpoint(
       },
     };
   }
-  const base = tangentBase(slab, direction);
   return {
-    endpoint: {
-      slabId: slab.slabId,
-      side,
-      runMm: start ? span.startMm : span.endMm,
-      support: "outer-wall",
-      exteriorRangeStartMm: base + range.startMm,
-      exteriorRangeEndMm: base + range.endMm,
+    endpoint: null,
+    issue: {
+      level: "error",
+      code: "rebar-path-endpoint-ambiguous",
+      message: `Scanline endpoint ${side} of slab ${slab.slabId} matches multiple formal boundary candidates.`,
+      slabIds: [slab.slabId],
+      connectionIds: connectionCandidates.map((endpoint) => endpoint.connectionId).sort(compareString),
     },
-    issue: null,
   };
 }
+
+export type FloorRebarActiveConnectionSet = {
+  internal: FloorSolvedConnection[];
+  boundary: FloorSolvedConnection[];
+  issues: FloorRebarPathIssue[];
+};
 
 function activeConnections(
   context: FloorRebarPathContext,
   direction: FloorRebarScanDirection,
   positionMm: number,
-  spans: readonly FloorRebarClearSpan[],
+  allSpans: readonly FloorRebarClearSpan[],
   allowedSlabIds: ReadonlySet<string> | undefined,
-): { connections: FloorSolvedConnection[]; issues: FloorRebarPathIssue[] } {
+): FloorRebarActiveConnectionSet {
   const orientation = direction === "x" ? "vertical" : "horizontal";
-  const spanById = new Map(spans.map((span) => [span.slabId, span]));
-  const connections = [...context.solution.solvedConnections]
+  const spanById = new Map(allSpans.map((span) => [span.slabId, span]));
+  const active = [...context.solution.solvedConnections]
     .sort((left, right) => left.connectionId.localeCompare(right.connectionId))
     .filter((connection) => {
       if (!connection.valid || connection.orientation !== orientation) return false;
       if (!containsHalfOpen(positionMm, connection.rangeStartMm, connection.rangeEndMm)) return false;
-      if (allowedSlabIds && (!allowedSlabIds.has(connection.slabIds[0]) || !allowedSlabIds.has(connection.slabIds[1]))) return false;
       return true;
     });
+  const internal: FloorSolvedConnection[] = [];
+  const boundary: FloorSolvedConnection[] = [];
   const issues: FloorRebarPathIssue[] = [];
   const seenPairs = new Map<string, string[]>();
-  connections.forEach((connection) => {
+  active.forEach((connection) => {
+    const firstIncluded = !allowedSlabIds || allowedSlabIds.has(connection.slabIds[0]);
+    const secondIncluded = !allowedSlabIds || allowedSlabIds.has(connection.slabIds[1]);
+    if (allowedSlabIds && !firstIncluded && !secondIncluded) return;
     const pair = [...connection.slabIds].sort(compareString).join("|");
     const ids = seenPairs.get(pair) ?? [];
     ids.push(connection.connectionId);
@@ -303,6 +428,14 @@ function activeConnections(
         slabIds: [...connection.slabIds].sort(compareString),
       });
     }
+    const wall = solvedConnectionWallThickness(context, connection);
+    if (wall.issue) issues.push(wall.issue);
+    if (!allowedSlabIds) {
+      internal.push(connection);
+    } else {
+      if (firstIncluded && secondIncluded) internal.push(connection);
+      else if (firstIncluded !== secondIncluded) boundary.push(connection);
+    }
   });
   seenPairs.forEach((connectionIds, pair) => {
     if (connectionIds.length < 2) return;
@@ -314,7 +447,7 @@ function activeConnections(
       slabIds: pair.split("|").sort(compareString),
     });
   });
-  return { connections, issues };
+  return { internal, boundary, issues };
 }
 
 function transitionForConnection(
@@ -343,12 +476,21 @@ function transitionForConnection(
     : second;
   const after = before === first ? second : first;
   const actualGapMm = after.startMm - before.endMm;
-  const wall = connection.support === "inner-wall"
-    ? context.solution.walls.find((item) => item.connectionId === connection.connectionId)
-    : undefined;
-  const wallThicknessMm = connection.support === "inner-wall"
-    ? (wall?.thicknessMm ?? connection.gapMm)
-    : 0;
+  const wall = solvedConnectionWallThickness(context, connection);
+  if (wall.issue || wall.thicknessMm === null) {
+    return {
+      beforeSlabId: before.slabId,
+      afterSlabId: after.slabId,
+      transition: null,
+      issue: wall.issue ?? {
+        level: "error",
+        code: "rebar-path-connection-geometry-mismatch",
+        message: `Solved wall thickness is unavailable for connection ${connection.connectionId}.`,
+        connectionIds: [connection.connectionId],
+      },
+    };
+  }
+  const wallThicknessMm = wall.thicknessMm;
   if (Math.abs(actualGapMm - connection.gapMm) > EPSILON
     || (connection.support === "inner-wall" && Math.abs(wallThicknessMm - connection.gapMm) > EPSILON)) {
     return {
@@ -390,11 +532,121 @@ type ScanGraphEdge = {
   transition: FloorRebarConnectionTransition;
 };
 
+function transitionClearOverlapIssues(
+  allSpans: readonly FloorRebarClearSpan[],
+  activeConnections: readonly FloorSolvedConnection[],
+  context: FloorRebarPathContext,
+): FloorRebarPathIssue[] {
+  const spanById = new Map(allSpans.map((span) => [span.slabId, span]));
+  const issues: FloorRebarPathIssue[] = [];
+  activeConnections.forEach((connection) => {
+    const built = transitionForConnection(connection, spanById, context);
+    if (built.issue) {
+      issues.push(built.issue);
+      return;
+    }
+    if (!built.transition || connection.support === "continuous" || connection.gapMm <= EPSILON) return;
+    allSpans.forEach((span) => {
+      if (span.slabId === built.beforeSlabId || span.slabId === built.afterSlabId) return;
+      const overlap = Math.min(span.endMm, built.transition!.runEndMm)
+        - Math.max(span.startMm, built.transition!.runStartMm);
+      if (overlap <= EPSILON) return;
+      issues.push({
+        level: "error",
+        code: "rebar-path-transition-clear-overlap",
+        message: `Clear span ${span.slabId} overlaps the physical transition of connection ${connection.connectionId}.`,
+        connectionIds: [connection.connectionId],
+        slabIds: [built.beforeSlabId, built.afterSlabId, span.slabId].sort(compareString),
+      });
+    });
+  });
+  return issues;
+}
+
+function validateOrderedScanlineComponent(
+  spans: readonly FloorRebarClearSpan[],
+  edges: readonly ScanGraphEdge[],
+): FloorRebarPathIssue[] {
+  const slabIds = spans.map((span) => span.slabId);
+  const componentSlabIds = new Set(slabIds);
+  const componentEdges = edges.filter((edge) => componentSlabIds.has(edge.beforeSlabId) && componentSlabIds.has(edge.afterSlabId));
+  const connectionIds = componentEdges.map((edge) => edge.transition.connectionId).sort(compareString);
+  const issues: FloorRebarPathIssue[] = [];
+  if (spans.length === 1) {
+    if (componentEdges.length === 0) return issues;
+    issues.push({
+      level: "error",
+      code: "rebar-path-chain-nonlinear",
+      message: "A single-span scanline component cannot contain a connection edge.",
+      slabIds: [...slabIds],
+      connectionIds,
+    });
+    return issues;
+  } else if (componentEdges.length !== spans.length - 1) {
+    issues.push({
+      level: "error",
+      code: "rebar-path-chain-nonlinear",
+      message: `Scanline component has ${spans.length} spans but ${componentEdges.length} transitions; a linear chain requires n-1 edges.`,
+      slabIds: [...slabIds].sort(compareString),
+      connectionIds,
+    });
+    return issues;
+  }
+  const degree = new Map(slabIds.map((slabId) => [slabId, 0]));
+  componentEdges.forEach((edge) => {
+    degree.set(edge.beforeSlabId, (degree.get(edge.beforeSlabId) ?? 0) + 1);
+    degree.set(edge.afterSlabId, (degree.get(edge.afterSlabId) ?? 0) + 1);
+  });
+  if (spans.length > 1) {
+    const expectedDegree = new Map(slabIds.map((slabId, index) => [slabId, index === 0 || index === spans.length - 1 ? 1 : 2]));
+    const degreeValid = slabIds.every((slabId) => degree.get(slabId) === expectedDegree.get(slabId));
+    if (!degreeValid) {
+      issues.push({
+        level: "error",
+        code: "rebar-path-chain-nonlinear",
+        message: "Scanline component degrees do not form a single linear path.",
+        slabIds: [...slabIds].sort(compareString),
+        connectionIds,
+      });
+      return issues;
+    }
+  }
+  for (let index = 0; index < spans.length - 1; index += 1) {
+    const current = spans[index];
+    const next = spans[index + 1];
+    const matching = componentEdges.filter((edge) =>
+      edge.beforeSlabId === current.slabId && edge.afterSlabId === next.slabId);
+    if (matching.length !== 1) {
+      issues.push({
+        level: "error",
+        code: "rebar-path-chain-nonlinear",
+        message: `Ordered spans ${current.slabId} and ${next.slabId} do not have exactly one adjacent transition.`,
+        slabIds: [...slabIds].sort(compareString),
+        connectionIds,
+      });
+      continue;
+    }
+    const transition = matching[0].transition;
+    if (Math.abs(transition.runStartMm - current.endMm) > EPSILON
+      || Math.abs(transition.runEndMm - next.startMm) > EPSILON) {
+      issues.push({
+        level: "error",
+        code: "rebar-path-connection-geometry-mismatch",
+        message: `Transition ${transition.connectionId} does not terminate at its ordered clear faces.`,
+        slabIds: [current.slabId, next.slabId].sort(compareString),
+        connectionIds: [transition.connectionId],
+      });
+    }
+  }
+  return issues;
+}
+
 function buildChains(
   context: FloorRebarPathContext,
   request: FloorRebarScanlineRequest,
   spans: FloorRebarClearSpan[],
   connections: FloorSolvedConnection[],
+  boundaryConnections: readonly FloorSolvedConnection[],
 ): { chains: FloorRebarScanlineChain[]; issues: FloorRebarPathIssue[] } {
   const issues: FloorRebarPathIssue[] = [];
   const spanById = new Map(spans.map((span) => [span.slabId, span]));
@@ -454,10 +706,12 @@ function buildChains(
       left.transition.runStartMm - right.transition.runStartMm
       || left.transition.runEndMm - right.transition.runEndMm
       || compareString(left.transition.connectionId, right.transition.connectionId));
+    issues.push(...validateOrderedScanlineComponent(component, orderedTransitions));
+    if (issues.length > 0) return;
     const startSpan = component[0];
     const endSpan = component[component.length - 1];
-    const startResolved = resolveEndpoint(startSpan, request.direction, request.positionMm, true, context);
-    const endResolved = resolveEndpoint(endSpan, request.direction, request.positionMm, false, context);
+    const startResolved = resolvePathEndpoint(startSpan, request.direction, request.positionMm, true, context, boundaryConnections);
+    const endResolved = resolvePathEndpoint(endSpan, request.direction, request.positionMm, false, context, boundaryConnections);
     if (startResolved.issue) issues.push(startResolved.issue);
     if (endResolved.issue) issues.push(endResolved.issue);
     if (!startResolved.endpoint || !endResolved.endpoint) return;
@@ -541,11 +795,11 @@ function scanlineFromContext(
   }
   const topologyWarnings = topologyIssues.filter((issue) => issue.level === "warning");
   const allowedSlabIds = request.slabIds ? new Set(request.slabIds) : undefined;
-  const spans = context.solution.slabs
-    .filter((slab) => !allowedSlabIds || allowedSlabIds.has(slab.slabId))
+  const allSpans = context.solution.slabs
     .map((slab) => spanForSlab(slab, request.direction, request.positionMm))
     .filter((span): span is FloorRebarClearSpan => span !== null)
     .sort((left, right) => left.startMm - right.startMm || left.endMm - right.endMm || compareString(left.slabId, right.slabId));
+  const spans = allSpans.filter((span) => !allowedSlabIds || allowedSlabIds.has(span.slabId));
   const issues: FloorRebarPathIssue[] = [];
   for (let index = 1; index < spans.length; index += 1) {
     if (spans[index - 1].endMm - spans[index].startMm <= EPSILON) continue;
@@ -557,10 +811,14 @@ function scanlineFromContext(
     });
   }
   if (issues.length > 0) return { ...baseResult, issues: sortPathIssues([...topologyWarnings, ...issues]) };
-  const active = activeConnections(context, request.direction, request.positionMm, spans, allowedSlabIds);
+  const active = activeConnections(context, request.direction, request.positionMm, allSpans, allowedSlabIds);
   issues.push(...active.issues);
   if (issues.length > 0) return { ...baseResult, issues: sortPathIssues([...topologyWarnings, ...issues]) };
-  const graph = buildChains(context, request, spans, active.connections);
+  const activeAll = [...active.internal, ...active.boundary]
+    .sort((left, right) => left.connectionId.localeCompare(right.connectionId));
+  issues.push(...transitionClearOverlapIssues(allSpans, activeAll, context));
+  if (issues.length > 0) return { ...baseResult, issues: sortPathIssues([...topologyWarnings, ...issues]) };
+  const graph = buildChains(context, request, spans, active.internal, active.boundary);
   issues.push(...graph.issues);
   if (issues.length > 0) return { ...baseResult, issues: sortPathIssues([...topologyWarnings, ...issues]) };
   return {

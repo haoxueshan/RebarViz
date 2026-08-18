@@ -5,11 +5,12 @@ import {
   buildFloorRebarScanlineV3,
 } from "./floor-rebar-path";
 import { incompleteMengPlan3 } from "./__fixtures__/floor-topology-plan3-incomplete-meng";
-import { stableFloorConnectionId } from "./floor-topology";
+import { stableFloorConnectionId, type FloorConnectionRange, type FloorEdgeConnection } from "./floor-topology";
 import {
   applyFloorTopologyRepairs,
   detectFloorTopologyRepairCandidates,
 } from "./floor-topology-repair";
+import type { FloorSolvedConnection } from "./floor-topology-solver";
 
 function repairedMengPlan(): FloorPlanState {
   const plan = incompleteMengPlan3();
@@ -37,18 +38,71 @@ function simplePlan(overrides: Partial<FloorPlanState> = {}): FloorPlanState {
   };
 }
 
+function horizontalPairPlan(
+  support: "inner-wall" | "continuous",
+  range: FloorConnectionRange = { mode: "auto-overlap" },
+): FloorPlanState {
+  const gapMm = support === "inner-wall" ? 20 : 0;
+  const connection: FloorEdgeConnection = {
+    id: stableFloorConnectionId("a", "east", "b", "west"),
+    a: { slabId: "a", side: "east", range },
+    b: { slabId: "b", side: "west", range },
+    source: "manual",
+    confidence: "confirmed",
+    tangentConstraint: { mode: "none" },
+  };
+  return simplePlan({
+    slabs: [
+      { id: "a", name: "A", type: "room", x: 0, y: 0, width: 100, height: 100 },
+      { id: "b", name: "B", type: "room", x: 100 + gapMm, y: 0, width: 100, height: 100 },
+    ],
+    connections: [connection],
+    supportRules: support === "continuous" ? [
+      { id: "a-cont", target: { kind: "slab-edge", slabId: "a", side: "east", range: { mode: "whole" } }, support: "continuous" },
+      { id: "b-cont", target: { kind: "slab-edge", slabId: "b", side: "west", range: { mode: "whole" } }, support: "continuous" },
+    ] : [],
+  });
+}
+
+function fakeVerticalConnection(
+  connectionId: string,
+  leftSlabId: string,
+  rightSlabId: string,
+  gapMm: number,
+): FloorSolvedConnection {
+  return {
+    connectionId,
+    slabIds: [leftSlabId, rightSlabId],
+    orientation: "vertical",
+    sideA: "east",
+    sideB: "west",
+    rangeStartMm: 0,
+    rangeEndMm: 100,
+    lengthMm: 100,
+    aOffsetStartMm: 0,
+    aOffsetEndMm: 100,
+    bOffsetStartMm: 0,
+    bOffsetEndMm: 100,
+    support: "continuous",
+    gapMm,
+    valid: true,
+  };
+}
+
 describe("Floor Rebar V1.4C.1 path engine", () => {
   it("builds a reusable context and single-slab X/Y paths", () => {
     const plan = simplePlan();
     const context = buildFloorRebarPathContextV3(plan);
     expect(context.plan).toBe(plan);
     expect(context.isValid).toBe(true);
+    expect(context.solvedConnectionsById.size).toBe(0);
+    expect(context.wallsByConnectionId.size).toBe(0);
     const x = buildFloorRebarScanlineV3(context, { direction: "x", positionMm: 50 });
     const y = buildFloorRebarScanlineV3(context, { direction: "y", positionMm: 50 });
     expect(x.chains[0].spans).toEqual([{ kind: "clear-slab", slabId: "a", startMm: 0, endMm: 100, lengthMm: 100 }]);
     expect(y.chains[0].spans[0].startMm).toBe(0);
-    expect(x.chains[0].startEndpoint).toMatchObject({ slabId: "a", side: "west", runMm: 0, support: "outer-wall" });
-    expect(x.chains[0].endEndpoint).toMatchObject({ slabId: "a", side: "east", runMm: 100 });
+    expect(x.chains[0].startEndpoint).toMatchObject({ kind: "exterior", slabId: "a", side: "west", runMm: 0, support: "outer-wall" });
+    expect(x.chains[0].endEndpoint).toMatchObject({ kind: "exterior", slabId: "a", side: "east", runMm: 100 });
     expect(x.isValid).toBe(true);
     expect(y.isValid).toBe(true);
   });
@@ -179,6 +233,268 @@ describe("Floor Rebar V1.4C.1 path engine", () => {
     expect(end.chains).toHaveLength(2);
   });
 
+  it("resolves filtered inner-wall domains to bidirectional connection-boundary endpoints", () => {
+    const plan = horizontalPairPlan("inner-wall");
+    const before = structuredClone(plan);
+    const context = buildFloorRebarPathContextV3(plan);
+    const a = buildFloorRebarScanlineV3(context, { direction: "x", positionMm: 50, slabIds: ["a"] });
+    const b = buildFloorRebarScanlineV3(context, { direction: "x", positionMm: 50, slabIds: ["b"] });
+    expect(a.isValid).toBe(true);
+    expect(a.chains).toHaveLength(1);
+    expect(a.chains[0]).toMatchObject({ slabIds: ["a"], startMm: 0, endMm: 100 });
+    expect(a.chains[0].startEndpoint).toMatchObject({ kind: "exterior", slabId: "a", side: "west", runMm: 0, support: "outer-wall" });
+    expect(a.chains[0].endEndpoint).toMatchObject({
+      kind: "connection-boundary",
+      slabId: "a",
+      otherSlabId: "b",
+      side: "east",
+      runMm: 100,
+      support: "inner-wall",
+      gapMm: 20,
+      wallThicknessMm: 20,
+      connectionId: stableFloorConnectionId("a", "east", "b", "west"),
+    });
+    expect(b.isValid).toBe(true);
+    expect(b.chains[0].startEndpoint).toMatchObject({
+      kind: "connection-boundary",
+      slabId: "b",
+      otherSlabId: "a",
+      side: "west",
+      runMm: 120,
+      support: "inner-wall",
+      gapMm: 20,
+      wallThicknessMm: 20,
+    });
+    expect(b.chains[0].endEndpoint).toMatchObject({ kind: "exterior", slabId: "b", side: "east", runMm: 220 });
+    expect(plan).toEqual(before);
+  });
+
+  it("describes a filtered continuous boundary but keeps full continuous domains internal", () => {
+    const plan = horizontalPairPlan("continuous");
+    const context = buildFloorRebarPathContextV3(plan);
+    const filtered = buildFloorRebarScanlineV3(context, { direction: "x", positionMm: 50, slabIds: ["a"] });
+    const full = buildFloorRebarScanlineV3(context, { direction: "x", positionMm: 50, slabIds: ["a", "b"] });
+    expect(filtered.isValid).toBe(true);
+    expect(filtered.chains[0].endEndpoint).toMatchObject({
+      kind: "connection-boundary",
+      slabId: "a",
+      otherSlabId: "b",
+      side: "east",
+      support: "continuous",
+      runMm: 100,
+      gapMm: 0,
+      wallThicknessMm: 0,
+    });
+    expect(full.isValid).toBe(true);
+    expect(full.chains[0].slabIds).toEqual(["a", "b"]);
+    expect(full.chains[0].transitions).toHaveLength(1);
+    expect(full.chains[0].transitions[0]).toMatchObject({ support: "continuous", runStartMm: 100, runEndMm: 100 });
+    expect(full.chains[0].startEndpoint.kind).toBe("exterior");
+    expect(full.chains[0].endEndpoint.kind).toBe("exterior");
+  });
+
+  it("resolves partial filtered connections only inside their half-open range", () => {
+    const plan = horizontalPairPlan("inner-wall", { mode: "offset", startMm: 0, endMm: 50 });
+    const context = buildFloorRebarPathContextV3(plan);
+    const inside = buildFloorRebarScanlineV3(context, { direction: "x", positionMm: 25, slabIds: ["a"] });
+    const outside = buildFloorRebarScanlineV3(context, { direction: "x", positionMm: 75, slabIds: ["a"] });
+    const exactEnd = buildFloorRebarScanlineV3(context, { direction: "x", positionMm: 50, slabIds: ["a"] });
+    expect(inside.chains[0].endEndpoint).toMatchObject({ kind: "connection-boundary", side: "east", support: "inner-wall" });
+    expect(outside.chains[0].endEndpoint).toMatchObject({ kind: "exterior", side: "east", support: "outer-wall" });
+    expect(exactEnd.chains[0].endEndpoint).toMatchObject({ kind: "exterior", side: "east", support: "outer-wall" });
+  });
+
+  it("detects third-party clear spans inside a wall even when the slab is filtered out", () => {
+    const base = horizontalPairPlan("inner-wall");
+    const plan = {
+      ...base,
+      slabs: [...base.slabs, { id: "c", name: "C", type: "room" as const, x: 105, y: 0, width: 10, height: 100 }],
+    };
+    const context = buildFloorRebarPathContextV3(plan);
+    expect(context.isValid).toBe(true);
+    const full = buildFloorRebarScanlineV3(context, { direction: "x", positionMm: 50 });
+    const filtered = buildFloorRebarScanlineV3(context, { direction: "x", positionMm: 50, slabIds: ["a", "b"] });
+    for (const result of [full, filtered]) {
+      expect(result.isValid).toBe(false);
+      expect(result.chains).toEqual([]);
+      expect(result.issues).toContainEqual(expect.objectContaining({
+        code: "rebar-path-transition-clear-overlap",
+        connectionIds: [stableFloorConnectionId("a", "east", "b", "west")],
+        slabIds: ["a", "b", "c"],
+      }));
+    }
+  });
+
+  it("supports an internal continuous edge and an excluded inner-wall boundary on one chain", () => {
+    const ab = {
+      id: stableFloorConnectionId("a", "east", "b", "west"),
+      a: { slabId: "a", side: "east" as const, range: { mode: "auto-overlap" as const } },
+      b: { slabId: "b", side: "west" as const, range: { mode: "auto-overlap" as const } },
+      source: "manual" as const,
+      confidence: "confirmed" as const,
+      tangentConstraint: { mode: "none" as const },
+    };
+    const bc = {
+      id: stableFloorConnectionId("b", "east", "c", "west"),
+      a: { slabId: "b", side: "east" as const, range: { mode: "auto-overlap" as const } },
+      b: { slabId: "c", side: "west" as const, range: { mode: "auto-overlap" as const } },
+      source: "manual" as const,
+      confidence: "confirmed" as const,
+      tangentConstraint: { mode: "none" as const },
+    };
+    const plan = simplePlan({
+      slabs: [
+        { id: "a", name: "A", type: "room", x: 0, y: 0, width: 100, height: 100 },
+        { id: "b", name: "B", type: "room", x: 120, y: 0, width: 100, height: 100 },
+        { id: "c", name: "C", type: "room", x: 220, y: 0, width: 100, height: 100 },
+      ],
+      connections: [ab, bc],
+      supportRules: [
+        { id: "b-c-cont-b", target: { kind: "slab-edge", slabId: "b", side: "east", range: { mode: "whole" } }, support: "continuous" },
+        { id: "b-c-cont-c", target: { kind: "slab-edge", slabId: "c", side: "west", range: { mode: "whole" } }, support: "continuous" },
+      ],
+    });
+    const result = buildFloorRebarScanlineV3(plan, { direction: "x", positionMm: 50, slabIds: ["b", "c"] });
+    expect(result.isValid).toBe(true);
+    expect(result.chains[0].slabIds).toEqual(["b", "c"]);
+    expect(result.chains[0].startEndpoint).toMatchObject({
+      kind: "connection-boundary", slabId: "b", otherSlabId: "a", side: "west", support: "inner-wall", runMm: 120,
+    });
+    expect(result.chains[0].transitions).toEqual([expect.objectContaining({ support: "continuous", beforeSlabId: "b", afterSlabId: "c" })]);
+    expect(result.chains[0].endEndpoint).toMatchObject({ kind: "exterior", slabId: "c", side: "east", runMm: 320 });
+  });
+
+  it("rejects multiple boundary candidates and exterior/connection boundary conflicts", () => {
+    const plan = simplePlan({ slabs: [
+      { id: "a", name: "A", type: "room", x: 0, y: 0, width: 100, height: 100 },
+      { id: "b", name: "B", type: "room", x: 100, y: 0, width: 100, height: 100 },
+      { id: "c", name: "C", type: "room", x: 200, y: 0, width: 100, height: 100 },
+    ] });
+    const context = buildFloorRebarPathContextV3(plan);
+    const ab = fakeVerticalConnection("ab", "a", "b", 0);
+    const ac = fakeVerticalConnection("ac", "a", "c", 100);
+    const solution = { ...context.solution, solvedConnections: [ab, ac] };
+    const multipleContext = {
+      ...context,
+      solution,
+      exteriorRanges: context.exteriorRanges.filter((range) => !(range.slabId === "a" && range.side === "east")),
+    };
+    const multiple = buildFloorRebarScanlineV3(multipleContext, { direction: "x", positionMm: 50, slabIds: ["a"] });
+    expect(multiple.isValid).toBe(false);
+    expect(multiple.issues).toContainEqual(expect.objectContaining({
+      code: "rebar-path-endpoint-ambiguous", slabIds: ["a"], connectionIds: ["ab", "ac"],
+    }));
+
+    const exteriorConflict = buildFloorRebarScanlineV3({ ...context, solution: { ...context.solution, solvedConnections: [ab] } }, {
+      direction: "x", positionMm: 50, slabIds: ["a"],
+    });
+    expect(exteriorConflict.isValid).toBe(false);
+    expect(exteriorConflict.issues).toContainEqual(expect.objectContaining({
+      code: "rebar-path-endpoint-ambiguous", slabIds: ["a"], connectionIds: ["ab"],
+    }));
+  });
+
+  it("validates linear, cyclic, and skip-edge graph components", () => {
+    const plan = simplePlan({ slabs: [
+      { id: "a", name: "A", type: "room", x: 0, y: 0, width: 100, height: 100 },
+      { id: "b", name: "B", type: "room", x: 100, y: 0, width: 100, height: 100 },
+      { id: "c", name: "C", type: "room", x: 200, y: 0, width: 100, height: 100 },
+    ] });
+    const context = buildFloorRebarPathContextV3(plan);
+    const ab = fakeVerticalConnection("ab", "a", "b", 0);
+    const bc = fakeVerticalConnection("bc", "b", "c", 0);
+    const ac = fakeVerticalConnection("ac", "a", "c", 100);
+    const scan = (connections: FloorSolvedConnection[]) => buildFloorRebarScanlineV3({
+      ...context,
+      solution: { ...context.solution, solvedConnections: connections },
+    }, { direction: "x", positionMm: 50 });
+    const linear = scan([ab, bc]);
+    expect(linear.isValid).toBe(true);
+    expect(linear.chains[0].slabIds).toEqual(["a", "b", "c"]);
+    expect(linear.chains[0].transitions.map((transition) => transition.connectionId)).toEqual(["ab", "bc"]);
+    const cycle = scan([ab, bc, ac]);
+    expect(cycle.isValid).toBe(false);
+    expect(cycle.chains).toEqual([]);
+    expect(cycle.issues).toContainEqual(expect.objectContaining({ code: "rebar-path-chain-nonlinear" }));
+    const skip = scan([ac, bc]);
+    expect(skip.isValid).toBe(false);
+    expect(skip.chains).toEqual([]);
+    expect(skip.issues).toContainEqual(expect.objectContaining({ code: "rebar-path-chain-nonlinear" }));
+  });
+
+  it("assigns EPSILON-near slab and opening boundaries to at most one half-open interval", () => {
+    const plan = simplePlan({
+      slabs: [
+        { id: "a", name: "A", type: "room", x: 0, y: 0, width: 100, height: 100 },
+        { id: "b", name: "B", type: "room", x: 0, y: 100, width: 100, height: 100 },
+        { id: "c", name: "C", type: "room", x: 0, y: 200, width: 100, height: 100 },
+      ],
+      openings: [{ id: "o", name: "Opening", type: "void", x: 20, y: 100, width: 20, height: 50 }],
+    });
+    const nearFirstBoundary = buildFloorRebarScanlineV3(plan, { direction: "x", positionMm: 99.99999995 });
+    const exactFirstBoundary = buildFloorRebarScanlineV3(plan, { direction: "x", positionMm: 100 });
+    const nearSecondBoundary = buildFloorRebarScanlineV3(plan, { direction: "x", positionMm: 199.99999995 });
+    expect(nearFirstBoundary.chains.map((chain) => chain.slabIds)).toEqual([["b"]]);
+    expect(exactFirstBoundary.chains.map((chain) => chain.slabIds)).toEqual([["b"]]);
+    expect(nearSecondBoundary.chains.map((chain) => chain.slabIds)).toEqual([["c"]]);
+    expect(buildFloorRebarScanlineV3(plan, { direction: "x", positionMm: 149.99999995 }).openingIntersections).toEqual([]);
+    expect(buildFloorRebarScanlineV3(plan, { direction: "x", positionMm: 100 }).openingIntersections).toHaveLength(1);
+  });
+
+  it("resolves Meng B and K single-domain boundaries from the active T ranges", () => {
+    const plan = repairedMengPlan();
+    const context = buildFloorRebarPathContextV3(plan);
+    const midpoint = (ids: string[]) => {
+      const slabs = ids.map((id) => context.slabsById.get(id)!);
+      return (Math.max(...slabs.map((slab) => slab.y)) + Math.min(...slabs.map((slab) => slab.y + slab.height))) / 2;
+    };
+    const b = buildFloorRebarScanlineV3(context, { direction: "x", positionMm: midpoint(["meng-a", "meng-b", "meng-d"]), slabIds: ["meng-b"] });
+    expect(b.isValid).toBe(true);
+    expect(b.chains[0].slabIds).toEqual(["meng-b"]);
+    expect(b.chains[0].startEndpoint).toMatchObject({
+      kind: "connection-boundary", slabId: "meng-b", otherSlabId: "meng-a", side: "west", support: "inner-wall", wallThicknessMm: 240,
+    });
+    expect(b.chains[0].endEndpoint).toMatchObject({
+      kind: "connection-boundary", slabId: "meng-b", otherSlabId: "meng-d", side: "east", support: "inner-wall", wallThicknessMm: 240,
+    });
+    const upperK = buildFloorRebarScanlineV3(context, { direction: "x", positionMm: midpoint(["meng-e", "meng-k", "meng-c"]), slabIds: ["meng-k"] });
+    const lowerK = buildFloorRebarScanlineV3(context, { direction: "x", positionMm: midpoint(["meng-f", "meng-k", "meng-l"]), slabIds: ["meng-k"] });
+    expect(upperK.isValid).toBe(true);
+    expect(upperK.chains[0].startEndpoint).toMatchObject({ kind: "connection-boundary", otherSlabId: "meng-e", side: "west" });
+    expect(upperK.chains[0].endEndpoint).toMatchObject({ kind: "connection-boundary", otherSlabId: "meng-c", side: "east" });
+    expect(lowerK.isValid).toBe(true);
+    expect(lowerK.chains[0].startEndpoint).toMatchObject({ kind: "connection-boundary", otherSlabId: "meng-f", side: "west" });
+    expect(lowerK.chains[0].endEndpoint).toMatchObject({ kind: "connection-boundary", otherSlabId: "meng-l", side: "east" });
+  });
+
+  it("keeps endpoint-only transition contact legal and reports a truly unresolved endpoint", () => {
+    const pair = horizontalPairPlan("inner-wall");
+    const touchingPlan = {
+      ...pair,
+      slabs: [...pair.slabs, { id: "c", name: "C", type: "room" as const, x: 90, y: 0, width: 10, height: 100 }],
+    };
+    const touchingContext = buildFloorRebarPathContextV3(touchingPlan);
+    const forcedDerivedContext = {
+      ...touchingContext,
+      isValid: true,
+      topologyIssues: [],
+      solution: { ...touchingContext.solution, issues: [] },
+    };
+    const touching = buildFloorRebarScanlineV3(forcedDerivedContext, { direction: "x", positionMm: 50, slabIds: ["a", "b"] });
+    expect(touching.isValid).toBe(true);
+    expect(touching.chains[0].transitions[0]).toMatchObject({ runStartMm: 100, runEndMm: 120 });
+    expect(touching.issues.some((issue) => issue.code === "rebar-path-transition-clear-overlap")).toBe(false);
+
+    const single = buildFloorRebarPathContextV3(simplePlan());
+    const unresolved = buildFloorRebarScanlineV3({
+      ...single,
+      exteriorRanges: single.exteriorRanges.filter((range) => !(range.slabId === "a" && range.side === "east")),
+    }, { direction: "x", positionMm: 50 });
+    expect(unresolved.isValid).toBe(false);
+    expect(unresolved.chains).toEqual([]);
+    expect(unresolved.issues).toContainEqual(expect.objectContaining({ code: "rebar-path-endpoint-unresolved", slabIds: ["a"] }));
+  });
+
   it("rejects a solved connection whose physical gap disagrees with its slabs", () => {
     const plan = simplePlan({
       slabs: [
@@ -203,6 +519,15 @@ describe("Floor Rebar V1.4C.1 path engine", () => {
     const result = buildFloorRebarScanlineV3(malformed, { direction: "x", positionMm: 50 });
     expect(result.isValid).toBe(false);
     expect(result.issues[0].code).toBe("rebar-path-connection-geometry-mismatch");
+  });
+
+  it("does not substitute connection gap when a solved inner wall is missing", () => {
+    const context = buildFloorRebarPathContextV3(horizontalPairPlan("inner-wall"));
+    const malformed = { ...context, wallsByConnectionId: new Map() };
+    const result = buildFloorRebarScanlineV3(malformed, { direction: "x", positionMm: 50, slabIds: ["a"] });
+    expect(result.isValid).toBe(false);
+    expect(result.chains).toEqual([]);
+    expect(result.issues).toContainEqual(expect.objectContaining({ code: "rebar-path-connection-geometry-mismatch" }));
   });
 
   it("rejects branch and duplicate-connection ambiguity instead of choosing an edge", () => {
