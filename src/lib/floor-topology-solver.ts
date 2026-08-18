@@ -97,6 +97,7 @@ export type FloorTopologyConstraintIssue = {
     | "connection-range-invalid"
     | "connection-overlap-conflict"
     | "solved-slab-overlap"
+    | "wall-slab-overlap"
     | "support-rule-conflict";
   message: string;
   slabIds?: string[];
@@ -554,6 +555,31 @@ export function solveFloorTopology(
       thicknessMm,
       slabIds: solved.slabIds,
     });
+  }
+
+  // Inner walls may overlap other walls at T/L/X junctions, but they must never
+  // occupy the positive-area clear rectangle of an unrelated slab.
+  for (const wall of walls) {
+    const endpointSlabIds = new Set(wall.slabIds);
+    for (const slab of solvedSlabs) {
+      if (endpointSlabIds.has(slab.slabId)) continue;
+      const overlapWidthMm = Math.min(wall.x + wall.width, slab.x + slab.width)
+        - Math.max(wall.x, slab.x);
+      const overlapHeightMm = Math.min(wall.y + wall.height, slab.y + slab.height)
+        - Math.max(wall.y, slab.y);
+      if (overlapWidthMm <= EPSILON || overlapHeightMm <= EPSILON) continue;
+      issues.push({
+        level: "error",
+        code: "wall-slab-overlap",
+        message: "内墙墙带与第三方板区净空发生面积重叠。",
+        slabIds: [wall.slabIds[0], wall.slabIds[1], slab.slabId],
+        connectionIds: [wall.connectionId],
+        objectIds: [wall.id],
+        overlapWidthMm,
+        overlapHeightMm,
+        overlapAreaMm2: overlapWidthMm * overlapHeightMm,
+      });
+    }
   }
 
   // 同一 Slab 同一侧多个连接：Solved 切向范围正长度重叠且指向不同 Slab → 冲突。

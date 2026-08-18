@@ -310,8 +310,10 @@ describe("Floor Rebar V1.4C.1 path engine", () => {
       ...base,
       slabs: [...base.slabs, { id: "c", name: "C", type: "room" as const, x: 105, y: 0, width: 10, height: 100 }],
     };
-    const context = buildFloorRebarPathContextV3(plan);
-    expect(context.isValid).toBe(true);
+    const derived = buildFloorRebarPathContextV3(plan);
+    // The C.2 global guard blocks the context before scanning. Force only the
+    // derived path state for this C.1 defensive overlap regression.
+    const context = { ...derived, isValid: true, topologyIssues: [], solution: { ...derived.solution, issues: [] } };
     const full = buildFloorRebarScanlineV3(context, { direction: "x", positionMm: 50 });
     const filtered = buildFloorRebarScanlineV3(context, { direction: "x", positionMm: 50, slabIds: ["a", "b"] });
     for (const result of [full, filtered]) {

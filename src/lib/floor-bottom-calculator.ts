@@ -11,6 +11,10 @@ import {
   type FloorRebarDomain,
 } from "./floor-rebar-domain";
 import { buildFloorRebarLayout } from "./floor-rebar-layout";
+import {
+  buildFloorBottomV3LinePieces,
+} from "./floor-bottom-v3";
+import { buildFloorRebarPathContextV3 } from "./floor-rebar-path";
 import type { FloorBarLine, FloorBarPiece } from "./floor-rebar-types";
 import {
   DEFAULT_FLOOR_REBAR_ROLE_STATE,
@@ -524,6 +528,148 @@ export function buildFloorBottomBomGroups(
   );
 }
 
+function calculateFloorBottomRebarV3(
+  plan: FloorPlanState,
+  bottom: FloorBottomState,
+  roleState: FloorRebarRoleState,
+  roleReviewRequired: boolean,
+): FloorBottomCalculation {
+  const geometryIssues = validateFloorPlanState(plan);
+  const warnings: FloorBottomIssue[] = geometryIssues
+    .filter((issue) => issue.level === "warning")
+    .map(({ code, message, objectIds }) => ({ code, message, objectIds }));
+  const geometryErrors: FloorBottomIssue[] = geometryIssues
+    .filter((issue) => issue.level === "error")
+    .map(({ code, message, objectIds }) => ({ code, message, objectIds }));
+  const domains = buildFloorBottomRebarDomains(plan);
+  const roleContext = resolveFloorRebarRoleContext(plan, domains, roleState);
+  const reviewErrors: FloorBottomIssue[] = roleReviewRequired ? [{
+    code: "bottom-role-review-required",
+    message: "旧版本的东西/南北向直径已迁移为主/副筋语义，请确认当前地筋主筋、副筋直径后再生成正式料单。",
+  }] : [];
+  const openingErrors: FloorBottomIssue[] = plan.openings.length > 0 ? [{
+    code: "bottom-v3-opening-clipping-not-ready",
+    message: "新版楼板地筋路径已就绪，但洞口正式裁筋将在V1.4C.3完成；为防止生成穿过洞口的错误料单，当前暂停地筋正式计算。",
+    objectIds: plan.openings.map((opening) => opening.id).sort(),
+  }] : [];
+  const errors = [
+    ...geometryErrors,
+    ...roleContext.errors,
+    ...reviewErrors,
+    ...validateBottomState(plan, bottom, domains, roleContext.mainDirectionByPhysicalDomain),
+    ...openingErrors,
+  ];
+  if (errors.length > 0) return emptyCalculation(domains, roleContext.roleDomains, errors, warnings);
+
+  // One reusable context owns the V3 topology solve used by every scanline.
+  const pathContext = buildFloorRebarPathContextV3(plan);
+  if (!pathContext.isValid) {
+    const contextErrors: FloorBottomIssue[] = pathContext.topologyIssues
+      .filter((issue) => issue.level === "error")
+      .map((issue) => ({
+        code: issue.code,
+        message: issue.message,
+        objectIds: [...new Set([
+          ...(issue.objectIds ?? []),
+          ...(issue.slabIds ?? []),
+          ...(issue.connectionIds ?? []),
+        ])].sort(),
+      }));
+    return emptyCalculation(
+      domains,
+      roleContext.roleDomains,
+      contextErrors.length > 0 ? contextErrors : [{
+        code: "bottom-v3-path-context-invalid",
+        message: "新版地筋路径上下文无效，已停止正式计算。",
+      }],
+      warnings,
+    );
+  }
+
+  const lines: FloorBarLine[] = [];
+  const pieces: FloorBarPiece[] = [];
+  const calculationErrors: FloorBottomIssue[] = [];
+  domains.forEach((domain) => {
+    const mainDirection = roleContext.mainDirectionByPhysicalDomain.get(domain.id);
+    if (!mainDirection) return;
+    (["x", "y"] as const).forEach((direction) => {
+      const role = resolveFloorBarRole(mainDirection, direction);
+      const settings = resolveFloorBottomDirectionalSettings(
+        bottom,
+        domain.slabIds[0],
+        direction,
+        mainDirection,
+      );
+      const perpendicularStart = direction === "x" ? domain.minY : domain.minX;
+      const perpendicularEnd = direction === "x" ? domain.maxY : domain.maxX;
+      const count = countBars(perpendicularEnd - perpendicularStart, settings.spacing, bottom.countMode);
+      const layout = buildFloorRebarLayout({
+        key: `${domain.id}:${direction}`,
+        direction,
+        count,
+        spacingMm: settings.spacing,
+        minMm: perpendicularStart,
+        maxMm: perpendicularEnd,
+      });
+      if (layout.positionsMm.length !== count) {
+        calculationErrors.push({
+          code: "bottom-v3-layout-invalid",
+          message: "地筋排布位置数量与正式根数不一致，已停止计算。",
+          objectIds: [domain.id],
+        });
+        return;
+      }
+      layout.positionsMm.forEach((positionMm, index) => {
+        const line: FloorBarLine = {
+          id: `${domain.id}:${direction}:line:${index + 1}`,
+          domainId: domain.id,
+          slabIds: [...domain.slabIds],
+          layer: "bottom",
+          direction,
+          role,
+          source: "normal",
+          positionMm,
+        };
+        lines.push(line);
+        const built = buildFloorBottomV3LinePieces({
+          context: pathContext,
+          domain,
+          line,
+          diameter: settings.diameter,
+          spacing: settings.spacing,
+          outerWallThicknessMm: plan.outerWallThickness,
+        });
+        calculationErrors.push(...built.issues);
+        pieces.push(...built.pieces);
+      });
+    });
+  });
+  if (calculationErrors.length > 0) {
+    return emptyCalculation(domains, roleContext.roleDomains, calculationErrors, warnings);
+  }
+
+  const groups = buildFloorBottomBomGroups(pieces);
+  const totalLengthM = pieces.reduce((sum, piece) => sum + piece.singleLengthMm / 1000, 0);
+  const totalWeightKg = pieces.reduce(
+    (sum, piece) => sum + (piece.singleLengthMm / 1000) * theoreticalUnitWeight(piece.diameter),
+    0,
+  );
+  return {
+    domains,
+    roleDomains: roleContext.roleDomains,
+    lines,
+    pieces,
+    groups,
+    totalBarLines: lines.length,
+    totalPieces: pieces.length,
+    totalLengthM,
+    totalWeightKg,
+    errors: [],
+    warnings,
+    isValid: true,
+  };
+}
+
 export function calculateFloorBottomRebar(
   plan: FloorPlanState,
   input: FloorBottomState,
@@ -532,20 +678,8 @@ export function calculateFloorBottomRebar(
 ): FloorBottomCalculation {
   // 正式计算不做“坏值回退”；normalize仅用于存储迁移。否则NaN可能被默认值掩盖。
   const bottom = input;
-  // V1.4A.1 Safety Guard：V3 模型的 Connection-aware 地筋长度算法尚未完成（V1.4C），
-  // 禁止按 Legacy 拓扑静默生成看似正常但错误的料单。
   if (plan.coordinateModel === "clear-space-physical-v2") {
-    const errors: FloorBottomIssue[] = [{
-      code: "topology-v3-calculation-not-ready",
-      message: "当前楼层已使用新版墙带拓扑。地筋计算模块尚未完成V1.4连接路径迁移，为防止生成错误料单，已暂停正式计算。",
-    }];
-    const geometryIssues = validateFloorPlanState(plan);
-    const warnings = geometryIssues
-      .filter((issue) => issue.level === "warning")
-      .map(({ code, message, objectIds }) => ({ code, message, objectIds }));
-    const domains = buildFloorBottomRebarDomains(plan);
-    const roleContext = resolveFloorRebarRoleContext(plan, domains, roleState);
-    return emptyCalculation(domains, roleContext.roleDomains, errors, warnings);
+    return calculateFloorBottomRebarV3(plan, bottom, roleState, roleReviewRequired);
   }
   const geometryIssues = validateFloorPlanState(plan);
   const warnings: FloorBottomIssue[] = geometryIssues

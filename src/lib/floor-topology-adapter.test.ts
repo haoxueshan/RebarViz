@@ -35,6 +35,7 @@ import {
 import type { FloorEdgeConnection } from "./floor-topology";
 import type { FloorPlanState } from "./floor-plan";
 import { createFloorDraftRecord, parseFloorDraftRecord } from "./floor-plan-storage";
+import { floorRoleDomainKey } from "./floor-rebar-role";
 
 function v3Plan(input: {
   slabs: FloorPlanState["slabs"];
@@ -353,6 +354,27 @@ describe("Range Subtraction 与局部外墙", () => {
 });
 
 describe("Solver Validation", () => {
+  it("Wall-Slab正面积重叠由Solver进入Canonical Validation", () => {
+    const plan = v3Plan({
+      slabs: [
+        room("a", 0, 0, 100, 100),
+        room("b", 120, 0, 100, 100),
+        room("c", 105, 10, 10, 80),
+      ],
+      connections: [connection(
+        "connection:a:east:b:west",
+        { slabId: "a", side: "east", range: { mode: "auto-overlap" } },
+        { slabId: "b", side: "west", range: { mode: "auto-overlap" } },
+      )],
+      innerWallThickness: 20,
+    });
+    expect(validateFloorPlanState(plan)).toContainEqual(expect.objectContaining({
+      level: "error",
+      code: "wall-slab-overlap",
+      objectIds: ["solved-wall:connection:a:east:b:west"],
+    }));
+  });
+
   it("Solved Clear Slab 面积重叠 → solved-slab-overlap（含宽高面积）", () => {
     const plan = v3Plan({
       slabs: [
@@ -378,6 +400,7 @@ describe("Solver Validation", () => {
     const { plan } = migrateFloorPlanV2ToV3(goldenMengLegacyV2Plan());
     const solution = solveFloorTopology(plan);
     expect(solution.issues.map((issue) => issue.code)).not.toContain("solved-slab-overlap");
+    expect(solution.issues.map((issue) => issue.code)).not.toContain("wall-slab-overlap");
     expect(solution.issues.map((issue) => issue.code)).not.toContain("topology-constraint-conflict");
     // T 节点墙允许交叉重叠：B-D 竖向墙与 B-K / D-K 水平墙确实物理相交。
     const bdWall = solution.walls.find((item) => item.slabIds.includes("meng-b") && item.slabIds.includes("meng-d"))!;
@@ -504,13 +527,18 @@ describe("正式计算 V3 Safety Guard", () => {
     connections: [connection("connection:a:east:b:west", { slabId: "a", side: "east", range: { mode: "auto-overlap" } }, { slabId: "b", side: "west", range: { mode: "auto-overlap" } })],
   });
 
-  it("Bottom V3：Blocking Issue，不产生任何 BOM", () => {
-    const calculation = calculateFloorBottomRebar(v3(), DEFAULT_FLOOR_BOTTOM_STATE);
-    expect(calculation.errors.map((issue) => issue.code)).toContain("topology-v3-calculation-not-ready");
-    expect(calculation.isValid).toBe(false);
-    expect(calculation.groups).toEqual([]);
-    expect(calculation.pieces).toEqual([]);
-    expect(calculation.totalLengthM).toBe(0);
+  it("Bottom V3：无洞口合法路径正式出料，不回退 generic guard", () => {
+    const calculation = calculateFloorBottomRebar(v3(), DEFAULT_FLOOR_BOTTOM_STATE, {
+      mainDirectionOverrides: {
+        [floorRoleDomainKey(["a"])]: "x",
+        [floorRoleDomainKey(["b"])]: "x",
+      },
+    });
+    expect(calculation.errors.map((issue) => issue.code)).not.toContain("topology-v3-calculation-not-ready");
+    expect(calculation.isValid).toBe(true);
+    expect(calculation.groups.length).toBeGreaterThan(0);
+    expect(calculation.pieces.length).toBeGreaterThan(0);
+    expect(calculation.totalLengthM).toBeGreaterThan(0);
   });
 
   it("Top V3：Blocking Issue，不产生任何 BOM", () => {

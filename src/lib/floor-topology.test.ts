@@ -63,6 +63,55 @@ describe("Floor Topology V1.4A Solver", () => {
     expect(solution.walls).toEqual([]);
   });
 
+  it("globally blocks positive-area wall overlap with a third-party clear slab", () => {
+    const plan = v3Plan({
+      slabs: [
+        { id: "a", name: "A", type: "room", x: 0, y: 0, width: 100, height: 100 },
+        { id: "b", name: "B", type: "room", x: 120, y: 0, width: 100, height: 100 },
+        { id: "c", name: "C", type: "room", x: 105, y: 10, width: 10, height: 80 },
+      ],
+      connections: [{
+        id: "connection:a:east:b:west",
+        a: { slabId: "a", side: "east", range: { mode: "auto-overlap" } },
+        b: { slabId: "b", side: "west", range: { mode: "auto-overlap" } },
+        source: "manual",
+        confidence: "confirmed",
+        tangentConstraint: { mode: "none" },
+      }],
+      innerWallThickness: 20,
+    });
+    expect(solveFloorTopology(plan).issues).toContainEqual(expect.objectContaining({
+      level: "error",
+      code: "wall-slab-overlap",
+      slabIds: ["a", "b", "c"],
+      connectionIds: ["connection:a:east:b:west"],
+      objectIds: ["solved-wall:connection:a:east:b:west"],
+      overlapWidthMm: 10,
+      overlapHeightMm: 80,
+      overlapAreaMm2: 800,
+    }));
+  });
+
+  it("keeps zero-area third-party wall touch legal", () => {
+    const plan = v3Plan({
+      slabs: [
+        { id: "a", name: "A", type: "room", x: 0, y: 0, width: 100, height: 100 },
+        { id: "b", name: "B", type: "room", x: 120, y: 0, width: 100, height: 100 },
+        { id: "c", name: "C", type: "room", x: 90, y: 10, width: 10, height: 80 },
+      ],
+      connections: [{
+        id: "connection:a:east:b:west",
+        a: { slabId: "a", side: "east", range: { mode: "auto-overlap" } },
+        b: { slabId: "b", side: "west", range: { mode: "auto-overlap" } },
+        source: "manual",
+        confidence: "confirmed",
+        tangentConstraint: { mode: "none" },
+      }],
+      innerWallThickness: 20,
+    });
+    expect(solveFloorTopology(plan).issues.map((issue) => issue.code)).not.toContain("wall-slab-overlap");
+  });
+
   it("不同墙厚：innerWallThickness=300 → B.x = A.east + 300（不硬编码240）", () => {
     const plan = v3Plan({ slabs: [slabA, slabB], connections: [abConnection()], innerWallThickness: 300 });
     const solution = solveFloorTopology(plan);

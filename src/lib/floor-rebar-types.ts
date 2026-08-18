@@ -16,7 +16,7 @@ export type FloorBarLine = {
   role: FloorBarRole;
   source: FloorBarSource;
   throughPathId?: string;
-  /** X筋为全局Y坐标，Y筋为全局X坐标；始终使用net-layout-v1拓扑坐标。 */
+  /** X筋为全局Y坐标，Y筋为全局X坐标；Legacy为Net坐标，V3为Physical Clear坐标。 */
   positionMm: number;
   /** 对齐调试字段（可选）：相位来源、共享相位与对齐组。 */
   alignmentMode?: "domain-centered" | "inherited";
@@ -38,7 +38,9 @@ export type FloorBarPiece = {
   runStartMm: number;
   runEndMm: number;
   netLengthMm: number;
+  /** Legacy为Atomic Boundary ID；V3为Connection ID或稳定派生的Exterior Boundary ID。 */
   startBoundaryId: string;
+  /** Legacy为Atomic Boundary ID；V3为Connection ID或稳定派生的Exterior Boundary ID。 */
   endBoundaryId: string;
   startSupport: FloorResolvedSupport;
   endSupport: FloorResolvedSupport;

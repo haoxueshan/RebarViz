@@ -868,21 +868,23 @@ export function FloorCanvas({
 
   const pieceCoordinates = ({ piece, positionMm }: DrawablePiece) => {
     const xDirection = piece.direction === "x";
-    // Floor Physical V1.3：正式计算值不变，仅绘图位置从净拓扑映射到物理平面。
     const prefer = piece.slabIds;
+    const mapPieceAxis = (axis: "x" | "y", value: number) => state.coordinateModel === "clear-space-physical-v2"
+      ? value
+      : mapFloorNetAxisPoint(axis, value, state, physicalLayout, prefer);
     if (xDirection) {
       return {
-        x1: toX(mapFloorNetAxisPoint("x", piece.runStartMm, state, physicalLayout, prefer)),
-        y1: toY(mapFloorNetAxisPoint("y", positionMm, state, physicalLayout, prefer)),
-        x2: toX(mapFloorNetAxisPoint("x", piece.runEndMm, state, physicalLayout, prefer)),
-        y2: toY(mapFloorNetAxisPoint("y", positionMm, state, physicalLayout, prefer)),
+        x1: toX(mapPieceAxis("x", piece.runStartMm)),
+        y1: toY(mapPieceAxis("y", positionMm)),
+        x2: toX(mapPieceAxis("x", piece.runEndMm)),
+        y2: toY(mapPieceAxis("y", positionMm)),
       };
     }
     return {
-      x1: toX(mapFloorNetAxisPoint("x", positionMm, state, physicalLayout, prefer)),
-      y1: toY(mapFloorNetAxisPoint("y", piece.runStartMm, state, physicalLayout, prefer)),
-      x2: toX(mapFloorNetAxisPoint("x", positionMm, state, physicalLayout, prefer)),
-      y2: toY(mapFloorNetAxisPoint("y", piece.runEndMm, state, physicalLayout, prefer)),
+      x1: toX(mapPieceAxis("x", positionMm)),
+      y1: toY(mapPieceAxis("y", piece.runStartMm)),
+      x2: toX(mapPieceAxis("x", positionMm)),
+      y2: toY(mapPieceAxis("y", piece.runEndMm)),
     };
   };
 
