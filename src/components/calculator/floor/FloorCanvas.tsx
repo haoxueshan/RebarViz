@@ -1148,6 +1148,11 @@ export function FloorCanvas({
             ? previewFloorSlabPhysicalMoveV3(state, movingSlab.id, dragPreview.x, dragPreview.y)
             : null;
           const brokenConnectionCount = v3MovePreview?.removedConnectionIds.length ?? 0;
+          // V1.4A.2.2：目标与其它 Clear Slab 重叠 → 红色 Ghost，PointerUp 不得提交（与提交同一规则）。
+          const moveInvalid = Boolean(v3MovePreview && !v3MovePreview.valid);
+          const moveInvalidMessage = moveInvalid
+            ? (v3MovePreview?.issues[0]?.message ?? "该位置与其它板区重叠，不能放置。")
+            : null;
           // Legacy Snap 引导仅 net-layout-v1（V3 交给 V1.4B Smart Join）。
           const guide = !joinCandidate && movingSlab && state.coordinateModel === "net-layout-v1"
             ? computeDragGuide(movingSlab, dragPreview.x, dragPreview.y)
@@ -1162,7 +1167,7 @@ export function FloorCanvas({
           const conflict = !joinCandidate && Boolean(dockPreviewResult && !dockPreviewResult.valid);
           const guideColor = joinCandidate
             ? joinCandidate.predictedSupport === "inner-wall" ? "#2563eb" : "#16a34a"
-            : conflict ? "#dc2626" : aligned ? "#16a34a" : "#2563eb";
+            : moveInvalid ? "#dc2626" : conflict ? "#dc2626" : aligned ? "#16a34a" : "#2563eb";
           const conflictNames = dockPreviewResult ? dockPreviewResult.conflicts.join("、") : "";
           // Floor Physical V1.3：Ghost 用物理坐标显示；净坐标仍写回 State。
           const physicalSource = movingSlab
@@ -1191,21 +1196,23 @@ export function FloorCanvas({
           const joinGuideCoordinate = joinCandidate ? floorSlabJoinGuideCoordinate(state, joinCandidate) : null;
           const guideLabel = joinCandidate
             ? floorSlabJoinPreviewLabel(state, joinCandidate)
-            : brokenConnectionCount > 0
-              ? `释放后将断开 ${brokenConnectionCount} 处连接`
-              : !guide
-                ? ""
-                : conflict
-                  ? `无法拼接：将与${conflictNames}重叠`
-                  : aligned
-                    ? sharedBand?.hasInner
-                      ? `✓ 净跨已对齐 · 内墙 ${formatMm(sharedBand.gapMm)}mm`
-                      : "✓ 连续楼板 · 物理间距 0mm"
-                    : `松手将贴到${guide.targetSlabName}${floorDockDirectionLabel(guide.targetSide)}（差${formatMm(Math.abs(guide.gapMm))}mm）`;
+            : moveInvalid
+              ? moveInvalidMessage!
+              : brokenConnectionCount > 0
+                ? `释放后将断开 ${brokenConnectionCount} 处连接`
+                : !guide
+                  ? ""
+                  : conflict
+                    ? `无法拼接：将与${conflictNames}重叠`
+                    : aligned
+                      ? sharedBand?.hasInner
+                        ? `✓ 净跨已对齐 · 内墙 ${formatMm(sharedBand.gapMm)}mm`
+                        : "✓ 连续楼板 · 物理间距 0mm"
+                      : `松手将贴到${guide.targetSlabName}${floorDockDirectionLabel(guide.targetSide)}（差${formatMm(Math.abs(guide.gapMm))}mm）`;
           return (
-            <g clipPath="url(#floor-plot-clip-v22)" data-floor-layer="drag-preview" pointerEvents="none" data-drag-preview="true" data-preview-x={dragPreview.x} data-preview-y={dragPreview.y} data-v3-detach-count={brokenConnectionCount}>
+            <g clipPath="url(#floor-plot-clip-v22)" data-floor-layer="drag-preview" pointerEvents="none" data-drag-preview="true" data-preview-x={dragPreview.x} data-preview-y={dragPreview.y} data-v3-detach-count={brokenConnectionCount} data-v3-move-valid={v3MovePreview && v3MovePreview.valid ? "true" : undefined} data-v3-move-invalid={moveInvalid ? "true" : undefined}>
               <rect x={toX(sourcePhysicalX)} y={toY(sourcePhysicalY + moving.height)} width={Math.max(moving.width * effectiveScale, 1)} height={Math.max(moving.height * effectiveScale, 1)} fill="#94a3b8" fillOpacity="0.22" />
-              <rect x={toX(physicalPreviewX)} y={toY(physicalPreviewY + moving.height)} width={Math.max(moving.width * effectiveScale, 1)} height={Math.max(moving.height * effectiveScale, 1)} fill={conflict ? "#fecaca" : "#3b82f6"} fillOpacity={conflict ? 0.6 : 0.35} stroke={guideColor} strokeWidth="3" strokeDasharray={aligned ? undefined : "8 5"} />
+              <rect x={toX(physicalPreviewX)} y={toY(physicalPreviewY + moving.height)} width={Math.max(moving.width * effectiveScale, 1)} height={Math.max(moving.height * effectiveScale, 1)} fill={moveInvalid || conflict ? "#fecaca" : "#3b82f6"} fillOpacity={moveInvalid || conflict ? 0.6 : 0.35} stroke={guideColor} strokeWidth="3" strokeDasharray={aligned ? undefined : "8 5"} />
               {previewWalls.map((wall) => (
                 <rect key={`preview-wall:${wall.id}`} x={toX(wall.x)} y={toY(wall.y + wall.height)} width={Math.max(wall.width * effectiveScale, 0)} height={Math.max(wall.height * effectiveScale, 0)} fill={wall.kind === "outer-wall" ? "#0f172a" : "#2563eb"} fillOpacity="0.55" />
               ))}
@@ -1259,9 +1266,10 @@ export function FloorCanvas({
                   : <line x1={PLOT.x} y1={toY(mapFloorNetAxisPoint("y", guide.coordinate, state, physicalLayout, [guide.targetSlabId]))} x2={PLOT.x + PLOT.width} y2={toY(mapFloorNetAxisPoint("y", guide.coordinate, state, physicalLayout, [guide.targetSlabId]))} stroke={guideColor} strokeWidth={aligned ? 3 : 2} strokeDasharray={aligned ? undefined : "6 4"} />}
                 <text x={guide.axis === "x" ? toX(mapFloorNetAxisPoint("x", guide.coordinate, state, physicalLayout, [guide.targetSlabId])) + 8 : PLOT.x + PLOT.width - 8} y={guide.axis === "x" ? PLOT.y + 18 : toY(mapFloorNetAxisPoint("y", guide.coordinate, state, physicalLayout, [guide.targetSlabId])) - 8} textAnchor={guide.axis === "x" ? "start" : "end"} fontSize="11" fontWeight="800" fill={guideColor} style={{ paintOrder: "stroke", stroke: "white", strokeWidth: 4 }}>{guideLabel}</text>
               </g>}
-              {brokenConnectionCount > 0 && !joinCandidate && !guide && (
+              {(moveInvalid || (brokenConnectionCount > 0 && !guide)) && !joinCandidate && (
                 <text
-                  data-v3-detach-label="true"
+                  data-v3-move-invalid-label={moveInvalid ? "true" : undefined}
+                  data-v3-detach-label={!moveInvalid && brokenConnectionCount > 0 ? "true" : undefined}
                   x={toX(physicalPreviewX + moving.width / 2)}
                   y={toY(physicalPreviewY + moving.height / 2) + 24}
                   textAnchor="middle" fontSize="11" fontWeight="800" fill="#dc2626"

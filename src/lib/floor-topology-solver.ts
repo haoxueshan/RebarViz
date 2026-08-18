@@ -127,6 +127,20 @@ export type FloorTopologyExteriorRange = {
   orientation: "vertical" | "horizontal";
 };
 
+/**
+ * V1.4A.2.2 Solve Options（仅 Editor Mutation 使用）：
+ * - preferredAnchors：每轴优先作为连通分量 Anchor 的 Slab ID 列表。
+ *   只决定分量的绝对平移参考（Anchor 保持其 source 坐标），
+ *   不修改 normalDelta / wall gap / tangent constraint / cycle conflict / range 等任何正式拓扑方程。
+ * - 未提供时行为与旧版逐位一致（默认 Anchor = source 坐标最小 + 稳定 tie-break）。
+ */
+export type FloorTopologySolveOptions = {
+  preferredAnchors?: {
+    x?: readonly string[];
+    y?: readonly string[];
+  };
+};
+
 type AxisEdge = {
   other: string;
   delta: number;
@@ -172,6 +186,7 @@ function solveAxisGraph(
   slabs: Map<string, FloorSlab>,
   axis: "x" | "y",
   gapOf: (connection: FloorEdgeConnection) => number,
+  preferredAnchorIds?: ReadonlySet<string>,
 ): { positions: Map<string, number>; issues: FloorTopologyConstraintIssue[] } {
   const issues: FloorTopologyConstraintIssue[] = [];
   const graph = new Map<string, AxisEdge[]>(plan.slabs.map((slab) => [slab.id, []]));
@@ -198,16 +213,40 @@ function solveAxisGraph(
       }
     }
   }
-  // 每个连通分量独立 Anchor：原始 source 坐标最小的 Slab（稳定 tie-break）。
+  // 每个连通分量独立 Anchor：默认取该轴 source 坐标最小的 Slab（稳定 tie-break）。
+  // preferredAnchorIds（可选）：Editor Move 传入，排除移动中的 Slab，防止整组 Component 漂移。
+  // 只决定绝对平移参考；约束方程、闭合检测、冲突报告与默认路径完全一致。
   const positions = new Map<string, number>();
   const visited = new Set<string>();
-  for (const startSlab of [...plan.slabs].sort((left, right) =>
+  const ranked = [...plan.slabs].sort((left, right) =>
     (axis === "x" ? left.x - right.x || left.y - right.y : left.y - right.y || left.x - right.x)
-    || left.id.localeCompare(right.id))) {
+    || left.id.localeCompare(right.id));
+  const rankOf = new Map(ranked.map((slab, index) => [slab.id, index]));
+  for (const startSlab of ranked) {
     if (visited.has(startSlab.id)) continue;
-    visited.add(startSlab.id);
-    positions.set(startSlab.id, axis === "x" ? startSlab.x : startSlab.y);
-    const queue = [startSlab.id];
+    // 第一阶段：收集本分量成员（不赋位置），便于从成员中选择 Preferred Anchor。
+    const members = new Set<string>([startSlab.id]);
+    const memberQueue = [startSlab.id];
+    while (memberQueue.length > 0) {
+      const currentId = memberQueue.shift()!;
+      for (const edge of graph.get(currentId) ?? []) {
+        if (members.has(edge.other)) continue;
+        members.add(edge.other);
+        memberQueue.push(edge.other);
+      }
+    }
+    const anchorId = preferredAnchorIds
+      ? [...members]
+          .filter((id) => preferredAnchorIds.has(id))
+          .sort((left, right) => rankOf.get(left)! - rankOf.get(right)!)[0]
+      : undefined;
+    const anchorSlab = anchorId ? slabs.get(anchorId) : undefined;
+    // 无 Preferred 成员时回退默认语义（source 坐标最小 Slab）。
+    const finalAnchorId = anchorSlab?.id ?? startSlab.id;
+    const finalAnchorSlab = anchorSlab ?? startSlab;
+    for (const member of members) visited.add(member);
+    positions.set(finalAnchorId, axis === "x" ? finalAnchorSlab.x : finalAnchorSlab.y);
+    const queue = [finalAnchorId];
     while (queue.length > 0) {
       const currentId = queue.shift()!;
       const currentPosition = positions.get(currentId)!;
@@ -228,7 +267,6 @@ function solveAxisGraph(
           continue;
         }
         positions.set(edge.other, candidate);
-        visited.add(edge.other);
         queue.push(edge.other);
       }
     }
@@ -326,7 +364,10 @@ function computeSolvedConnections(
   return { solved, noOverlap };
 }
 
-export function solveFloorTopology(plan: FloorPlanState): FloorTopologySolution {
+export function solveFloorTopology(
+  plan: FloorPlanState,
+  options?: FloorTopologySolveOptions,
+): FloorTopologySolution {
   const issues: FloorTopologyConstraintIssue[] = [];
   const slabs = slabById(plan);
   const connections = plan.connections ?? [];
@@ -379,12 +420,14 @@ export function solveFloorTopology(plan: FloorPlanState): FloorTopologySolution 
   let noOverlapIssues: FloorTopologyConstraintIssue[] = [];
   let solvedConnections: FloorSolvedConnection[] = [];
   let positions = { x: new Map<string, number>(), y: new Map<string, number>() };
+  const preferredAnchorIdsX = options?.preferredAnchors?.x ? new Set(options.preferredAnchors.x) : undefined;
+  const preferredAnchorIdsY = options?.preferredAnchors?.y ? new Set(options.preferredAnchors.y) : undefined;
 
   for (let pass = 0; pass < MAX_SUPPORT_PASSES; pass += 1) {
     const gapOf = (connection: FloorEdgeConnection) =>
       floorConnectionClearGapMm(connection, plan, supportByConnection.get(connection.id) ?? "inner-wall");
-    const xResult = solveAxisGraph(plan, validConnections, slabs, "x", gapOf);
-    const yResult = solveAxisGraph(plan, validConnections, slabs, "y", gapOf);
+    const xResult = solveAxisGraph(plan, validConnections, slabs, "x", gapOf, preferredAnchorIdsX);
+    const yResult = solveAxisGraph(plan, validConnections, slabs, "y", gapOf, preferredAnchorIdsY);
     positions = { x: xResult.positions, y: yResult.positions };
     axisConflicts = [...xResult.issues, ...yResult.issues];
     const computed = computeSolvedConnections(plan, validConnections, positions);

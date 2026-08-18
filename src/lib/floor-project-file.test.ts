@@ -287,14 +287,57 @@ describe("Floor Project File 工程文件", () => {
     expect(result.project.planState.slabs.map((slab) => slab.id)).toEqual(["s-keep-1", "s-keep-2"]);
   });
 
-  it("真正 FloorDraftRecord 仍然兼容且标记 legacy", () => {
+  it("真正 FloorDraftRecord（V2 wrapper）按 Plan V2→V3 Migration 导入", () => {
     const plan = buildRichPlan();
     const draft = { schemaVersion: 2, savedAt: "2026-08-16T10:00:00.000Z", state: plan };
     const result = parseFloorProjectFile(JSON.stringify(draft));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.project.legacy).toBe(true);
-    expect(result.project.planState).toEqual(plan);
+    // V1.4A.2.2：V2 wrapper 走 parseFloorDraftRecord 的 V2→V3 Migration，不再降级为 net-layout-v1。
+    expect(result.project.planState.coordinateModel).toBe("clear-space-physical-v2");
+    expect(result.project.planState.connections?.map((connection) => connection.id))
+      .toEqual(["connection:s-keep-1:east:s-keep-2:west"]);
+    expect(result.project.planState.slabs.map((slab) => slab.id)).toEqual(["s-keep-1", "s-keep-2"]);
+    // rule-keep-1（s-keep-1 east 0~2000 continuous）使整条共享边解析为 continuous → gap 0 → x 保持 4200。
+    expect(result.project.planState.slabs.find((slab) => slab.id === "s-keep-2")?.x).toBe(4200);
+  });
+
+  it("Raw FloorDraft V3 导入：保持 V3 坐标模型与 Connections，不降级 Legacy", () => {
+    const draft = {
+      schemaVersion: 3,
+      savedAt: "2026-08-18T10:00:00.000Z",
+      state: {
+        coordinateModel: "clear-space-physical-v2",
+        slabs: [
+          { id: "s-a", name: "板区A", type: "room", x: 0, y: 0, width: 4000, height: 3000 },
+          { id: "s-b", name: "板区B", type: "room", x: 4240, y: 0, width: 3000, height: 3000 },
+        ],
+        openings: [],
+        supportRules: [],
+        connections: [
+          {
+            id: "connection:s-a:east:s-b:west",
+            a: { slabId: "s-a", side: "east", range: { mode: "auto-overlap" } },
+            b: { slabId: "s-b", side: "west", range: { mode: "auto-overlap" } },
+            source: "manual",
+            confidence: "confirmed",
+            tangentConstraint: { mode: "none" },
+          },
+        ],
+        innerWallThickness: 240,
+        outerWallThickness: 240,
+        snapDistanceMm: 1500,
+        overlapToleranceMm: 10,
+      },
+    };
+    const result = parseFloorProjectFile(JSON.stringify(draft));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.project.planState.coordinateModel).toBe("clear-space-physical-v2");
+    expect(result.project.planState.connections).toHaveLength(1);
+    expect(result.project.planState.connections?.[0].id).toBe("connection:s-a:east:s-b:west");
+    expect(result.project.planState.slabs.find((slab) => slab.id === "s-b")?.x).toBe(4240);
   });
 
   it("Canonical Export：导出 Plan 使用几何容差纠偏后的 canonical Plan", () => {

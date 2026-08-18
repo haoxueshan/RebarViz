@@ -803,6 +803,11 @@ export default function FloorRebarCalculator() {
           patch.x ?? selectedSlab.x,
           patch.y ?? selectedSlab.y,
         );
+        // V1.4A.2.2：Move 失败必须 Atomic Rollback —— 不写 History、提示原因。
+        if (!moved.ok) {
+          flashStatus(moved.message);
+          return;
+        }
         applyStateWithHistory(moved.plan);
         return;
       }
@@ -976,7 +981,13 @@ export default function FloorRebarCalculator() {
       if (!object) return;
       // V1.4A.2：V3 禁止 Legacy Snap；拖动走 Physical Move（被破坏的 Connection 自动 Detach，一步 Undo）。
       if (state.coordinateModel === "clear-space-physical-v2") {
-        applyStateWithHistory(applyFloorSlabPhysicalMoveV3(state, object.id, x, y).plan);
+        const moved = applyFloorSlabPhysicalMoveV3(state, object.id, x, y);
+        // V1.4A.2.2：Move 失败必须 Atomic Rollback —— 不写 History（非法操作不产生 Undo 记录）。
+        if (!moved.ok) {
+          flashStatus(moved.message);
+          return;
+        }
+        applyStateWithHistory(moved.plan);
         return;
       }
       const moved = { ...object, x, y };

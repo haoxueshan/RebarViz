@@ -144,8 +144,10 @@ describe("V3 Move / Detach", () => {
       slabs: [room("a", 0, 0, 3000, 3000), room("b", 3240, 0, 3000, 3000)],
       connections: [],
     });
-    const result = applyFloorSlabPhysicalMoveV3(plan, "b", 2863, 137);
-    expect(result.plan.slabs.find((slab) => slab.id === "b")).toMatchObject({ x: 2863, y: 137 });
+    // V1.4A.2.2：目标不得与其它 Clear Slab 正面积重叠；137mm 近邻（无重叠）仍原样提交、不 Snap。
+    const result = applyFloorSlabPhysicalMoveV3(plan, "b", 3137, 0);
+    expect(result.ok).toBe(true);
+    expect(result.plan.slabs.find((slab) => slab.id === "b")).toMatchObject({ x: 3137, y: 0 });
   });
 
   it("Slide Along Wall：法向 Gap 正确 + 有共享长度 → Connection 保留", () => {
@@ -637,5 +639,341 @@ describe("V1.4A.2.1 Detach 容差与局部清理", () => {
     const result = applyFloorSlabPhysicalMoveV3(withRule, "l", 5000, 0);
     expect(result.removedConnectionIds).toEqual(["connection:k:east:l:west"]);
     expect(result.plan.supportRules.map((rule) => rule.id)).toEqual(["whole-continuous"]);
+  });
+});
+
+describe("V1.4A.2.2 Move 原子回滚", () => {
+  it("Move 非法 Overlap：ok:false、返回原 Plan 引用、Connection/Opening 不变", () => {
+    const plan: FloorPlanState = {
+      ...v3Plan({
+        slabs: [room("a", 0, 0, 4000, 4000), room("b", 4240, 0, 3000, 3000)],
+        connections: [abWall()],
+      }),
+      openings: [opening("o", 4740, 500, 1000, 1000)],
+    };
+    const result = applyFloorSlabPhysicalMoveV3(plan, "b", 1000, 500);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("move-slab-overlap");
+    expect(result.plan).toBe(plan);
+    expect(result.removedConnectionIds).toEqual([]);
+    expect(plan.slabs.find((slab) => slab.id === "b")!.x).toBe(4240);
+    expect(plan.connections).toHaveLength(1);
+    expect(plan.openings[0].x).toBe(4740);
+  });
+
+  it("Preview 对重叠目标返回 valid:false + move-slab-overlap issue", () => {
+    const plan = v3Plan({
+      slabs: [room("a", 0, 0, 4000, 4000), room("b", 4240, 0, 3000, 3000)],
+      connections: [abWall()],
+    });
+    const preview = previewFloorSlabPhysicalMoveV3(plan, "b", 1000, 500);
+    expect(preview.valid).toBe(false);
+    expect(preview.issues.some((issue) => issue.code === "move-slab-overlap" && issue.objectIds?.includes("a"))).toBe(true);
+    // 未重叠目标 valid:true。
+    const okPreview = previewFloorSlabPhysicalMoveV3(plan, "b", 5240, 0);
+    expect(okPreview.valid).toBe(true);
+    expect(okPreview.issues).toEqual([]);
+  });
+
+  it("Move 非法不 Detach、不清理 Support Rules", () => {
+    const plan: FloorPlanState = {
+      ...v3Plan({
+        slabs: [room("a", 0, 0, 4000, 4000), room("b", 4240, 0, 3000, 3000)],
+        connections: [abWall()],
+      }),
+      supportRules: [
+        { id: "r-inner", target: { kind: "slab-edge", slabId: "a", side: "east", range: { mode: "whole" } }, support: "inner-wall" },
+      ],
+    };
+    const result = applyFloorSlabPhysicalMoveV3(plan, "b", 1000, 500);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.plan.supportRules.map((rule) => rule.id)).toEqual(["r-inner"]);
+    expect(result.plan.connections).toHaveLength(1);
+  });
+
+  it("预置冲突规则的合法目标 Move → move-topology-conflict（Atomic Rollback）", () => {
+    const plan: FloorPlanState = {
+      ...v3Plan({
+        slabs: [room("a", 0, 0, 4000, 3000), room("b", 4240, 0, 3000, 3000)],
+        connections: [abWall()],
+      }),
+      supportRules: [
+        { id: "r-inner", target: { kind: "slab-edge", slabId: "a", side: "east", range: { mode: "whole" } }, support: "inner-wall" },
+        { id: "r-cont", target: { kind: "slab-edge", slabId: "a", side: "east", range: { mode: "whole" } }, support: "continuous" },
+      ],
+    };
+    // 目标不重叠但 finalize 被 support-rule-conflict 阻断。
+    const result = applyFloorSlabPhysicalMoveV3(plan, "b", 4240, 500);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("move-topology-conflict");
+    expect(result.plan).toBe(plan);
+    expect(plan.slabs.find((slab) => slab.id === "b")!.x).toBe(4240);
+  });
+});
+
+describe("V1.4A.2.2 Stable Anchor", () => {
+  it("Anchor Jitter：拖 A -10mm，A 回到 0、B 保持 4240（整组不漂移）", () => {
+    const plan = v3Plan({
+      slabs: [room("a", 0, 0, 4000, 4000), room("b", 4240, 0, 3000, 3000)],
+      connections: [abWall()],
+    });
+    const result = applyFloorSlabPhysicalMoveV3(plan, "a", -10, 0);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.removedConnectionIds).toEqual([]);
+    expect(result.plan.slabs.find((slab) => slab.id === "a")!.x).toBe(0);
+    expect(result.plan.slabs.find((slab) => slab.id === "b")!.x).toBe(4240);
+    expectCanonical(result.plan);
+  });
+
+  it("链式 A-B-C：拖 A 法向 +10mm，三块 X 全部保持正式位置", () => {
+    const plan = v3Plan({
+      slabs: [
+        room("a", 0, 0, 4000, 3000),
+        room("b", 4240, 0, 3000, 3000),
+        room("c", 7480, 0, 3000, 3000),
+      ],
+      connections: [
+        abWall(),
+        connection("connection:b:east:c:west", { slabId: "b", side: "east", range: { mode: "auto-overlap" } }, { slabId: "c", side: "west", range: { mode: "auto-overlap" } }),
+      ],
+    });
+    const result = applyFloorSlabPhysicalMoveV3(plan, "a", 10, 0);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.plan.slabs.find((slab) => slab.id === "a")!.x).toBe(0);
+    expect(result.plan.slabs.find((slab) => slab.id === "b")!.x).toBe(4240);
+    expect(result.plan.slabs.find((slab) => slab.id === "c")!.x).toBe(7480);
+    expectCanonical(result.plan);
+  });
+
+  it("Slide Along Wall：B 切向 +500 保留、法向 Jitter 拉回正式 Gap、A 不动", () => {
+    const plan = v3Plan({
+      slabs: [room("a", 0, 0, 3000, 4000), room("b", 3240, 500, 2000, 2000)],
+      connections: [abWall()],
+    });
+    const result = applyFloorSlabPhysicalMoveV3(plan, "b", 3250, 1000);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.removedConnectionIds).toEqual([]);
+    const a = result.plan.slabs.find((slab) => slab.id === "a")!;
+    const b = result.plan.slabs.find((slab) => slab.id === "b")!;
+    expect(a.x).toBe(0);
+    expect(a.y).toBe(0);
+    expect(b.x).toBe(3240);
+    expect(b.y).toBe(1000);
+    expect(result.plan.connections).toHaveLength(1);
+    expectCanonical(result.plan);
+  });
+
+  it("T 型 B-D/K-C：轻拖 D 法向 10mm，D 回正式位置、其它 Slab 不漂移", () => {
+    const plan = v3Plan({
+      slabs: [
+        room("b", 0, 0, 4000, 3000),
+        room("d", 4240, 0, 3000, 3000),
+        room("k", 4240, 3240, 3000, 3000),
+        room("c", 7480, 0, 3000, 3000),
+      ],
+      connections: [
+        connection("connection:b:east:d:west", { slabId: "b", side: "east", range: { mode: "auto-overlap" } }, { slabId: "d", side: "west", range: { mode: "auto-overlap" } }),
+        connection("connection:k:south:d:north", { slabId: "k", side: "south", range: { mode: "auto-overlap" } }, { slabId: "d", side: "north", range: { mode: "auto-overlap" } }),
+        connection("connection:d:east:c:west", { slabId: "d", side: "east", range: { mode: "auto-overlap" } }, { slabId: "c", side: "west", range: { mode: "auto-overlap" } }),
+      ],
+    });
+    const result = applyFloorSlabPhysicalMoveV3(plan, "d", 4250, 10);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.removedConnectionIds).toEqual([]);
+    const d = result.plan.slabs.find((slab) => slab.id === "d")!;
+    expect(d.x).toBe(4240);
+    expect(d.y).toBe(0);
+    expect(result.plan.slabs.find((slab) => slab.id === "b")!.x).toBe(0);
+    expect(result.plan.slabs.find((slab) => slab.id === "k")!.x).toBe(4240);
+    expect(result.plan.slabs.find((slab) => slab.id === "k")!.y).toBe(3240);
+    expect(result.plan.slabs.find((slab) => slab.id === "c")!.x).toBe(7480);
+    expectCanonical(result.plan);
+  });
+});
+
+describe("V1.4A.2.2 Support Range Split", () => {
+  const kSide = () => ({
+    plan: v3Plan({
+      slabs: [
+        room("k", 0, 0, 4000, 4000),
+        room("l", 4000, 0, 2000, 2000),
+        room("c", 4000, 2000, 2000, 2000),
+      ],
+      connections: [
+        connection("connection:k:east:l:west", { slabId: "k", side: "east", range: { mode: "auto-overlap" } }, { slabId: "l", side: "west", range: { mode: "auto-overlap" } }),
+        connection("connection:k:east:c:west", { slabId: "k", side: "east", range: { mode: "auto-overlap" } }, { slabId: "c", side: "west", range: { mode: "auto-overlap" } }),
+      ],
+    }),
+    withWhole: (): FloorPlanState => {
+      const base = kSide().plan;
+      return {
+        ...base,
+        supportRules: [
+          { id: "whole-continuous", target: { kind: "slab-edge", slabId: "k", side: "east", range: { mode: "whole" } }, support: "continuous" },
+        ],
+      };
+    },
+  });
+
+  const resolvedSupports = (plan: FloorPlanState) => {
+    const solution = solveFloorTopology(plan);
+    return new Map(solution.solvedConnections.map((item) => [item.connectionId, item.support]));
+  };
+
+  it("T 型局部墙：K east 0~2000→L、2000~4000→C，只切 K-L inner", () => {
+    const result = applyFloorConnectionSupportV3(kSide().withWhole(), { connectionId: "connection:k:east:l:west", support: "inner-wall" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const supports = resolvedSupports(result.plan);
+    expect(supports.get("connection:k:east:l:west")).toBe("inner-wall");
+    expect(supports.get("connection:k:east:c:west")).toBe("continuous");
+    // 墙只在 0~2000 段生成。
+    const solution = solveFloorTopology(result.plan);
+    expect(solution.walls).toHaveLength(1);
+    expect(solution.walls[0].connectionId).toBe("connection:k:east:l:west");
+    expect(solution.walls[0].lengthMm).toBeCloseTo(2000, 6);
+    expect(result.plan.slabs.find((slab) => slab.id === "l")!.x).toBe(4240);
+    expect(result.plan.slabs.find((slab) => slab.id === "c")!.x).toBe(4000);
+    // Rule 层面：一条残段 continuous + 一条新 inner。
+    expect(result.plan.supportRules.map((rule) => rule.support).sort()).toEqual(["continuous", "inner-wall"]);
+    expectCanonical(result.plan);
+  });
+
+  it("反向：K-L inner→continuous 后两段均 continuous、无墙、规则合并回 whole", () => {
+    const first = applyFloorConnectionSupportV3(kSide().withWhole(), { connectionId: "connection:k:east:l:west", support: "inner-wall" });
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    const back = applyFloorConnectionSupportV3(first.plan, { connectionId: "connection:k:east:l:west", support: "continuous" });
+    expect(back.ok).toBe(true);
+    if (!back.ok) return;
+    const supports = resolvedSupports(back.plan);
+    expect(supports.get("connection:k:east:l:west")).toBe("continuous");
+    expect(supports.get("connection:k:east:c:west")).toBe("continuous");
+    expect(solveFloorTopology(back.plan).walls).toEqual([]);
+    // 相邻同 Support 规则自动合并回 whole continuous（幂等，不堆积）。
+    expect(back.plan.supportRules).toHaveLength(1);
+    expect(back.plan.supportRules[0].target.range).toEqual({ mode: "whole" });
+    expect(back.plan.supportRules[0].support).toBe("continuous");
+    expect(back.plan.slabs.find((slab) => slab.id === "l")!.x).toBe(4000);
+    expectCanonical(back.plan);
+  });
+
+  it("中间 Range：0~6000 三段连接，只改中间 B inner，左右残段保留", () => {
+    const plan: FloorPlanState = {
+      ...v3Plan({
+        slabs: [
+          room("k", 0, 0, 4000, 6000),
+          room("a", 4000, 0, 2000, 2000),
+          room("b", 4000, 2000, 2000, 2000),
+          room("c", 4000, 4000, 2000, 2000),
+        ],
+        connections: [
+          connection("connection:k:east:a:west", { slabId: "k", side: "east", range: { mode: "auto-overlap" } }, { slabId: "a", side: "west", range: { mode: "auto-overlap" } }),
+          connection("connection:k:east:b:west", { slabId: "k", side: "east", range: { mode: "auto-overlap" } }, { slabId: "b", side: "west", range: { mode: "auto-overlap" } }),
+          connection("connection:k:east:c:west", { slabId: "k", side: "east", range: { mode: "auto-overlap" } }, { slabId: "c", side: "west", range: { mode: "auto-overlap" } }),
+        ],
+      }),
+      supportRules: [
+        { id: "whole-continuous", target: { kind: "slab-edge", slabId: "k", side: "east", range: { mode: "whole" } }, support: "continuous" },
+      ],
+    };
+    const result = applyFloorConnectionSupportV3(plan, { connectionId: "connection:k:east:b:west", support: "inner-wall" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const supports = resolvedSupports(result.plan);
+    expect(supports.get("connection:k:east:a:west")).toBe("continuous");
+    expect(supports.get("connection:k:east:b:west")).toBe("inner-wall");
+    expect(supports.get("connection:k:east:c:west")).toBe("continuous");
+    const solution = solveFloorTopology(result.plan);
+    expect(solution.walls).toHaveLength(1);
+    expect(solution.walls[0].connectionId).toBe("connection:k:east:b:west");
+    expect(solution.walls[0].lengthMm).toBeCloseTo(2000, 6);
+    expect(result.plan.slabs.find((slab) => slab.id === "a")!.x).toBe(4000);
+    expect(result.plan.slabs.find((slab) => slab.id === "c")!.x).toBe(4000);
+    expect(result.plan.slabs.find((slab) => slab.id === "b")!.x).toBe(4240);
+    expectCanonical(result.plan);
+  });
+
+  it("往返切换幂等：Inner→Continuous→Inner 规则数量稳定、语义等价", () => {
+    const first = applyFloorConnectionSupportV3(kSide().withWhole(), { connectionId: "connection:k:east:l:west", support: "inner-wall" });
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    const continuous = applyFloorConnectionSupportV3(first.plan, { connectionId: "connection:k:east:l:west", support: "continuous" });
+    expect(continuous.ok).toBe(true);
+    if (!continuous.ok) return;
+    const second = applyFloorConnectionSupportV3(continuous.plan, { connectionId: "connection:k:east:l:west", support: "inner-wall" });
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    expect(second.plan.supportRules).toHaveLength(first.plan.supportRules.length);
+    expect(resolvedSupports(second.plan)).toEqual(resolvedSupports(first.plan));
+    expectCanonical(second.plan);
+  });
+
+  it("Support 切换失败 Atomic Rollback：plan === 原引用、Rule 未写入", () => {
+    const plan = v3Plan({
+      slabs: [
+        room("a", 0, 0, 4000, 2000),
+        room("b", 4240, 0, 3000, 3000),
+        room("c", 1100, 2100, 3000, 900),
+      ],
+      connections: [abWall()],
+    });
+    // Inner→Continuous 使 B 左移到 4000，与 C（1100~4100 × 2100~3000）正面积重叠 → solved-slab-overlap 阻断。
+    const result = applyFloorConnectionSupportV3(plan, { connectionId: "connection:a:east:b:west", support: "continuous" });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("mutation-blocked-by-topology");
+    expect(result.plan).toBe(plan);
+    expect(plan.supportRules).toEqual([]);
+    expect(plan.slabs.find((slab) => slab.id === "b")!.x).toBe(4240);
+  });
+
+  it("规则在 B 端点（l west whole）同样 Range Split", () => {
+    const plan: FloorPlanState = {
+      ...v3Plan({
+        slabs: [room("k", 0, 0, 4000, 4000), room("l", 4000, 1000, 2000, 4000)],
+        connections: [
+          connection("connection:k:east:l:west", { slabId: "k", side: "east", range: { mode: "auto-overlap" } }, { slabId: "l", side: "west", range: { mode: "auto-overlap" } }),
+        ],
+      }),
+      supportRules: [
+        { id: "r-l-west", target: { kind: "slab-edge", slabId: "l", side: "west", range: { mode: "whole" } }, support: "continuous" },
+      ],
+    };
+    const result = applyFloorConnectionSupportV3(plan, { connectionId: "connection:k:east:l:west", support: "inner-wall" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.plan.supportRules.map((rule) => rule.id).sort()).toEqual([
+      "connection-support:connection:k:east:l:west:inner-wall",
+      "r-l-west:remain:3000:4000",
+    ]);
+    expect(resolvedSupports(result.plan).get("connection:k:east:l:west")).toBe("inner-wall");
+    expect(result.plan.slabs.find((slab) => slab.id === "l")!.x).toBe(4240);
+    expectCanonical(result.plan);
+  });
+
+  it("opening-edge 规则绝不修改", () => {
+    const plan: FloorPlanState = {
+      ...v3Plan({
+        slabs: [room("a", 0, 0, 4000, 3000), room("b", 4240, 0, 3000, 3000)],
+        connections: [abWall()],
+      }),
+      openings: [opening("o", 4740, 500, 1000, 1000)],
+      supportRules: [
+        { id: "r-open", target: { kind: "opening-edge", openingId: "o", side: "west", range: { mode: "whole" } }, support: "opening-cut" },
+      ],
+    };
+    const result = applyFloorConnectionSupportV3(plan, { connectionId: "connection:a:east:b:west", support: "continuous" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.plan.supportRules.map((rule) => rule.id)).toContain("r-open");
+    expect(result.plan.supportRules.find((rule) => rule.id === "r-open")!.target.kind).toBe("opening-edge");
   });
 });

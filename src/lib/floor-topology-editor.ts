@@ -7,7 +7,13 @@ import {
   type FloorSlab,
 } from "./floor-plan";
 import type { FloorEdgeConnection } from "./floor-topology";
-import { solveFloorTopology, type FloorTopologySolution } from "./floor-topology-solver";
+import {
+  solveFloorTopology,
+  type FloorTopologyConstraintIssue,
+  type FloorTopologySolution,
+  type FloorTopologySolveOptions,
+} from "./floor-topology-solver";
+import { rewriteFloorSupportRulesForConnectionSupport } from "./floor-topology-support";
 import { buildFloorPhysicalLayout, type FloorPhysicalLayout } from "./floor-physical-layout";
 
 /**
@@ -121,15 +127,22 @@ export function propagateFloorOpeningsBySlabMotion(
 /**
  * 统一 Mutation Finalize：Solve → Validate → Materialize → Opening Follow。
  * Low Level；禁止与 materializeFloorTopologyPositions 相互递归。
+ * options（可选）：透传给 Solver（Editor Move 用 preferredAnchors 固定稳定 Anchor）。
  */
 export function finalizeFloorTopologyMutation(
   beforePlan: FloorPlanState,
   mutatedPlan: FloorPlanState,
-): { ok: true; plan: FloorPlanState } | { ok: false; code: "mutation-blocked-by-topology"; message: string } {
-  const solution = solveFloorTopology(mutatedPlan);
+  options?: FloorTopologySolveOptions,
+): { ok: true; plan: FloorPlanState } | { ok: false; code: "mutation-blocked-by-topology"; message: string; issues: FloorTopologyConstraintIssue[] } {
+  const solution = solveFloorTopology(mutatedPlan, options);
   const blocking = solution.issues.find((issue) => issue.level === "error");
   if (blocking) {
-    return { ok: false, code: "mutation-blocked-by-topology", message: blocking.message };
+    return {
+      ok: false,
+      code: "mutation-blocked-by-topology",
+      message: blocking.message,
+      issues: solution.issues.filter((issue) => issue.level === "error"),
+    };
   }
   const solved = new Map(solution.slabs.map((slab) => [slab.slabId, slab]));
   const slabPlan: FloorPlanState = {
@@ -292,7 +305,31 @@ export type FloorSlabMovePreview = {
   plan: FloorPlanState;
   removedConnectionIds: string[];
   evaluations: FloorConnectionEvaluation[];
+  /** V1.4A.2.2：目标位置是否可提交（与其它 Clear Slab 发生正面积重叠即为 false）。 */
+  valid: boolean;
+  issues: FloorPlanIssue[];
 };
+
+/**
+ * V1.4A.2.2 重叠预检：移动后 Clear Rect 与其它 Slab 正面积重叠（EPSILON 边界，轴对齐矩形即精确）。
+ * PointerMove 阶段只做本纯 Rect 检查（不 solve）；PointerUp 的正式 Full Solve 仍兜底。
+ */
+export function evaluateFloorMoveOverlapIssues(plan: FloorPlanState, movedSlab: FloorSlab): FloorPlanIssue[] {
+  const issues: FloorPlanIssue[] = [];
+  for (const other of plan.slabs) {
+    if (other.id === movedSlab.id) continue;
+    const overlapX = movedSlab.x < other.x + other.width - EPSILON && movedSlab.x + movedSlab.width > other.x + EPSILON;
+    const overlapY = movedSlab.y < other.y + other.height - EPSILON && movedSlab.y + movedSlab.height > other.y + EPSILON;
+    if (!overlapX || !overlapY) continue;
+    issues.push({
+      level: "error",
+      code: "move-slab-overlap",
+      message: `该位置与${other.name}重叠，不能放置。`,
+      objectIds: [other.id],
+    });
+  }
+  return issues;
+}
 
 /**
  * 拖动预览：临时移除 broken connections（不修改正式 State），
@@ -306,7 +343,7 @@ export function previewFloorSlabPhysicalMoveV3(
 ): FloorSlabMovePreview {
   const existing = plan.slabs.find((slab) => slab.id === slabId);
   if (!existing || !isV3(plan)) {
-    return { plan, removedConnectionIds: [], evaluations: [] };
+    return { plan, removedConnectionIds: [], evaluations: [], valid: true, issues: [] };
   }
   const movedSlab: FloorSlab = { ...existing, x, y };
   const connections = floorConnectionsForSlab(plan, slabId);
@@ -316,6 +353,7 @@ export function previewFloorSlabPhysicalMoveV3(
   const broken = new Set(evaluations
     .filter((evaluation): evaluation is Extract<FloorConnectionEvaluation, { status: "broken" }> => evaluation.status === "broken")
     .map((evaluation) => evaluation.connectionId));
+  const issues = evaluateFloorMoveOverlapIssues(plan, movedSlab);
   return {
     plan: {
       ...plan,
@@ -324,17 +362,44 @@ export function previewFloorSlabPhysicalMoveV3(
     },
     removedConnectionIds: [...broken],
     evaluations,
+    valid: issues.length === 0,
+    issues,
   };
 }
 
-export type FloorSlabPhysicalMoveResult = {
-  plan: FloorPlanState;
-  removedConnectionIds: string[];
-};
+export type FloorSlabPhysicalMoveFailureCode =
+  | "move-slab-overlap"
+  | "move-topology-conflict"
+  | "move-invalid";
+
+export type FloorSlabPhysicalMoveResult =
+  | { ok: true; plan: FloorPlanState; removedConnectionIds: string[] }
+  | {
+      ok: false;
+      /** 失败必须返回原始 Before Plan（Atomic Rollback，禁止部分修改后的 Plan）。 */
+      plan: FloorPlanState;
+      removedConnectionIds: [];
+      code: FloorSlabPhysicalMoveFailureCode;
+      message: string;
+    };
+
+/** 把 finalize 的 Blocking Issue 映射为 Move 失败语义。 */
+function moveFailureCodeFromIssues(issues: readonly FloorTopologyConstraintIssue[]): FloorSlabPhysicalMoveFailureCode {
+  if (issues.some((issue) => issue.code === "solved-slab-overlap")) return "move-slab-overlap";
+  if (issues.some((issue) =>
+    issue.code === "topology-constraint-conflict"
+    || issue.code === "connection-overlap-conflict"
+    || issue.code === "support-rule-conflict")) {
+    return "move-topology-conflict";
+  }
+  return "move-invalid";
+}
 
 /**
  * 正式提交：移动 + Detach 是一个事务（Undo 一步）。
- * Hosted Openings 随 Slab 移动；被保留的 Connection 由 Materialize 把 Jitter 拉回正式 Gap。
+ * V1.4A.2.2：Finalize 失败必须 Atomic Rollback（返回 Before Plan），禁止 best-effort 提交非法 Plan。
+ * - 目标位置与其它 Clear Slab 重叠 → ok:false（move-slab-overlap），Connection 不 Detach、规则不清理。
+ * - Connection 保留时用 Stable Anchor（非移动 Slab 优先），避免整个 Component 跟着 Jitter 平移。
  */
 export function applyFloorSlabPhysicalMoveV3(
   plan: FloorPlanState,
@@ -343,18 +408,34 @@ export function applyFloorSlabPhysicalMoveV3(
   y: number,
 ): FloorSlabPhysicalMoveResult {
   const existing = plan.slabs.find((slab) => slab.id === slabId);
-  if (!existing || !isV3(plan)) return { plan, removedConnectionIds: [] };
+  if (!existing || !isV3(plan)) return { ok: true, plan, removedConnectionIds: [] };
   const preview = previewFloorSlabPhysicalMoveV3(plan, slabId, x, y);
   if (Math.abs(existing.x - x) <= EPSILON && Math.abs(existing.y - y) <= EPSILON && preview.removedConnectionIds.length === 0) {
-    return { plan, removedConnectionIds: [] };
+    return { ok: true, plan, removedConnectionIds: [] };
+  }
+  if (!preview.valid) {
+    return {
+      ok: false,
+      plan,
+      removedConnectionIds: [],
+      code: "move-slab-overlap",
+      message: preview.issues[0]?.message ?? "该位置与其它板区重叠，不能放置。",
+    };
   }
   const cleaned = cleanupFloorSupportRulesAfterConnectionRemoval(plan, preview.plan, preview.removedConnectionIds);
-  const finalized = finalizeFloorTopologyMutation(plan, cleaned);
-  if (finalized.ok) return { plan: finalized.plan, removedConnectionIds: preview.removedConnectionIds };
-  // 理论上的遗留坏数据：best-effort 保持可用（不崩溃），正式校验器会报告。
-  // Opening 传播仍以原始 beforePlan 为 Host 基准（禁止用已移动的 Plan 重猜 Local Offset）。
-  const { openings } = propagateFloorOpeningsBySlabMotion(plan, cleaned);
-  return { plan: { ...cleaned, openings }, removedConnectionIds: preview.removedConnectionIds };
+  // Stable Anchor：移动中的 Slab 不得成为其分量 Anchor（除非分量只剩它自己）。
+  const preferredAnchorIds = plan.slabs.filter((slab) => slab.id !== slabId).map((slab) => slab.id);
+  const finalized = finalizeFloorTopologyMutation(plan, cleaned, {
+    preferredAnchors: { x: preferredAnchorIds, y: preferredAnchorIds },
+  });
+  if (finalized.ok) return { ok: true, plan: finalized.plan, removedConnectionIds: preview.removedConnectionIds };
+  return {
+    ok: false,
+    plan,
+    removedConnectionIds: [],
+    code: moveFailureCodeFromIssues(finalized.issues),
+    message: finalized.message,
+  };
 }
 
 /** 明确断开：删除指定 Connection（主动拆墙，一次 Undo）。 */
@@ -626,47 +707,31 @@ export type FloorConnectionSupportRequest = {
 
 export type FloorConnectionSupportResult =
   | { ok: true; plan: FloorPlanState; removedRuleIds: string[]; addedRuleId: string | null }
-  | { ok: false; code: "connection-not-found" | "mutation-blocked-by-topology"; message: string };
+  | {
+      ok: false;
+      /** V1.4A.2.2：失败必须返回原始 Before Plan（Atomic Rollback，禁止 Rule 已改但未 Materialize）。 */
+      plan: FloorPlanState;
+      code: "connection-not-found" | "mutation-blocked-by-topology";
+      message: string;
+    };
 
 export function applyFloorConnectionSupportV3(plan: FloorPlanState, request: FloorConnectionSupportRequest): FloorConnectionSupportResult {
   if (!isV3(plan)) {
-    return { ok: false, code: "connection-not-found", message: "连接支承事务只适用于 clear-space-physical-v2。" };
+    return { ok: false, plan, code: "connection-not-found", message: "连接支承事务只适用于 clear-space-physical-v2。" };
   }
   const connection = (plan.connections ?? []).find((item) => item.id === request.connectionId);
   if (!connection || (request.support !== "inner-wall" && request.support !== "continuous")) {
-    return { ok: false, code: "connection-not-found", message: "连接不存在或支承类型无效。" };
+    return { ok: false, plan, code: "connection-not-found", message: "连接不存在或支承类型无效。" };
   }
   const solution = solveFloorTopology(plan);
   const solved = solution.solvedConnections.find((item) => item.connectionId === request.connectionId);
-  if (!solved) return { ok: false, code: "connection-not-found", message: "连接未解析到有效几何。" };
+  if (!solved) return { ok: false, plan, code: "connection-not-found", message: "连接未解析到有效几何。" };
   const current = solved.valid ? solved.support : "inner-wall";
   if (current === request.support) return { ok: true, plan, removedRuleIds: [], addedRuleId: null };
 
-  // 清理两端点上与本次实际区间重叠的 shared-slab 规则（避免 conflict 与重复语义）。
-  const endpointRanges = [
-    { slabId: solved.slabIds[0], side: solved.sideA, startMm: solved.aOffsetStartMm, endMm: solved.aOffsetEndMm },
-    { slabId: solved.slabIds[1], side: solved.sideB, startMm: solved.bOffsetStartMm, endMm: solved.bOffsetEndMm },
-  ];
-  const overlaps = (ruleRange: { start: number; end: number }, ep: { startMm: number; endMm: number }) =>
-    ruleRange.start < ep.endMm - EPSILON && ruleRange.end > ep.startMm + EPSILON;
-  const removedRuleIds = new Set<string>();
-  plan.supportRules.forEach((rule) => {
-    const target = rule.target;
-    if (target.kind !== "slab-edge") return;
-    if (rule.support !== "inner-wall" && rule.support !== "continuous") return;
-    const slab = plan.slabs.find((item) => item.id === target.slabId);
-    if (!slab) return;
-    const length = target.side === "west" || target.side === "east" ? slab.height : slab.width;
-    const ruleRange = target.range.mode === "whole"
-      ? { start: 0, end: length }
-      : { start: target.range.startMm, end: target.range.endMm };
-    const hit = endpointRanges.some((ep) =>
-      target.slabId === ep.slabId && target.side === ep.side && overlaps(ruleRange, ep));
-    if (hit) removedRuleIds.add(rule.id);
-  });
-
+  // V1.4A.2.2：Range Split 重写（只改两端点上与选中区间重叠的部分，残段保持旧 Support）。
   const aSlab = plan.slabs.find((item) => item.id === solved.slabIds[0]);
-  if (!aSlab) return { ok: false, code: "connection-not-found", message: "连接端点板区不存在。" };
+  if (!aSlab) return { ok: false, plan, code: "connection-not-found", message: "连接端点板区不存在。" };
   const sideLengthA = solved.orientation === "vertical" ? aSlab.height : aSlab.width;
   const wholeA = solved.aOffsetStartMm <= EPSILON && solved.aOffsetEndMm >= sideLengthA - EPSILON;
   const targetA = {
@@ -678,16 +743,23 @@ export function applyFloorConnectionSupportV3(plan: FloorPlanState, request: Flo
       : { mode: "offset" as const, startMm: solved.aOffsetStartMm, endMm: solved.aOffsetEndMm },
   };
   const ruleId = `connection-support:${request.connectionId}:${request.support}`;
+  const rewrite = rewriteFloorSupportRulesForConnectionSupport(
+    plan,
+    [
+      { slabId: solved.slabIds[0], side: solved.sideA, startMm: solved.aOffsetStartMm, endMm: solved.aOffsetEndMm },
+      { slabId: solved.slabIds[1], side: solved.sideB, startMm: solved.bOffsetStartMm, endMm: solved.bOffsetEndMm },
+    ],
+    targetA,
+    ruleId,
+    request.support,
+  );
   const mutated: FloorPlanState = {
     ...plan,
-    supportRules: [
-      ...plan.supportRules.filter((rule) => !removedRuleIds.has(rule.id)),
-      { id: ruleId, target: targetA, support: request.support },
-    ],
+    supportRules: rewrite.supportRules,
   };
   const finalized = finalizeFloorTopologyMutation(plan, mutated);
   if (!finalized.ok) {
-    return { ok: false, code: "mutation-blocked-by-topology", message: finalized.message };
+    return { ok: false, plan, code: "mutation-blocked-by-topology", message: finalized.message };
   }
-  return { ok: true, plan: finalized.plan, removedRuleIds: [...removedRuleIds].sort(), addedRuleId: ruleId };
+  return { ok: true, plan: finalized.plan, removedRuleIds: rewrite.removedRuleIds, addedRuleId: rewrite.addedRuleId };
 }

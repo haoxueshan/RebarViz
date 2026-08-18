@@ -188,16 +188,14 @@ function isStrictFloorDraftPlanRecord(value: unknown): boolean {
   return true;
 }
 
-/** 旧 FloorDraftRecord 的 state 特征：坐标模型或 slabs 数组（结合 Draft Schema 标记识别）。 */
-function hasLegacyPlanShape(state: Record<string, unknown>): boolean {
-  return state.coordinateModel === "net-layout-v1" || Array.isArray(state.slabs);
-}
-
 /**
- * 旧版“仅楼层草稿文件”识别（收紧）：
- * - FloorDraftRecord：schemaVersion === Draft Schema 且 state 具备 FloorPlan 特征；
- * - 裸 FloorPlanState：coordinateModel + slabs + openings 三个特征同时满足。
- * 普通 JSON（如 { slabs: [] }）不再误判为 Legacy。
+ * 旧版“仅楼层草稿文件”识别（V1.4A.2.2 收紧）：
+ * - FloorDraftRecord（schemaVersion 2/3 + 具备 Plan 形状的 state）：
+ *   一律交给 parseFloorDraftRecord ——
+ *   V3 → normalizeFloorPlanStateV3 + Materialize（保留 connections 与 V3 坐标模型），
+ *   V2 → Legacy 归一化 + V2→V3 Migration；绝不再降级为 net-layout-v1。
+ * - 裸 FloorPlanState：仅 coordinateModel==="net-layout-v1" + slabs + openings 三特征。
+ * 普通 JSON（如 { slabs: [] } / { schemaVersion: 3, state: {} }）不误判为 Legacy。
  */
 function parseLegacyPlan(value: unknown): ReturnType<typeof parseFloorDraftRecord> {
   if (!isObjectLike(value)) return null;
@@ -207,14 +205,13 @@ function parseLegacyPlan(value: unknown): ReturnType<typeof parseFloorDraftRecor
   };
   if (
     (candidate.schemaVersion === FLOOR_DRAFT_SCHEMA_VERSION || candidate.schemaVersion === 2) &&
-    isObjectLike(candidate.state) &&
-    hasLegacyPlanShape(candidate.state)
+    isObjectLike(candidate.state)
   ) {
-    return {
-      schemaVersion: FLOOR_DRAFT_SCHEMA_VERSION,
-      savedAt: typeof candidate.savedAt === "string" ? candidate.savedAt : new Date(0).toISOString(),
-      state: normalizeFloorPlanState(candidate.state),
-    };
+    const state = candidate.state as Record<string, unknown>;
+    const hasPlanShape = Array.isArray(state.slabs)
+      || state.coordinateModel === "net-layout-v1"
+      || state.coordinateModel === "clear-space-physical-v2";
+    if (hasPlanShape) return parseFloorDraftRecord(value);
   }
   if (
     candidate.coordinateModel === "net-layout-v1" &&

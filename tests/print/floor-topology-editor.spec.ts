@@ -84,24 +84,25 @@ test.describe("Floor Topology V1.4A.2 V3 物理编辑器", () => {
     const centerY = box!.y + box!.height / 2;
     await page.mouse.move(centerX, centerY);
     await page.mouse.down();
-    // 向左拖离约 100px（法向 Gap 破坏）：目标点保持在 Canvas 内部，避免 pointerup 落出 SVG。
-    await page.mouse.move(centerX - 100, centerY, { steps: 6 });
+    // 向右拖离约 60px（法向 Gap 破坏；向左拖进 A 属于非法 Overlap，V1.4A.2.2 已阻断；
+    // 过大位移会落到右侧 Inspector 上，pointerup 无法回到 SVG）。
+    await page.mouse.move(centerX + 60, centerY, { steps: 6 });
     const preview = page.locator("[data-drag-preview]");
     await expect(preview).toBeVisible();
     await expect(preview).toHaveAttribute("data-v3-detach-count", "1");
     await expect(page.locator("[data-v3-detach-label]")).toContainText("释放后将断开 1 处连接");
-    await page.mouse.move(centerX - 100, centerY);
+    await page.mouse.move(centerX + 60, centerY);
     await page.mouse.up();
 
     // 松手：B 停留在新位置，Connection 被删除（Move + Detach 一个事务）。
     await expect.poll(async () => {
       const draft = await savedDraft(page);
       return draft.slabs.find((slab) => slab.id === "b")?.x;
-    }).toBeLessThan(4240);
+    }).toBeGreaterThan(4240);
     await expect.poll(async () => (await savedDraft(page)).connections.length).toBe(0);
     const afterMove = await savedDraft(page);
     const movedB = afterMove.slabs.find((slab) => slab.id === "b")!;
-    expect(movedB.x).toBeLessThan(4240);
+    expect(movedB.x).toBeGreaterThan(4240);
     await expect(page.locator('[data-atomic-boundary-id*="atomic:v3:connection:a:east:b:west"]')).toHaveCount(0);
 
     // 一次 Undo：位置 + Connection + 墙全部恢复。
@@ -351,6 +352,47 @@ test.describe("Floor Topology V1.4A.2 V3 物理编辑器", () => {
     const copy = page.getByTestId("floor-coordinate-model-copy");
     await expect(copy).toContainText("净空物理坐标");
     await expect(copy).not.toContainText("净跨拓扑坐标");
+  });
+
+  test("Move 非法 Overlap：红色预览提示，松手不提交（无 History、Connection/Opening 不变）", async ({ page }) => {
+    await installV3Workspace(page, [
+      { id: "a", name: "板区A", x: 0, y: 0, width: 4000, height: 4000 },
+      { id: "b", name: "板区B", x: 4240, y: 0, width: 3000, height: 3000 },
+    ], [AB_CONNECTION], [
+      { id: "o-b", name: "楼梯间", x: 4740, y: 500, width: 800, height: 800 },
+    ]);
+
+    const slabB = page.locator('rect[aria-label="选择板区 板区B"]');
+    await expect(slabB).toHaveAttribute("data-physical-x", "4240");
+    const box = await slabB.boundingBox();
+    expect(box).not.toBeNull();
+    const centerX = box!.x + box!.width / 2;
+    const centerY = box!.y + box!.height / 2;
+    await page.mouse.move(centerX, centerY);
+    await page.mouse.down();
+    // 向左拖进 A 内部（约 60px ≈ 850mm）：目标与 A 正面积重叠 → 红色非法预览。
+    await page.mouse.move(centerX - 60, centerY, { steps: 6 });
+    const preview = page.locator("[data-drag-preview]");
+    await expect(preview).toBeVisible();
+    await expect(preview).toHaveAttribute("data-v3-move-invalid", "true");
+    await expect(page.locator("[data-v3-move-invalid-label]")).toContainText("重叠，不能放置");
+    await page.mouse.move(centerX - 60, centerY);
+    await page.mouse.up();
+    // 预览随 pointerup 清除（pointerup 确实到达 SVG，不是被面板拦截）。
+    await expect(page.locator("[data-drag-preview]")).toHaveCount(0);
+
+    // 松手：State 不变 —— B 原位、Connection 保留、Opening 不动。
+    const draft = await savedDraft(page);
+    expect(draft.slabs.find((slab) => slab.id === "b")?.x).toBe(4240);
+    expect(draft.connections.length).toBe(1);
+    expect(draft.openings[0].x).toBe(4740);
+    await expect(page.locator('[aria-label="选择板区 板区B"]')).toHaveAttribute("data-physical-x", "4240");
+    await expect(page.locator('[data-atomic-boundary-id*="atomic:v3:connection:a:east:b:west"]')).toHaveCount(1);
+    // 失败 Move 不新增 History：撤销按钮保持 disabled。
+    await expect(page.getByRole("button", { name: "撤销" })).toBeDisabled();
+    // 页面仍可继续操作。
+    await page.locator('rect[aria-label="选择板区 板区A"]').click();
+    await expect(page.locator('rect[aria-label="选择板区 板区A"]')).toBeVisible();
   });
 });
 
