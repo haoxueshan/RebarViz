@@ -177,13 +177,14 @@ function isObjectLike(value: unknown): value is Record<string, unknown> {
 function isStrictFloorDraftPlanRecord(value: unknown): boolean {
   if (!isObjectLike(value)) return false;
   const candidate = value as { schemaVersion?: unknown; state?: unknown };
-  if (candidate.schemaVersion !== FLOOR_DRAFT_SCHEMA_VERSION) return false;
+  // Plan V2 / V3 均受支持：V2 导入时由 parseFloorDraftRecord 走 Legacy Migration。
+  if (candidate.schemaVersion !== 2 && candidate.schemaVersion !== FLOOR_DRAFT_SCHEMA_VERSION) return false;
   if (!isObjectLike(candidate.state)) return false;
   const state = candidate.state as { slabs?: unknown; openings?: unknown; supportRules?: unknown; coordinateModel?: unknown };
   if (!Array.isArray(state.slabs)) return false;
   if (!Array.isArray(state.openings)) return false;
   if (!Array.isArray(state.supportRules)) return false;
-  if (state.coordinateModel !== undefined && state.coordinateModel !== "net-layout-v1") return false;
+  if (state.coordinateModel !== undefined && state.coordinateModel !== "net-layout-v1" && state.coordinateModel !== "clear-space-physical-v2") return false;
   return true;
 }
 
@@ -205,7 +206,7 @@ function parseLegacyPlan(value: unknown): ReturnType<typeof parseFloorDraftRecor
     slabs?: unknown; openings?: unknown; coordinateModel?: unknown;
   };
   if (
-    candidate.schemaVersion === FLOOR_DRAFT_SCHEMA_VERSION &&
+    (candidate.schemaVersion === FLOOR_DRAFT_SCHEMA_VERSION || candidate.schemaVersion === 2) &&
     isObjectLike(candidate.state) &&
     hasLegacyPlanShape(candidate.state)
   ) {

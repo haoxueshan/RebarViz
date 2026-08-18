@@ -3,6 +3,7 @@ import {
   type FloorPlanState,
   type FloorSlab,
 } from "./floor-plan";
+import type { FloorEdgeConnection } from "./floor-topology";
 
 /**
  * Floor Assembly V1.3.1（纯派生分析层）：
@@ -70,13 +71,21 @@ function isBetterPrimary(
 export function buildFloorAssembly(plan: FloorPlanState): FloorAssembly {
   const slabById = new Map(plan.slabs.map((slab) => [slab.id, slab]));
   const adjacency = new Map<string, Set<string>>(plan.slabs.map((slab) => [slab.id, new Set<string>()]));
-  buildFloorAtomicBoundarySegments(plan)
-    .filter((segment) => segment.geometryKind === "shared-slab" && segment.slabIds.length >= 2)
-    .forEach((segment) => {
-      const [left, right] = segment.slabIds;
-      adjacency.get(left)?.add(right);
-      adjacency.get(right)?.add(left);
-    });
+  // Plan V3：Connectivity 唯一来源是正式 FloorEdgeConnection（240 Gap 仍属于同一组件）。
+  if (plan.coordinateModel === "clear-space-physical-v2") {
+    for (const connection of (plan.connections ?? []) as FloorEdgeConnection[]) {
+      adjacency.get(connection.a.slabId)?.add(connection.b.slabId);
+      adjacency.get(connection.b.slabId)?.add(connection.a.slabId);
+    }
+  } else {
+    buildFloorAtomicBoundarySegments(plan)
+      .filter((segment) => segment.geometryKind === "shared-slab" && segment.slabIds.length >= 2)
+      .forEach((segment) => {
+        const [left, right] = segment.slabIds;
+        adjacency.get(left)?.add(right);
+        adjacency.get(right)?.add(left);
+      });
+  }
 
   const visited = new Set<string>();
   const raw: Omit<FloorAssemblyComponent, "isPrimary">[] = [];

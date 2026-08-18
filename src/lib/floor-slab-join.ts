@@ -285,6 +285,9 @@ export function findFloorSlabJoinCandidates(
     captureDistanceMm?: number;
   },
 ): FloorSlabJoinCandidate[] {
+  // V1.4A Guard：clear-space-physical-v2 下连接语义已变为 FloorEdgeConnection，
+  // Smart Join 的“移动 Clear Rect 到 0mm Gap”路径被禁止（正式改造留给 V1.4B）。
+  if (plan.coordinateModel !== "net-layout-v1") return [];
   const source = plan.slabs.find((slab) => slab.id === sourceSlabId);
   if (!source) return [];
   const captureMm = options?.captureDistanceMm && Number.isFinite(options.captureDistanceMm) && options.captureDistanceMm > 0
@@ -373,6 +376,8 @@ export function applyFloorSlabJoin(
   plan: FloorPlanState,
   candidate: FloorSlabJoinCandidate,
 ): FloorPlanState {
+  // V1.4A Guard：新模型下禁止把 Inner Wall 两边 Clear Rect 写成 0mm Gap。
+  if (plan.coordinateModel !== "net-layout-v1") return plan;
   const result = validateFloorJoinCandidate(plan, candidate);
   if (!result.valid) return plan;
   return {

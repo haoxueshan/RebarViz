@@ -9,7 +9,7 @@ async function installJoinWorkspace(page: Page, bX = 4280): Promise<void> {
   await page.goto("/calculator/floor");
   await page.evaluate(({ draftKey, bottomKey, topKey, roleKey, bX }) => {
     localStorage.setItem(draftKey, JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       savedAt: new Date().toISOString(),
       state: {
         coordinateModel: "net-layout-v1",
@@ -172,7 +172,7 @@ test.describe("Floor Smart Join V1.3.2 板边磁吸连接", () => {
     await page.goto("/calculator/floor");
     await page.evaluate(({ draftKey, bottomKey, topKey, roleKey }) => {
       localStorage.setItem(draftKey, JSON.stringify({
-        schemaVersion: 2,
+        schemaVersion: 3,
         savedAt: new Date().toISOString(),
         state: {
           coordinateModel: "net-layout-v1",

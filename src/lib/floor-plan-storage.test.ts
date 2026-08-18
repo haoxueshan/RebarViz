@@ -18,9 +18,37 @@ describe("Floor Geometry V2草稿", () => {
       outerWallThickness: 370,
       snapDistanceMm: 150,
     });
-    expect(record?.schemaVersion).toBe(2);
+    expect(record?.schemaVersion).toBe(FLOOR_DRAFT_SCHEMA_VERSION);
     expect(record?.state).toMatchObject({ coordinateModel: "net-layout-v1", openings: [], supportRules: [] });
     expect(record?.state.slabs[0].type).toBe("room");
+  });
+
+  it("读取V2记录自动迁移为Plan V3（connections + clear-space-physical-v2）", () => {
+    const record = parseFloorDraftRecord({
+      schemaVersion: 2,
+      savedAt: "2026-08-10T00:00:00.000Z",
+      state: {
+        coordinateModel: "net-layout-v1",
+        slabs: [
+          { id: "a", name: "板区A", type: "room", x: 0, y: 0, width: 4200, height: 3600 },
+          { id: "b", name: "板区B", type: "room", x: 4200, y: 0, width: 3600, height: 3600 },
+        ],
+        openings: [],
+        supportRules: [],
+        innerWallThickness: 240,
+        outerWallThickness: 370,
+        snapDistanceMm: 150,
+        overlapToleranceMm: 10,
+      },
+    });
+    expect(record?.schemaVersion).toBe(FLOOR_DRAFT_SCHEMA_VERSION);
+    expect(record?.state.coordinateModel).toBe("clear-space-physical-v2");
+    expect(record?.state.connections?.length).toBeGreaterThan(0);
+    const ab = record?.state.connections?.find((connection) =>
+      connection.a.slabId === "a" && connection.b.slabId === "b"
+      || connection.a.slabId === "b" && connection.b.slabId === "a");
+    expect(ab).toBeDefined();
+    expect(ab?.source).toBe("legacy-shared-edge");
   });
 
   it("读取V2时恢复Opening与Support Rule", () => {

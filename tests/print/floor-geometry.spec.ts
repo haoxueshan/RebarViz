@@ -62,7 +62,7 @@ test("Geometry V2.1支持板区、洞口、支承切换和草稿恢复", async (
 
   await page.waitForTimeout(400);
   const stored = await page.evaluate(() => JSON.parse(localStorage.getItem("rebarviz:floor-rebar:draft:v1") ?? "null"));
-  expect(stored.schemaVersion).toBe(2);
+  expect(stored.schemaVersion).toBe(3);
   expect(stored.state.slabs[0].type).toBe("corridor");
   expect(stored.state.openings[0]).toMatchObject({ name: "楼梯间", type: "stair" });
   expect(stored.state.supportRules).toHaveLength(2);

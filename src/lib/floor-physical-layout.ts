@@ -6,6 +6,7 @@ import {
   type FloorResolvedSupport,
   type FloorSlab,
 } from "./floor-plan";
+import { solveFloorTopology } from "./floor-topology-solver";
 
 /**
  * Floor Physical Wall Layout V1.3（纯派生显示层）：
@@ -470,8 +471,13 @@ function buildPhysicalOpenings(
   }).sort((left, right) => left.x - right.x || left.y - right.y || left.openingId.localeCompare(right.openingId));
 }
 
-/** 主入口：由 Net FloorPlanState 确定性派生真实物理平面。 */
+/** 主入口：由 FloorPlanState 确定性派生真实物理平面。 */
 export function buildFloorPhysicalLayout(plan: FloorPlanState): FloorPhysicalLayout {
+  // Plan V3（clear-space-physical-v2）：物理布局来自 Topology Solver；
+  // Slab 位置已经是求解后的 Clear Space 物理位置，禁止再次加墙偏移（避免墙厚×2）。
+  if (plan.coordinateModel === "clear-space-physical-v2") {
+    return buildFloorPhysicalLayoutFromTopology(plan);
+  }
   const issues: FloorPhysicalLayoutIssue[] = [];
   const { x, y, bands } = buildConstraintEdges(plan);
   const xMap = solveAxis("x", x, plan.slabs, issues);
@@ -529,6 +535,86 @@ export function buildFloorPhysicalLayout(plan: FloorPlanState): FloorPhysicalLay
     floorBounds,
     issues,
   };
+}
+
+/**
+ * Plan V3 物理布局 Adapter：直接消费 Topology Solver 的 Solved Clear Slabs 与 Wall Bands。
+ * 禁止二次加 240 偏移（墙厚只由 Solver 插入一次）。
+ */
+function buildFloorPhysicalLayoutFromTopology(plan: FloorPlanState): FloorPhysicalLayout {
+  const solution = solveFloorTopology(plan);
+  const issues: FloorPhysicalLayoutIssue[] = solution.issues.map((issue) => ({
+    level: issue.level,
+    code: issue.code,
+    message: issue.message,
+    slabIds: issue.slabIds,
+    atomicIds: issue.connectionIds,
+  }));
+  const slabs: FloorPhysicalSlab[] = solution.slabs.map((item) => ({
+    slabId: item.slabId,
+    netX: item.sourceX,
+    netY: item.sourceY,
+    x: item.x,
+    y: item.y,
+    width: item.width,
+    height: item.height,
+    offsetX: item.offsetX,
+    offsetY: item.offsetY,
+  }));
+  const walls: FloorPhysicalWall[] = solution.walls.map((wall) => ({
+    id: wall.id,
+    kind: "inner-wall",
+    orientation: wall.orientation,
+    x: wall.x,
+    y: wall.y,
+    width: wall.width,
+    height: wall.height,
+    lengthMm: wall.lengthMm,
+    thicknessMm: wall.thicknessMm,
+    slabIds: wall.slabIds,
+    sourceAtomicIds: [`atomic:v3:${wall.connectionId}`],
+  }));
+  // 外墙沿用“未被 Connection 覆盖的有效板边 → outer-wall”，厚度放在 Clear Space 外侧（V1.4A 简化）。
+  const covered = new Set<string>();
+  for (const connection of plan.connections ?? []) {
+    covered.add(`${connection.a.slabId}:${connection.a.side}`);
+    covered.add(`${connection.b.slabId}:${connection.b.side}`);
+  }
+  const sides = ["west", "east", "south", "north"] as const;
+  for (const slab of slabs) {
+    for (const side of sides) {
+      if (covered.has(`${slab.slabId}:${side}`)) continue;
+      const thicknessMm = Math.max(plan.outerWallThickness, 0);
+      if (thicknessMm <= EPSILON) continue;
+      const vertical = side === "west" || side === "east";
+      if (vertical) {
+        const x = side === "west" ? slab.x - thicknessMm : slab.x + slab.width;
+        walls.push({ id: `outer-v3:${slab.slabId}:${side}`, kind: "outer-wall", orientation: "vertical", x, y: slab.y, width: thicknessMm, height: slab.height, lengthMm: slab.height, thicknessMm, slabIds: [slab.slabId], sourceAtomicIds: [], side });
+      } else {
+        const y = side === "south" ? slab.y - thicknessMm : slab.y + slab.height;
+        walls.push({ id: `outer-v3:${slab.slabId}:${side}`, kind: "outer-wall", orientation: "horizontal", x: slab.x, y, width: slab.width, height: thicknessMm, lengthMm: slab.width, thicknessMm, slabIds: [slab.slabId], sourceAtomicIds: [], side });
+      }
+    }
+  }
+  walls.sort((left, right) => left.x - right.x || left.y - right.y || left.id.localeCompare(right.id));
+  const openings: FloorPhysicalOpening[] = plan.openings.map((opening) => ({
+    openingId: opening.id,
+    netX: opening.x,
+    netY: opening.y,
+    x: opening.x,
+    y: opening.y,
+    width: opening.width,
+    height: opening.height,
+    offsetX: 0,
+    offsetY: 0,
+  }));
+  const floorBounds = finalizeBounds(slabs.reduce((bounds, slab) => unionBounds(bounds, slab), emptyBounds()));
+  walls.forEach((wall) => unionBounds(floorBounds, wall));
+  const bounds = finalizeBounds(
+    openings.reduce((current, opening) => unionBounds(current, opening), { ...floorBounds }),
+  );
+  issues.sort((left, right) => left.level.localeCompare(right.level) || left.code.localeCompare(right.code) || left.message.localeCompare(right.message));
+  return { slabs, openings, walls, bounds, floorBounds, issues };
 }
 
 /**

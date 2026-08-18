@@ -779,7 +779,8 @@ export function buildFloorPrintContent(
     combinedRows,
     diameterSummary: buildDiameterSummary(combinedRows),
     parameters: {
-      coordinateModel: plan.coordinateModel,
+      // 打印快照冻结的是 Net 语义几何（V1.4A 打印链路暂未迁移，正式迁移留给 V1.4C）。
+      coordinateModel: "net-layout-v1",
       innerWallThicknessMm: plan.innerWallThickness,
       outerWallThicknessMm: plan.outerWallThickness,
       bottomPhysicalDomainCount: bottomCalculation.domains.length,

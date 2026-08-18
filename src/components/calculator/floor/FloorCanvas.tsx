@@ -32,6 +32,7 @@ import {
   mapFloorNetAxisPoint,
   type FloorPhysicalLayout,
 } from "@/lib/floor-physical-layout";
+import { buildFloorTopologyBoundarySegmentsV3 } from "@/lib/floor-topology-solver";
 import {
   addFloorCanvasGesturePointer,
   createFloorCanvasGesture,
@@ -333,8 +334,22 @@ export function FloorCanvas({
     [dockPreview, dockPreviewPlan],
   );
   const bounds = useMemo(() => worldBounds, [worldBounds]);
-  const displayBoundaries = useMemo(() => buildFloorDisplayBoundarySegments(state), [state]);
-  const atomicBoundaries = useMemo(() => buildFloorAtomicBoundarySegments(state), [state]);
+  // Plan V3（clear-space-physical-v2）：边界段来自 Topology Solver（Connection + Solved Overlap）；
+  // net-layout-v1 继续使用 Legacy Atomic（Rect Touch）。
+  const v3TopologySegments = useMemo(
+    () => state.coordinateModel === "clear-space-physical-v2" ? buildFloorTopologyBoundarySegmentsV3(state) : null,
+    [state],
+  );
+  const displayBoundaries = useMemo(
+    () => v3TopologySegments
+      ? v3TopologySegments.map((segment) => ({ ...segment, id: `display:${segment.id}`, type: segment.support, atomicIds: [segment.id] }))
+      : buildFloorDisplayBoundarySegments(state),
+    [state, v3TopologySegments],
+  );
+  const atomicBoundaries = useMemo(
+    () => v3TopologySegments ?? buildFloorAtomicBoundarySegments(state),
+    [state, v3TopologySegments],
+  );
   const atomicById = useMemo(() => new Map(atomicBoundaries.map((segment) => [segment.id, segment])), [atomicBoundaries]);
   const selectedAtomicSegment = selectedBoundaryId ? atomicById.get(selectedBoundaryId) ?? null : null;
   const nearMisses = useMemo(() => findFloorSlabNearMisses(state), [state]);

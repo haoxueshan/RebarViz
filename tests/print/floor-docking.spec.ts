@@ -6,7 +6,7 @@ const ROLE_KEY = "rebarviz:floor-rebar:role:v1";
 function setDraft(page: import("@playwright/test").Page, slabs: Array<Record<string, unknown>>, overlapToleranceMm = 10) {
   return page.evaluate(({ draftKey, roleKey, slabs: slabData, tolerance }) => {
     localStorage.setItem(draftKey, JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       savedAt: new Date().toISOString(),
       state: {
         coordinateModel: "net-layout-v1",

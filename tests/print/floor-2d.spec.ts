@@ -10,7 +10,7 @@ test("Floor 2D V2.2近错位在图中警示并阻止正式Piece与打印", async
   await page.goto("/calculator/floor");
   await page.evaluate(({ draftKey, bottomKey, topKey, roleKey }) => {
     localStorage.setItem(draftKey, JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       savedAt: new Date().toISOString(),
       state: {
         coordinateModel: "net-layout-v1",
@@ -48,7 +48,7 @@ test("容差内0.5mm间隙自动对齐为精确共边并生成正式Piece", asyn
   await page.goto("/calculator/floor");
   await page.evaluate(({ draftKey, bottomKey, topKey, roleKey }) => {
     localStorage.setItem(draftKey, JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       savedAt: new Date().toISOString(),
       state: {
         coordinateModel: "net-layout-v1",
@@ -86,7 +86,7 @@ test("Display边可合并但点击与编辑精确落到对应Atomic段", async (
   await page.goto("/calculator/floor");
   await page.evaluate(({ draftKey, roleKey }) => {
     localStorage.setItem(draftKey, JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       savedAt: new Date().toISOString(),
       state: {
         coordinateModel: "net-layout-v1",
@@ -152,7 +152,7 @@ test("正式普通Piece和Through Piece均可点击检查，远端洞口不压�
   await page.goto("/calculator/floor");
   await page.evaluate(({ draftKey, topKey, roleKey }) => {
     localStorage.setItem(draftKey, JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       savedAt: new Date().toISOString(),
       state: {
         coordinateModel: "net-layout-v1",

@@ -428,7 +428,7 @@ test("点击共享板边只高亮选中Atomic段，Display边正常绘制", asyn
   await page.goto("/calculator/floor");
   await page.evaluate(({ draftKey, roleKey }) => {
     localStorage.setItem(draftKey, JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       savedAt: new Date().toISOString(),
       state: {
         coordinateModel: "net-layout-v1",

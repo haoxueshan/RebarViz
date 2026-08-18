@@ -276,7 +276,7 @@ test("Quick Dock：拖近共边松手精确0mm、一次Undo回原点（PRD 72/75
   await page.goto("/calculator/floor");
   await page.evaluate(({ draftKey, roleKey }) => {
     localStorage.setItem(draftKey, JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       savedAt: new Date().toISOString(),
       state: {
         coordinateModel: "net-layout-v1",
@@ -328,7 +328,7 @@ test("Quick Dock不经过二次普通Snap：preserve的X保持自由拖动值（
   await page.goto("/calculator/floor");
   await page.evaluate(({ draftKey, roleKey }) => {
     localStorage.setItem(draftKey, JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       savedAt: new Date().toISOString(),
       state: {
         coordinateModel: "net-layout-v1",

@@ -1,4 +1,7 @@
-export type FloorCoordinateModel = "net-layout-v1";
+import type { FloorEdgeConnection } from "./floor-topology";
+import { parseFloorConnections } from "./floor-topology";
+
+export type FloorCoordinateModel = "net-layout-v1" | "clear-space-physical-v2";
 
 export type FloorSlabType = "room" | "corridor" | "hall" | "balcony" | "other";
 export type FloorOpeningType = "stair" | "shaft" | "void" | "other";
@@ -41,10 +44,20 @@ export type FloorSupportRule = {
 };
 
 export type FloorPlanState = {
+  /**
+   * net-layout-v1：旧模型——只有 Net 坐标精确共边才形成 shared-slab。
+   * clear-space-physical-v2（Plan V3）：slab.x/y 是净空矩形在建筑物理平面中的参考位置，
+   * 正式拓扑来自 connections；inner-wall 真实占据净空之间的物理空间（Clear Gap = 墙厚）。
+   */
   coordinateModel: FloorCoordinateModel;
   slabs: FloorSlab[];
   openings: FloorOpening[];
   supportRules: FloorSupportRule[];
+  /**
+   * Plan V3 正式建筑拓扑（Canonical，必须保存）。
+   * 与 Derived 的 Physical Walls / Solved Slabs 不同。
+   */
+  connections?: FloorEdgeConnection[];
   innerWallThickness: number;
   outerWallThickness: number;
   snapDistanceMm: number;
@@ -242,6 +255,24 @@ export function normalizeFloorPlanState(value: unknown): FloorPlanState {
     snapDistanceMm: finiteNumber(value.snapDistanceMm, 150),
     overlapToleranceMm: Math.min(30, Math.max(0, finiteNumber(value.overlapToleranceMm, 10))),
   };
+}
+
+/**
+ * Plan V3 归一化：coordinateModel 允许 net-layout-v1（旧项目兼容）与 clear-space-physical-v2；
+ * connections 经严格解析（非法 side pair / 重复指向同一 Slab / 未知 Slab 被拒绝）。
+ */
+export function normalizeFloorPlanStateV3(value: unknown): FloorPlanState {
+  const base = normalizeFloorPlanState(value);
+  const coordinateModel: FloorCoordinateModel = isObject(value) && value.coordinateModel === "clear-space-physical-v2"
+    ? "clear-space-physical-v2"
+    : "net-layout-v1";
+  const slabIds = new Set(base.slabs.map((slab) => slab.id));
+  const connections = isObject(value) ? parseFloorConnections(value.connections, slabIds) : [];
+  // 仅 clear-space-physical-v2 模型写入正式 connections 字段；net-layout-v1 保持无字段（旧项目兼容）。
+  if (coordinateModel === "clear-space-physical-v2") {
+    return { ...base, coordinateModel, connections };
+  }
+  return { ...base, coordinateModel };
 }
 
 function rectsOverlap(left: FloorRect, right: FloorRect): boolean {
@@ -785,7 +816,7 @@ function supportRuleIssue(rule: FloorSupportRule, state: FloorPlanState): FloorP
 
 export function validateFloorPlanV2(state: FloorPlanState): FloorPlanIssue[] {
   const issues: FloorPlanIssue[] = [];
-  if (state.coordinateModel !== "net-layout-v1") issues.push({ level: "error", code: "coordinate-model-invalid", message: "楼层坐标模型无效。" });
+  if (state.coordinateModel !== "net-layout-v1" && state.coordinateModel !== "clear-space-physical-v2") issues.push({ level: "error", code: "coordinate-model-invalid", message: "楼层坐标模型无效。" });
   if (state.slabs.length === 0) issues.push({ level: "error", code: "slab-required", message: "至少需要一个板区。" });
   const ids = new Set<string>();
   const validateObject = (object: FloorRect & { id: string; name: string }, label: string, validType: boolean) => {
