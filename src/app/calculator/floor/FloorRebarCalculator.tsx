@@ -85,6 +85,8 @@ import {
   validateFloorPlanState,
 } from "@/lib/floor-topology-adapter";
 import {
+  applyFloorConnectionSupportV3,
+  applyFloorInnerWallThicknessV3,
   applyFloorSlabPhysicalMoveV3,
   applyFloorSlabResizeV3,
   defaultFloorOpeningPositionV3,
@@ -92,6 +94,8 @@ import {
   floorConnectionsForSlab,
   nextFloorSlabPhysicalPositionV3,
   removeFloorConnections,
+  type FloorSlabResizeAnchorX,
+  type FloorSlabResizeAnchorY,
 } from "@/lib/floor-topology-editor";
 import { createFloorDraftRecord, FLOOR_DRAFT_KEY, parseFloorDraftRecord } from "@/lib/floor-plan-storage";
 import {
@@ -276,6 +280,7 @@ function DraftNumberField({
   onValidityChange,
   min,
   max,
+  commitMode = "live",
 }: {
   fieldKey: string;
   label: string;
@@ -284,10 +289,18 @@ function DraftNumberField({
   onValidityChange: (key: string, valid: boolean) => void;
   min?: number;
   max?: number;
+  /** blur-enter：Focus 建 Draft，Typing 只改 Draft；Enter/Blur 提交一次；Escape 取消；非法恢复旧值。 */
+  commitMode?: "live" | "blur-enter";
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   const displayed = draft ?? String(value);
-  const invalid = draft !== null && (draft.trim() === "" || !Number.isFinite(Number(draft)) || (min !== undefined && Number(draft) < min) || (max !== undefined && Number(draft) > max));
+  const parsedDraft = draft === null ? null : Number(draft);
+  const invalid = draft !== null && (draft.trim() === "" || !Number.isFinite(parsedDraft) || (min !== undefined && Number(draft) < min) || (max !== undefined && Number(draft) > max));
+  const commitDraft = () => {
+    if (draft === null || invalid || parsedDraft === null) return;
+    if (parsedDraft !== value) onChange(parsedDraft);
+    setDraft(null);
+  };
   return (
     <label className="block">
       <span className="mb-1.5 block text-xs font-medium text-slate-600">{label}</span>
@@ -299,6 +312,7 @@ function DraftNumberField({
           min={min}
           max={max}
           aria-invalid={invalid}
+          data-commit-mode={commitMode}
           onFocus={(event) => { setDraft(String(value)); event.currentTarget.select(); }}
           onChange={(event) => {
             const raw = event.target.value;
@@ -306,11 +320,17 @@ function DraftNumberField({
             const parsed = Number(raw);
             const valid = raw.trim() !== "" && Number.isFinite(parsed) && (min === undefined || parsed >= min) && (max === undefined || parsed <= max);
             onValidityChange(fieldKey, valid);
-            if (valid) onChange(parsed);
+            if (commitMode === "live" && valid) onChange(parsed);
+          }}
+          onKeyDown={(event) => {
+            if (commitMode !== "blur-enter") return;
+            if (event.key === "Enter") { event.preventDefault(); commitDraft(); }
+            else if (event.key === "Escape") { setDraft(null); onValidityChange(fieldKey, true); }
           }}
           onBlur={() => {
             // 非法输入失焦时放弃 draft、恢复正式 State 旧值并解除 invalid 标记。
             if (invalid) onValidityChange(fieldKey, true);
+            if (commitMode === "blur-enter") commitDraft();
             setDraft(null);
           }}
           className={`h-11 w-full rounded-xl border bg-white px-3 pr-11 text-sm text-slate-900 outline-none transition focus:ring-2 ${invalid ? "border-rose-500 focus:ring-rose-100" : "border-slate-300 focus:border-blue-500 focus:ring-blue-100"}`}
@@ -445,6 +465,8 @@ export default function FloorRebarCalculator() {
   const [multiAlignKind, setMultiAlignKind] = useState<FloorMultiAlignKind | null>(null);
   const [workspaceFullscreen, setWorkspaceFullscreen] = useState(false);
   const [history, setHistory] = useState<FloorHistoryState<FloorPlanState>>(() => createFloorHistory(cloneDefaultState()));
+  // V1.4A.2.1：Resize 锚边三态选择（不提前修改 Plan，只保存 Pending Request）。
+  const [pendingResize, setPendingResize] = useState<{ slabId: string; width?: number; height?: number } | null>(null);
   const stateRef = useRef<FloorPlanState>(cloneDefaultState());
   stateRef.current = state;
   const profile = useFloorWorkspaceProfile();
@@ -756,29 +778,22 @@ export default function FloorRebarCalculator() {
 
   const updateSlab = (patch: Partial<FloorSlab>) => {
     if (!selectedSlab) return;
-    // V1.4A.2：V3 尺寸/位置修改是正式事务（Resize 保持 Connections；位置走 Physical Move + 自动 Detach）。
+    // V1.4A.2.1：V3 尺寸/位置修改是正式事务（Resize 保持 Connections；位置走 Physical Move + 自动 Detach）。
     if (state.coordinateModel === "clear-space-physical-v2") {
       if (patch.width !== undefined || patch.height !== undefined) {
-        let result = applyFloorSlabResizeV3(state, {
+        const result = applyFloorSlabResizeV3(state, {
           slabId: selectedSlab.id,
           width: patch.width,
           height: patch.height,
         });
-        if (!result.ok && result.code === "resize-anchor-required") {
-          const horizontal = patch.width !== undefined;
-          const fixedStart = window.confirm(
-            `该房间${horizontal ? "东西" : "南北"}两侧都有连接，请选择固定边：\n确定 = 固定${horizontal ? "西" : "南"}边，取消 = 固定${horizontal ? "东" : "北"}边。`,
-          );
-          result = applyFloorSlabResizeV3(state, {
-            slabId: selectedSlab.id,
-            width: patch.width,
-            height: patch.height,
-            anchorX: horizontal ? (fixedStart ? "west" : "east") : "auto",
-            anchorY: horizontal ? "auto" : (fixedStart ? "south" : "north"),
-          });
+        if (result.ok) {
+          applyStateWithHistory(result.plan);
+        } else if (result.code === "resize-anchor-required") {
+          // 三态选择 Modal：不提前修改 Plan。
+          setPendingResize({ slabId: selectedSlab.id, width: patch.width, height: patch.height });
+        } else {
+          window.alert(result.message);
         }
-        if (result.ok) applyStateWithHistory(result.plan);
-        else window.alert(result.message);
         return;
       }
       if (patch.x !== undefined || patch.y !== undefined) {
@@ -797,6 +812,34 @@ export default function FloorRebarCalculator() {
       slabs: state.slabs.map((slab) => slab.id === selectedSlab.id ? { ...slab, ...patch } : slab),
     }).plan;
     applyStateWithHistory(next);
+  };
+
+  /** Resize 锚边选择：用户选定后才会调用事务；取消则 Plan 完全不变。 */
+  const commitPendingResize = (anchorX: FloorSlabResizeAnchorX, anchorY: FloorSlabResizeAnchorY) => {
+    const pending = pendingResize;
+    setPendingResize(null);
+    if (!pending) return;
+    const result = applyFloorSlabResizeV3(state, {
+      slabId: pending.slabId,
+      width: pending.width,
+      height: pending.height,
+      anchorX,
+      anchorY,
+    });
+    if (result.ok) applyStateWithHistory(result.plan);
+    else window.alert(result.message);
+  };
+  const cancelPendingResize = () => setPendingResize(null);
+
+  /** V1.4A.2.1：墙厚修改是正式拓扑事务（一个 History 步骤，Openings 跟随）。 */
+  const updateInnerWallThickness = (value: number) => {
+    if (state.coordinateModel === "clear-space-physical-v2") {
+      const result = applyFloorInnerWallThicknessV3(state, value);
+      if (result.ok) applyStateWithHistory(result.plan);
+      else window.alert(result.message);
+      return;
+    }
+    setState((current) => ({ ...current, innerWallThickness: value }));
   };
 
   const updateOpening = (patch: Partial<FloorOpening>) => {
@@ -954,6 +997,21 @@ export default function FloorRebarCalculator() {
   };
 
   const setSegmentSupport = (segment: FloorAtomicBoundarySegment, target: FloorSupportRuleTarget, support: FloorSupportRule["support"]) => {
+    // V1.4A.2.1：V3 shared-slab 的支承切换是正式拓扑事务（Connection Gap 变化 → solve + materialize）。
+    if (state.coordinateModel === "clear-space-physical-v2"
+      && segment.geometryKind === "shared-slab"
+      && (support === "inner-wall" || support === "continuous")
+      && segment.id.startsWith("atomic:v3:")) {
+      const connectionId = segment.id.slice("atomic:v3:".length);
+      const connection = (state.connections ?? []).find((item) => item.id === connectionId);
+      if (connection) {
+        const result = applyFloorConnectionSupportV3(state, { connectionId: connection.id, support });
+        if (result.ok) applyStateWithHistory(result.plan);
+        else window.alert(result.message);
+        setSelectedBoundaryId(segment.id);
+        return;
+      }
+    }
     const key = targetKey(target);
     const next = {
       ...state,
@@ -1405,8 +1463,8 @@ export default function FloorRebarCalculator() {
 
   if (!hydrated) return <main className="mx-auto min-h-[60vh] max-w-7xl px-4 py-10 text-sm text-slate-500">正在迁移并恢复整层几何草稿…</main>;
 
-  const field = (key: string, label: string, value: number, onChange: (value: number) => void, min?: number, max?: number) => (
-    <DraftNumberField key={`${inputRevision}:${key}`} fieldKey={key} label={label} value={value} onChange={onChange} onValidityChange={setDraftValidity} min={min} max={max} />
+  const field = (key: string, label: string, value: number, onChange: (value: number) => void, min?: number, max?: number, commitMode: "live" | "blur-enter" = "live") => (
+    <DraftNumberField key={`${inputRevision}:${key}`} fieldKey={key} label={label} value={value} onChange={onChange} onValidityChange={setDraftValidity} min={min} max={max} commitMode={commitMode} />
   );
   const selectedThroughPath = selectedThroughPathId
     ? topState.throughPaths.find((path) => path.id === selectedThroughPathId) ?? null
@@ -1461,7 +1519,7 @@ export default function FloorRebarCalculator() {
           <div className="flex items-center gap-2 border-b border-slate-200 pb-2"><Grid2X2 size={17} className="text-blue-600" /><h3 className="text-sm font-semibold text-slate-900">板区属性</h3></div>
           <label className="block"><span className="mb-1.5 block text-xs font-medium text-slate-600">板区名称</span><input value={selectedSlab.name} onChange={(event) => updateSlab({ name: event.target.value })} className="h-10 w-full rounded-lg border border-slate-300 px-3 text-sm" /></label>
           <label className="block"><span className="mb-1.5 block text-xs font-medium text-slate-600">板区类型</span><select value={selectedSlab.type} onChange={(event) => updateSlab({ type: event.target.value as FloorSlabType })} className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm">{SLAB_TYPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-          <div className="grid grid-cols-2 gap-3">{field(`${selectedSlab.id}:x`, "西南角 X", selectedSlab.x, (value) => updateSlab({ x: value }))}{field(`${selectedSlab.id}:y`, "西南角 Y", selectedSlab.y, (value) => updateSlab({ y: value }))}{field(`${selectedSlab.id}:w`, "东西向净尺寸", selectedSlab.width, (value) => updateSlab({ width: value }), 1)}{field(`${selectedSlab.id}:h`, "南北向净尺寸", selectedSlab.height, (value) => updateSlab({ height: value }), 1)}</div>
+          <div className="grid grid-cols-2 gap-3">{field(`${selectedSlab.id}:x`, "西南角 X", selectedSlab.x, (value) => updateSlab({ x: value }), undefined, undefined, state.coordinateModel === "clear-space-physical-v2" ? "blur-enter" : "live")}{field(`${selectedSlab.id}:y`, "西南角 Y", selectedSlab.y, (value) => updateSlab({ y: value }), undefined, undefined, state.coordinateModel === "clear-space-physical-v2" ? "blur-enter" : "live")}{field(`${selectedSlab.id}:w`, "东西向净尺寸", selectedSlab.width, (value) => updateSlab({ width: value }), 1, undefined, state.coordinateModel === "clear-space-physical-v2" ? "blur-enter" : "live")}{field(`${selectedSlab.id}:h`, "南北向净尺寸", selectedSlab.height, (value) => updateSlab({ height: value }), 1, undefined, state.coordinateModel === "clear-space-physical-v2" ? "blur-enter" : "live")}</div>
           <section className="border-t border-slate-200 pt-3"><h3 className="text-xs font-bold text-slate-700">位置关系</h3><div className="mt-2 space-y-1">{sideRelations.map((relation) => <div key={relation.side} className="flex min-h-10 items-center justify-between gap-2 border-b border-slate-100 px-1 text-xs"><span><strong>{relation.side === "west" ? "西侧" : relation.side === "east" ? "东侧" : relation.side === "south" ? "南侧" : "北侧"}</strong> · {relation.label}</span>{relation.otherSlabId && <button type="button" onClick={() => { changeEditMode("dock"); setDockSourceId(selectedSlab.id); setDockTargetId(relation.otherSlabId); }} className="min-h-9 rounded-lg border border-orange-300 px-2 font-semibold text-orange-700">拼接</button>}</div>)}</div></section>
         </section>
       ) : selectedOpening ? (
@@ -1474,8 +1532,8 @@ export default function FloorRebarCalculator() {
       ) : null}
       <section className="space-y-3 border-t border-slate-200 pt-4">
         <h3 className="text-sm font-semibold text-slate-900">楼层设置</h3>
-        <p className="rounded-lg bg-slate-50 px-2 py-1.5 text-[11px] leading-4 text-slate-500">板区尺寸为净尺寸；坐标为净跨拓扑坐标，墙厚由平面物理布局自动展开。</p>
-        {field("inner-wall", "内墙厚度", state.innerWallThickness, (value) => setState((current) => ({ ...current, innerWallThickness: value })), 1)}
+        <p className="rounded-lg bg-slate-50 px-2 py-1.5 text-[11px] leading-4 text-slate-500" data-testid="floor-coordinate-model-copy">{state.coordinateModel === "clear-space-physical-v2" ? "板区尺寸为房间净掏空尺寸；位置坐标为净空物理坐标；内墙由板区连接关系生成。" : "板区尺寸为净尺寸；当前为旧版净跨拓扑坐标模型，墙厚由物理布局派生。"}</p>
+        {field("inner-wall", "内墙厚度", state.innerWallThickness, updateInnerWallThickness, 1, undefined, "blur-enter")}
         {field("outer-wall", "外墙厚度", state.outerWallThickness, (value) => setState((current) => ({ ...current, outerWallThickness: value })), 1)}
         {field("snap", "自动吸附距离", state.snapDistanceMm, (value) => setState((current) => ({ ...current, snapDistanceMm: value })), 0)}
         {field("overlap-tolerance", "几何对齐容差", state.overlapToleranceMm, (value) => setState((current) => ({ ...current, overlapToleranceMm: value })), 0, 30)}
@@ -1749,6 +1807,34 @@ export default function FloorRebarCalculator() {
       <FloorIssueCenter open={issueCenterOpen} issues={filteredIssueCenterItems} onClose={() => setIssueCenterOpen(false)} onLocate={locateWorkspaceIssue} />
       {newProjectOpen && <FloorNewProjectDialog currentProjectName={projectName} onCancel={() => setNewProjectOpen(false)} onConfirm={handleNewFloorProject} />}
       <FloorImportProjectDialog open={importDialog.open} fileName={importDialog.fileName} project={importDialog.project} errorMessage={importDialog.errorMessage} onCancel={() => setImportDialog({ open: false, fileName: "", project: null, errorMessage: null })} onConfirm={confirmImportProject} onExportCurrent={() => { handleExportFloorProject(); }} />
+      {pendingResize && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/40 p-4" data-testid="resize-anchor-modal" onClick={(event) => { if (event.target === event.currentTarget) cancelPendingResize(); }}>
+          <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl" role="dialog" aria-label="选择固定边">
+            <p className="text-sm font-semibold text-slate-900">该房间两侧都有连接。</p>
+            {pendingResize.width !== undefined && (
+              <p className="mt-1 text-xs leading-5 text-slate-600">修改东西向净宽需要选择固定边。</p>
+            )}
+            {pendingResize.height !== undefined && (
+              <p className="mt-1 text-xs leading-5 text-slate-600">修改南北向净高需要选择固定边。</p>
+            )}
+            <div className="mt-4 space-y-2">
+              {pendingResize.width !== undefined && (
+                <>
+                  <button type="button" onClick={() => commitPendingResize("west", "auto")} className="inline-flex min-h-11 w-full items-center justify-center rounded-xl bg-blue-600 text-sm font-semibold text-white">固定西边</button>
+                  <button type="button" onClick={() => commitPendingResize("east", "auto")} className="inline-flex min-h-11 w-full items-center justify-center rounded-xl bg-blue-600 text-sm font-semibold text-white">固定东边</button>
+                </>
+              )}
+              {pendingResize.height !== undefined && (
+                <>
+                  <button type="button" onClick={() => commitPendingResize("auto", "south")} className="inline-flex min-h-11 w-full items-center justify-center rounded-xl bg-blue-600 text-sm font-semibold text-white">固定南边</button>
+                  <button type="button" onClick={() => commitPendingResize("auto", "north")} className="inline-flex min-h-11 w-full items-center justify-center rounded-xl bg-blue-600 text-sm font-semibold text-white">固定北边</button>
+                </>
+              )}
+              <button type="button" onClick={cancelPendingResize} className="inline-flex min-h-11 w-full items-center justify-center rounded-xl border border-slate-300 bg-white text-sm font-semibold text-slate-700">取消修改</button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

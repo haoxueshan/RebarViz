@@ -20,6 +20,7 @@ import {
   type FloorTopologySolution,
 } from "./floor-topology-solver";
 import { resolveFloorConnectionSupportDetails } from "./floor-topology-support";
+import { validateFloorTopologyMaterialized } from "./floor-topology-editor";
 
 /**
  * Canonical Topology Adapter（V1.4A.1）：V1/V3 正式拓扑唯一 dispatch 点。
@@ -72,6 +73,9 @@ export function findCanonicalFloorComponents(plan: FloorPlanState): string[][] {
 export function validateFloorPlanV3(plan: FloorPlanState): FloorPlanIssue[] {
   const issues: FloorPlanIssue[] = validateFloorPlanBase(plan);
   const solution = solveFloorTopology(plan);
+
+  // Canonical 一致性（只报告，不自动修）：Editor State 必须等于 Solved Physical。
+  issues.push(...validateFloorTopologyMaterialized(plan));
 
   // Connection 引用 / Side Pair / Range：Solver 已是唯一权威（不重复二次推导）。
   solution.issues.forEach((issue) => {
