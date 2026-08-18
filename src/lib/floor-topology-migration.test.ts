@@ -6,8 +6,13 @@ import {
 } from "./__fixtures__/floor-topology-golden-meng";
 import { buildFloorAssembly } from "./floor-assembly";
 import { buildFloorPhysicalLayout } from "./floor-physical-layout";
+import { validateFloorPlanState } from "./floor-topology-adapter";
 import { migrateFloorPlanV2ToV3 } from "./floor-topology-migration";
-import { solveFloorTopology } from "./floor-topology-solver";
+import {
+  buildFloorTopologyBoundarySegmentsV3,
+  buildFloorTopologyExteriorRanges,
+  solveFloorTopology,
+} from "./floor-topology-solver";
 
 describe("Floor Topology V1.4A Golden Fixture：孟", () => {
   it("Golden 1：B 净宽 + 内墙 + D 净宽 = K 净宽（业务语义等式）", () => {
@@ -183,5 +188,34 @@ describe("Floor Topology V1.4A Golden Fixture：孟", () => {
     expect(dcWall?.thicknessMm).toBe(240);
     expect(dcWall?.x).toBe(5834);
     expect(dcWall?.width).toBe(240);
+  });
+
+  it("Golden 15：V3 Validation 无 D-C near miss；迁移结果通过完整 Solver Validation", () => {
+    const { plan } = migrateFloorPlanV2ToV3(goldenMengLegacyV2Plan());
+    const issues = validateFloorPlanState(plan);
+    expect(issues.map((issue) => issue.code)).not.toContain("slab-edge-near-miss");
+    expect(issues.filter((issue) => issue.level === "error")).toEqual([]);
+    // 迁移产生的每条 Connection 都通过 Solver Validation（含 solved-slab-overlap / 区间冲突）。
+    const solution = solveFloorTopology(plan);
+    expect(solution.issues.filter((issue) => issue.level === "error")).toEqual([]);
+    expect(solution.solvedConnections.every((solved) => solved.valid && solved.lengthMm > 0)).toBe(true);
+  });
+
+  it("Golden 16：局部 Connection Side 未被覆盖区间生成外墙（Atomic 与 Physical 同源）", () => {
+    const { plan } = migrateFloorPlanV2ToV3(goldenMengLegacyV2Plan());
+    const solution = solveFloorTopology(plan);
+    // K east 高 6090，被 K-C / K-L 部分覆盖，未被覆盖的区间必须仍有外墙。
+    const kEastExterior = buildFloorTopologyExteriorRanges(plan, solution)
+      .filter((range) => range.slabId === "meng-k" && range.side === "east");
+    expect(kEastExterior.length).toBeGreaterThan(0);
+    const coveredOnEast = 6090 - kEastExterior.reduce((sum, range) => sum + (range.endMm - range.startMm), 0);
+    expect(coveredOnEast).toBeGreaterThan(0);
+    expect(coveredOnEast).toBeLessThan(6090);
+    const atomicExterior = buildFloorTopologyBoundarySegmentsV3(plan, solution)
+      .filter((segment) => segment.geometryKind === "building-exterior" && segment.slabIds.includes("meng-k") && segment.id.includes(":east:"));
+    const layout = buildFloorPhysicalLayout(plan);
+    const physicalExterior = layout.walls.filter((wall) =>
+      wall.kind === "outer-wall" && wall.slabIds.includes("meng-k") && wall.side === "east");
+    expect(atomicExterior.length).toBe(physicalExterior.length);
   });
 });

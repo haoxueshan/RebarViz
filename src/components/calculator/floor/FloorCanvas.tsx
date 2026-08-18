@@ -3,8 +3,6 @@
 import { TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  buildFloorAtomicBoundarySegments,
-  buildFloorDisplayBoundarySegments,
   findFloorSlabNearMisses,
   type FloorAtomicBoundarySegment,
   type FloorBoundarySegment,
@@ -13,6 +11,10 @@ import {
   type FloorResolvedSupport,
   type FloorSlab,
 } from "@/lib/floor-plan";
+import {
+  buildCanonicalFloorAtomicBoundarySegments,
+  buildCanonicalFloorDisplayBoundarySegments,
+} from "@/lib/floor-topology-adapter";
 import {
   chooseFloorGridStep,
   floorOpeningTouchesFloor,
@@ -26,13 +28,7 @@ import {
   type FloorCanvasViewport,
   type FloorCanvasViewportBounds,
 } from "@/lib/floor-canvas-viewport";
-import {
-  buildFloorPhysicalLayout,
-  floorPhysicalSharedBand,
-  mapFloorNetAxisPoint,
-  type FloorPhysicalLayout,
-} from "@/lib/floor-physical-layout";
-import { buildFloorTopologyBoundarySegmentsV3 } from "@/lib/floor-topology-solver";
+import { buildFloorPhysicalLayout, floorPhysicalSharedBand, mapFloorNetAxisPoint, type FloorPhysicalLayout } from "@/lib/floor-physical-layout";
 import {
   addFloorCanvasGesturePointer,
   createFloorCanvasGesture,
@@ -334,25 +330,16 @@ export function FloorCanvas({
     [dockPreview, dockPreviewPlan],
   );
   const bounds = useMemo(() => worldBounds, [worldBounds]);
-  // Plan V3（clear-space-physical-v2）：边界段来自 Topology Solver（Connection + Solved Overlap）；
-  // net-layout-v1 继续使用 Legacy Atomic（Rect Touch）。
-  const v3TopologySegments = useMemo(
-    () => state.coordinateModel === "clear-space-physical-v2" ? buildFloorTopologyBoundarySegmentsV3(state) : null,
-    [state],
-  );
-  const displayBoundaries = useMemo(
-    () => v3TopologySegments
-      ? v3TopologySegments.map((segment) => ({ ...segment, id: `display:${segment.id}`, type: segment.support, atomicIds: [segment.id] }))
-      : buildFloorDisplayBoundarySegments(state),
-    [state, v3TopologySegments],
-  );
-  const atomicBoundaries = useMemo(
-    () => v3TopologySegments ?? buildFloorAtomicBoundarySegments(state),
-    [state, v3TopologySegments],
-  );
+  // Canonical Topology Adapter（V1.4A.1）：Canvas 只消费统一 dispatch，不再自己判断坐标模型。
+  const atomicBoundaries = useMemo(() => buildCanonicalFloorAtomicBoundarySegments(state), [state]);
+  const displayBoundaries = useMemo(() => buildCanonicalFloorDisplayBoundarySegments(state), [state]);
   const atomicById = useMemo(() => new Map(atomicBoundaries.map((segment) => [segment.id, segment])), [atomicBoundaries]);
   const selectedAtomicSegment = selectedBoundaryId ? atomicById.get(selectedBoundaryId) ?? null : null;
-  const nearMisses = useMemo(() => findFloorSlabNearMisses(state), [state]);
+  // Near Miss 是 Legacy Rect Touch 概念：V3 不再显示/校验。
+  const nearMisses = useMemo(
+    () => (state.coordinateModel === "net-layout-v1" ? findFloorSlabNearMisses(state) : []),
+    [state],
+  );
   const uncoveredOpenings = useMemo(() => state.openings.filter((opening) => !floorOpeningTouchesFloor(opening, state)), [state]);
   const rebarCalculation = topCalculation ?? bottomCalculation;
   const rebarLines = useMemo(

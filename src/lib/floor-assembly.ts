@@ -1,15 +1,14 @@
 import {
-  buildFloorAtomicBoundarySegments,
   type FloorPlanState,
   type FloorSlab,
 } from "./floor-plan";
-import type { FloorEdgeConnection } from "./floor-topology";
+import { buildCanonicalFloorSlabAdjacency } from "./floor-topology-adapter";
 
 /**
  * Floor Assembly V1.3.1（纯派生分析层）：
- * 只分析整层板块的 Net 拓扑连接关系，不做任何 Mutation。
+ * 只分析整层板块的拓扑连接关系，不做任何 Mutation。
  *
- * - Connectivity 唯一来源：buildFloorAtomicBoundarySegments 的 shared-slab 段；
+ * - Connectivity 唯一来源：Canonical Adapter 的 shared-slab 邻接（V1 Rect Touch / V3 Connection）；
  * - inner-wall / continuous 都属于同一建筑组件；
  * - Opening 不参与组件划分；
  * - Physical Rect 接触、屏幕距离都不能当作连接依据；
@@ -71,21 +70,11 @@ function isBetterPrimary(
 export function buildFloorAssembly(plan: FloorPlanState): FloorAssembly {
   const slabById = new Map(plan.slabs.map((slab) => [slab.id, slab]));
   const adjacency = new Map<string, Set<string>>(plan.slabs.map((slab) => [slab.id, new Set<string>()]));
-  // Plan V3：Connectivity 唯一来源是正式 FloorEdgeConnection（240 Gap 仍属于同一组件）。
-  if (plan.coordinateModel === "clear-space-physical-v2") {
-    for (const connection of (plan.connections ?? []) as FloorEdgeConnection[]) {
-      adjacency.get(connection.a.slabId)?.add(connection.b.slabId);
-      adjacency.get(connection.b.slabId)?.add(connection.a.slabId);
-    }
-  } else {
-    buildFloorAtomicBoundarySegments(plan)
-      .filter((segment) => segment.geometryKind === "shared-slab" && segment.slabIds.length >= 2)
-      .forEach((segment) => {
-        const [left, right] = segment.slabIds;
-        adjacency.get(left)?.add(right);
-        adjacency.get(right)?.add(left);
-      });
-  }
+  // Canonical Adjacency：V1 走 Legacy Rect Touch，V3 走 FloorEdgeConnection（240 Gap 仍属同一组件）。
+  buildCanonicalFloorSlabAdjacency(plan).forEach(({ slabIds: [left, right] }) => {
+    adjacency.get(left)?.add(right);
+    adjacency.get(right)?.add(left);
+  });
 
   const visited = new Set<string>();
   const raw: Omit<FloorAssemblyComponent, "isPrimary">[] = [];

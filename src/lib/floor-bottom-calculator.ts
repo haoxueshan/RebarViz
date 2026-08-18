@@ -1,11 +1,11 @@
 import {
   buildFloorAtomicBoundarySegments,
   buildFloorTopologyCells,
-  validateFloorPlanV2,
   type FloorAtomicBoundarySegment,
   type FloorPlanState,
   type FloorTopologyCell,
 } from "./floor-plan";
+import { validateFloorPlanState } from "./floor-topology-adapter";
 import {
   buildFloorRebarDomains,
   type FloorRebarDomain,
@@ -532,7 +532,22 @@ export function calculateFloorBottomRebar(
 ): FloorBottomCalculation {
   // 正式计算不做“坏值回退”；normalize仅用于存储迁移。否则NaN可能被默认值掩盖。
   const bottom = input;
-  const geometryIssues = validateFloorPlanV2(plan);
+  // V1.4A.1 Safety Guard：V3 模型的 Connection-aware 地筋长度算法尚未完成（V1.4C），
+  // 禁止按 Legacy 拓扑静默生成看似正常但错误的料单。
+  if (plan.coordinateModel === "clear-space-physical-v2") {
+    const errors: FloorBottomIssue[] = [{
+      code: "topology-v3-calculation-not-ready",
+      message: "当前楼层已使用新版墙带拓扑。地筋计算模块尚未完成V1.4连接路径迁移，为防止生成错误料单，已暂停正式计算。",
+    }];
+    const geometryIssues = validateFloorPlanState(plan);
+    const warnings = geometryIssues
+      .filter((issue) => issue.level === "warning")
+      .map(({ code, message, objectIds }) => ({ code, message, objectIds }));
+    const domains = buildFloorBottomRebarDomains(plan);
+    const roleContext = resolveFloorRebarRoleContext(plan, domains, roleState);
+    return emptyCalculation(domains, roleContext.roleDomains, errors, warnings);
+  }
+  const geometryIssues = validateFloorPlanState(plan);
   const warnings: FloorBottomIssue[] = geometryIssues
     .filter((issue) => issue.level === "warning")
     .map(({ code, message, objectIds }) => ({ code, message, objectIds }));

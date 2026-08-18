@@ -1,26 +1,39 @@
 import {
   FLOOR_GEOMETRY_EPSILON_MM,
   type FloorAtomicBoundarySegment,
+  type FloorEdgeSide,
   type FloorPlanState,
   type FloorSlab,
   type FloorSupportRuleTarget,
 } from "./floor-plan";
 import {
   floorConnectionClearGapMm,
-  resolveFloorConnectionSupport,
+  subtractFloorRanges,
   type FloorEdgeConnection,
+  type FloorRange,
 } from "./floor-topology";
+import { resolveFloorConnectionSupportDetails } from "./floor-topology-support";
 
 /**
- * Floor Topology V1.4A Constraint Solver：X Axis / Y Axis 分离求解。
+ * Floor Topology V1.4A.1 Constraint Solver：X Axis / Y Axis 分离求解。
  *
  * - Connection 产生法向墙厚约束（inner-wall → gap=墙厚；continuous → gap=0）。
  * - tangentConstraint（lock-start）只对 Full-Full 连接产生切向等式。
  * - Anchor 保持建筑原始参考位置（sourceX/sourceY 最小 + 稳定 tie-break）。
  * - Constraint Cycle 闭合误差不平均分摊：报告 topology-constraint-conflict。
- * - Wall Rect 允许在 T/L/X 节点重叠；Slab Clear Rect 禁止面积重叠。
+ * - Support / Gap 求解使用有限阶段迭代（≤3 轮，禁止无限递归）：
+ *   Phase A：以当前 Gap 解全轴（切向+法向）→ 临时位置；
+ *   Phase B：由 Solved 位置计算每条连接的实际 Overlap Range（双端点 Range 求交）；
+ *   Phase C：以实际 Side + Range 解析 Support（精确匹配）；
+ *   Phase D：以新 Support Gap 重解法向轴；
+ *   Phase E：重算最终 Overlap，Support 集合不再变化即收敛。
+ * - 最终有效墙段 = Natural Solved Overlap ∩ A Endpoint Range ∩ B Endpoint Range。
+ * - Wall Rect 允许在 T/L/X 节点重叠；Solved Clear Slab 禁止面积重叠（solved-slab-overlap）。
+ * - 外墙按 Side 区间减法生成：未被有效 Connection 覆盖的区间才生成 building-exterior。
  */
 const EPSILON = FLOOR_GEOMETRY_EPSILON_MM;
+const MAX_SUPPORT_PASSES = 3;
+const SIDES: readonly FloorEdgeSide[] = ["west", "east", "south", "north"];
 
 export type FloorSolvedSlab = {
   slabId: string;
@@ -48,6 +61,27 @@ export type FloorSolvedWall = {
   slabIds: [string, string];
 };
 
+/** V1.4A.1：Solved Connection Geometry（唯一负责实际 Range 的派生类型，不写入 Project）。 */
+export type FloorSolvedConnection = {
+  connectionId: string;
+  slabIds: [string, string];
+  orientation: "vertical" | "horizontal";
+  sideA: FloorEdgeSide;
+  sideB: FloorEdgeSide;
+  /** 最终有效世界切向区间。 */
+  rangeStartMm: number;
+  rangeEndMm: number;
+  lengthMm: number;
+  /** 相对各端 Slab 切向起点的 offset。 */
+  aOffsetStartMm: number;
+  aOffsetEndMm: number;
+  bOffsetStartMm: number;
+  bOffsetEndMm: number;
+  support: "inner-wall" | "continuous";
+  gapMm: number;
+  valid: boolean;
+};
+
 export type FloorTopologyComponent = {
   id: string;
   slabIds: string[];
@@ -61,19 +95,36 @@ export type FloorTopologyConstraintIssue = {
     | "connection-no-overlap"
     | "connection-invalid-side-pair"
     | "connection-range-invalid"
-    | "connection-overlap-conflict";
+    | "connection-overlap-conflict"
+    | "solved-slab-overlap"
+    | "support-rule-conflict";
   message: string;
   slabIds?: string[];
   connectionIds?: string[];
+  /** 冲突规则 ID 列表（support-rule-conflict）。 */
+  objectIds?: string[];
   errorMm?: number;
+  /** solved-slab-overlap 明细。 */
+  overlapWidthMm?: number;
+  overlapHeightMm?: number;
+  overlapAreaMm2?: number;
 };
 
 export type FloorTopologySolution = {
   slabs: FloorSolvedSlab[];
+  solvedConnections: FloorSolvedConnection[];
   walls: FloorSolvedWall[];
   components: FloorTopologyComponent[];
   issues: FloorTopologyConstraintIssue[];
   bounds: { minX: number; minY: number; maxX: number; maxY: number };
+};
+
+export type FloorTopologyExteriorRange = {
+  slabId: string;
+  side: FloorEdgeSide;
+  startMm: number;
+  endMm: number;
+  orientation: "vertical" | "horizontal";
 };
 
 type AxisEdge = {
@@ -88,6 +139,10 @@ function slabById(plan: FloorPlanState): Map<string, FloorSlab> {
 
 function isVerticalConnection(connection: FloorEdgeConnection): boolean {
   return connection.a.side === "west" || connection.a.side === "east";
+}
+
+function sideLength(slab: FloorSlab, side: FloorEdgeSide): number {
+  return side === "west" || side === "east" ? slab.height : slab.width;
 }
 
 /** 法向方程：b = a.position + delta（delta 只含尺寸与墙厚，与源坐标无关）。 */
@@ -116,9 +171,9 @@ function solveAxisGraph(
   connections: readonly FloorEdgeConnection[],
   slabs: Map<string, FloorSlab>,
   axis: "x" | "y",
-  positions: Map<string, number>,
-  issues: FloorTopologyConstraintIssue[],
-): void {
+  gapOf: (connection: FloorEdgeConnection) => number,
+): { positions: Map<string, number>; issues: FloorTopologyConstraintIssue[] } {
+  const issues: FloorTopologyConstraintIssue[] = [];
   const graph = new Map<string, AxisEdge[]>(plan.slabs.map((slab) => [slab.id, []]));
   const addEdge = (fromId: string, edge: AxisEdge) => {
     graph.get(fromId)?.push(edge);
@@ -127,12 +182,10 @@ function solveAxisGraph(
     const a = slabs.get(connection.a.slabId);
     const b = slabs.get(connection.b.slabId);
     if (!a || !b) continue;
-    const support = resolveFloorConnectionSupport(connection, plan);
-    const gapMm = floorConnectionClearGapMm(connection, plan, support);
     const vertical = isVerticalConnection(connection);
     const normalAxis = vertical ? "x" : "y";
     if (normalAxis === axis) {
-      const delta = normalDelta(connection, a, b, gapMm);
+      const delta = normalDelta(connection, a, b, gapOf(connection));
       addEdge(a.id, { other: b.id, delta, connectionId: connection.id });
       addEdge(b.id, { other: a.id, delta: -delta, connectionId: connection.id });
     }
@@ -146,6 +199,7 @@ function solveAxisGraph(
     }
   }
   // 每个连通分量独立 Anchor：原始 source 坐标最小的 Slab（稳定 tie-break）。
+  const positions = new Map<string, number>();
   const visited = new Set<string>();
   for (const startSlab of [...plan.slabs].sort((left, right) =>
     (axis === "x" ? left.x - right.x || left.y - right.y : left.y - right.y || left.x - right.x)
@@ -179,6 +233,7 @@ function solveAxisGraph(
       }
     }
   }
+  return { positions, issues };
 }
 
 function sideFace(slab: FloorSolvedSlab, side: "west" | "east" | "south" | "north"): number {
@@ -199,11 +254,83 @@ function tangentialRange(
   return { start: Math.max(a.x, b.x), end: Math.min(a.x + a.width, b.x + b.width) };
 }
 
+/**
+ * 由 Solved 位置计算每条连接的实际 Overlap：
+ * Natural Solved Overlap ∩ A Endpoint Range ∩ B Endpoint Range（世界切向坐标求交）。
+ */
+function computeSolvedConnections(
+  plan: FloorPlanState,
+  connections: readonly FloorEdgeConnection[],
+  positions: { x: Map<string, number>; y: Map<string, number> },
+): { solved: FloorSolvedConnection[]; noOverlap: FloorTopologyConstraintIssue[] } {
+  const solvedSlabs = new Map<string, FloorSolvedSlab>(plan.slabs.map((slab) => [slab.id, {
+    slabId: slab.id,
+    sourceX: slab.x,
+    sourceY: slab.y,
+    x: positions.x.get(slab.id) ?? slab.x,
+    y: positions.y.get(slab.id) ?? slab.y,
+    width: slab.width,
+    height: slab.height,
+    offsetX: (positions.x.get(slab.id) ?? slab.x) - slab.x,
+    offsetY: (positions.y.get(slab.id) ?? slab.y) - slab.y,
+  }]));
+  const solved: FloorSolvedConnection[] = [];
+  const noOverlap: FloorTopologyConstraintIssue[] = [];
+  for (const connection of connections) {
+    const a = solvedSlabs.get(connection.a.slabId);
+    const b = solvedSlabs.get(connection.b.slabId);
+    if (!a || !b) continue;
+    const vertical = isVerticalConnection(connection);
+    const natural = tangentialRange(vertical, a, b);
+    let start = natural.start;
+    let end = natural.end;
+    const intersect = (slab: FloorSolvedSlab, range: FloorEdgeConnection["a"]["range"]) => {
+      if (range.mode !== "offset") return;
+      const base = vertical ? slab.y : slab.x;
+      start = Math.max(start, base + range.startMm);
+      end = Math.min(end, base + range.endMm);
+    };
+    intersect(a, connection.a.range);
+    intersect(b, connection.b.range);
+    const lengthMm = end - start;
+    const valid = lengthMm > EPSILON;
+    if (!valid) {
+      noOverlap.push({
+        level: "error",
+        code: "connection-no-overlap",
+        message: "连接共享长度为0：端点区间无交集或角点接触不能形成正式墙。",
+        slabIds: [a.slabId, b.slabId],
+        connectionIds: [connection.id],
+      });
+    }
+    const baseA = vertical ? a.y : a.x;
+    const baseB = vertical ? b.y : b.x;
+    solved.push({
+      connectionId: connection.id,
+      slabIds: [a.slabId, b.slabId] as [string, string],
+      orientation: vertical ? "vertical" : "horizontal",
+      sideA: connection.a.side,
+      sideB: connection.b.side,
+      rangeStartMm: start,
+      rangeEndMm: end,
+      lengthMm: Math.max(lengthMm, 0),
+      aOffsetStartMm: start - baseA,
+      aOffsetEndMm: end - baseA,
+      bOffsetStartMm: start - baseB,
+      bOffsetEndMm: end - baseB,
+      support: "inner-wall",
+      gapMm: 0,
+      valid,
+    });
+  }
+  return { solved, noOverlap };
+}
+
 export function solveFloorTopology(plan: FloorPlanState): FloorTopologySolution {
   const issues: FloorTopologyConstraintIssue[] = [];
   const slabs = slabById(plan);
   const connections = plan.connections ?? [];
-  // 无效 side pair 先报告并从求解中排除。
+  // 无效 side pair / 未知引用 / 非法 offset range 先报告并从求解中排除。
   const validConnections: FloorEdgeConnection[] = [];
   for (const connection of connections) {
     const a = slabs.get(connection.a.slabId);
@@ -212,91 +339,191 @@ export function solveFloorTopology(plan: FloorPlanState): FloorTopologySolution 
       issues.push({ level: "error", code: "connection-invalid-side-pair", message: "连接引用了不存在的板区。", connectionIds: [connection.id] });
       continue;
     }
-    const valid = (connection.a.side === "west" && connection.b.side === "east")
+    const validPair = (connection.a.side === "west" && connection.b.side === "east")
       || (connection.a.side === "east" && connection.b.side === "west")
       || (connection.a.side === "south" && connection.b.side === "north")
       || (connection.a.side === "north" && connection.b.side === "south");
-    if (!valid) {
+    if (!validPair) {
       issues.push({ level: "error", code: "connection-invalid-side-pair", message: "连接边组合非法：只允许平行对向边。", slabIds: [a.id, b.id], connectionIds: [connection.id] });
       continue;
     }
+    // Offset Range 必须在 Side 长度内（0 <= start < end <= sideLength），不静默 Clamp。
+    let rangeValid = true;
+    for (const endpoint of [connection.a, connection.b]) {
+      const slab = endpoint.slabId === connection.a.slabId ? a : b;
+      if (endpoint.range.mode !== "offset") continue;
+      const length = sideLength(slab, endpoint.side);
+      if (!Number.isFinite(endpoint.range.startMm) || !Number.isFinite(endpoint.range.endMm)
+        || endpoint.range.startMm < -EPSILON || endpoint.range.startMm >= endpoint.range.endMm
+        || endpoint.range.endMm > length + EPSILON) {
+        issues.push({
+          level: "error",
+          code: "connection-range-invalid",
+          message: `连接“${connection.id}”的端点范围无效：必须位于目标边长度内且起点小于终点。`,
+          slabIds: [endpoint.slabId],
+          connectionIds: [connection.id],
+        });
+        rangeValid = false;
+      }
+    }
+    if (!rangeValid) continue;
     validConnections.push(connection);
   }
-  const xPositions = new Map<string, number>();
-  const yPositions = new Map<string, number>();
-  solveAxisGraph(plan, validConnections, slabs, "x", xPositions, issues);
-  solveAxisGraph(plan, validConnections, slabs, "y", yPositions, issues);
+
+  // 有限阶段迭代：Gap 由 Support 决定，Support 由实际 Range 决定（≤3 轮，禁止无限递归）。
+  const connectionById = new Map(validConnections.map((connection) => [connection.id, connection]));
+  const supportByConnection = new Map<string, "inner-wall" | "continuous">();
+  const matchingRuleIdsByConnection = new Map<string, string[]>();
+  const conflictingSupportsByConnection = new Map<string, string[]>();
+  let axisConflicts: FloorTopologyConstraintIssue[] = [];
+  let noOverlapIssues: FloorTopologyConstraintIssue[] = [];
+  let solvedConnections: FloorSolvedConnection[] = [];
+  let positions = { x: new Map<string, number>(), y: new Map<string, number>() };
+
+  for (let pass = 0; pass < MAX_SUPPORT_PASSES; pass += 1) {
+    const gapOf = (connection: FloorEdgeConnection) =>
+      floorConnectionClearGapMm(connection, plan, supportByConnection.get(connection.id) ?? "inner-wall");
+    const xResult = solveAxisGraph(plan, validConnections, slabs, "x", gapOf);
+    const yResult = solveAxisGraph(plan, validConnections, slabs, "y", gapOf);
+    positions = { x: xResult.positions, y: yResult.positions };
+    axisConflicts = [...xResult.issues, ...yResult.issues];
+    const computed = computeSolvedConnections(plan, validConnections, positions);
+    solvedConnections = computed.solved;
+    noOverlapIssues = computed.noOverlap;
+
+    const nextSupport = new Map<string, "inner-wall" | "continuous">();
+    const nextMatching = new Map<string, string[]>();
+    const nextConflicting = new Map<string, string[]>();
+    let changed = false;
+    for (const solved of solvedConnections) {
+      if (!solved.valid) continue;
+      const connection = connectionById.get(solved.connectionId);
+      if (!connection) continue;
+      const details = resolveFloorConnectionSupportDetails(
+        connection,
+        plan,
+        { start: solved.rangeStartMm, end: solved.rangeEndMm },
+        { start: solved.rangeStartMm, end: solved.rangeEndMm },
+      );
+      nextSupport.set(solved.connectionId, details.support);
+      nextMatching.set(solved.connectionId, details.matchingRuleIds);
+      nextConflicting.set(solved.connectionId, details.conflictingSupports);
+      if (supportByConnection.get(solved.connectionId) !== details.support) changed = true;
+    }
+    supportByConnection.clear();
+    nextSupport.forEach((support, id) => supportByConnection.set(id, support));
+    matchingRuleIdsByConnection.clear();
+    nextMatching.forEach((ruleIds, id) => matchingRuleIdsByConnection.set(id, ruleIds));
+    conflictingSupportsByConnection.clear();
+    nextConflicting.forEach((supports, id) => conflictingSupportsByConnection.set(id, supports));
+    if (!changed) break;
+  }
+
+  // 最终 Support / Gap 写回 Solved Connection。
+  const finalSolvedConnections: FloorSolvedConnection[] = solvedConnections.map((solved) => {
+    if (!solved.valid) return solved;
+    const connection = connectionById.get(solved.connectionId);
+    const support = connection
+      ? (supportByConnection.get(solved.connectionId) ?? "inner-wall")
+      : "inner-wall";
+    return {
+      ...solved,
+      support,
+      gapMm: connection ? floorConnectionClearGapMm(connection, plan, support) : 0,
+    };
+  });
 
   const solvedSlabs: FloorSolvedSlab[] = plan.slabs.map((slab) => ({
     slabId: slab.id,
     sourceX: slab.x,
     sourceY: slab.y,
-    x: xPositions.get(slab.id) ?? slab.x,
-    y: yPositions.get(slab.id) ?? slab.y,
+    x: positions.x.get(slab.id) ?? slab.x,
+    y: positions.y.get(slab.id) ?? slab.y,
     width: slab.width,
     height: slab.height,
-    offsetX: (xPositions.get(slab.id) ?? slab.x) - slab.x,
-    offsetY: (yPositions.get(slab.id) ?? slab.y) - slab.y,
+    offsetX: (positions.x.get(slab.id) ?? slab.x) - slab.x,
+    offsetY: (positions.y.get(slab.id) ?? slab.y) - slab.y,
   }));
   const solvedById = new Map(solvedSlabs.map((item) => [item.slabId, item]));
 
-  // Walls：inner-wall 连接的墙带；continuous 不生成墙。
+  // Solved Clear Slab 面积重叠验证（Wall Rect 重叠不算错误，T/L/X 合法）。
+  for (let left = 0; left < solvedSlabs.length; left += 1) {
+    for (let right = left + 1; right < solvedSlabs.length; right += 1) {
+      const a = solvedSlabs[left];
+      const b = solvedSlabs[right];
+      const overlapWidthMm = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+      const overlapHeightMm = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+      if (overlapWidthMm <= EPSILON || overlapHeightMm <= EPSILON) continue;
+      issues.push({
+        level: "error",
+        code: "solved-slab-overlap",
+        message: `板区 ${a.slabId} 与 ${b.slabId} 求解后的净空矩形发生 ${overlapWidthMm.toFixed(1)}×${overlapHeightMm.toFixed(1)}mm 面积重叠，约束链无法形成合法物理布局。`,
+        slabIds: [a.slabId, b.slabId],
+        overlapWidthMm,
+        overlapHeightMm,
+        overlapAreaMm2: overlapWidthMm * overlapHeightMm,
+      });
+    }
+  }
+
+  // 冲突规则（同一实际 Range 同时命中 inner-wall 与 continuous）→ 确定性安全默认 + Validation Error。
+  finalSolvedConnections.forEach((solved) => {
+    if (!solved.valid) return;
+    const conflicting = conflictingSupportsByConnection.get(solved.connectionId) ?? [];
+    if (conflicting.length <= 1) return;
+    issues.push({
+      level: "error",
+      code: "support-rule-conflict",
+      message: "同一连接实际区间同时命中相互冲突的支承规则（inner-wall / continuous），已按安全默认内墙处理，请重新设置。",
+      slabIds: [...solved.slabIds],
+      connectionIds: [solved.connectionId],
+      objectIds: matchingRuleIdsByConnection.get(solved.connectionId) ?? [],
+    });
+  });
+
+  // Walls：inner-wall 连接的实际区间墙带；continuous 不生成墙。
   const walls: FloorSolvedWall[] = [];
-  for (const connection of validConnections) {
-    const support = resolveFloorConnectionSupport(connection, plan);
-    if (support !== "inner-wall") continue;
-    const a = solvedById.get(connection.a.slabId);
-    const b = solvedById.get(connection.b.slabId);
+  for (const solved of finalSolvedConnections) {
+    if (!solved.valid) continue;
+    if (solved.support !== "inner-wall") continue;
+    const a = solvedById.get(solved.slabIds[0]);
+    const b = solvedById.get(solved.slabIds[1]);
     if (!a || !b) continue;
-    const vertical = isVerticalConnection(connection);
-    const faceA = sideFace(a, connection.a.side);
-    const faceB = sideFace(b, connection.b.side);
+    const faceA = sideFace(a, solved.sideA);
+    const faceB = sideFace(b, solved.sideB);
     const wallStart = Math.min(faceA, faceB);
     const wallEnd = Math.max(faceA, faceB);
     const thicknessMm = wallEnd - wallStart;
     if (thicknessMm <= EPSILON) {
-      issues.push({ level: "error", code: "connection-no-overlap", message: "连接墙厚为0：clear gap 未解析。", connectionIds: [connection.id] });
-      continue;
-    }
-    let range = tangentialRange(vertical, a, b);
-    if (connection.a.range.mode === "offset") {
-      const offset = connection.a.range;
-      const base = vertical ? a.y : a.x;
-      range = {
-        start: Math.max(range.start, base + offset.startMm),
-        end: Math.min(range.end, base + offset.endMm),
-      };
-    }
-    if (range.end - range.start <= EPSILON) {
-      issues.push({ level: "error", code: "connection-no-overlap", message: "连接共享长度为0：角点接触不能形成正式墙。", slabIds: [a.slabId, b.slabId], connectionIds: [connection.id] });
+      issues.push({ level: "error", code: "connection-no-overlap", message: "连接墙厚为0：clear gap 未解析。", connectionIds: [solved.connectionId] });
       continue;
     }
     walls.push({
-      id: `solved-wall:${connection.id}`,
-      connectionId: connection.id,
+      id: `solved-wall:${solved.connectionId}`,
+      connectionId: solved.connectionId,
       kind: "inner-wall",
-      orientation: vertical ? "vertical" : "horizontal",
-      x: vertical ? wallStart : range.start,
-      y: vertical ? range.start : wallStart,
-      width: vertical ? thicknessMm : range.end - range.start,
-      height: vertical ? range.end - range.start : thicknessMm,
-      lengthMm: range.end - range.start,
+      orientation: solved.orientation,
+      x: solved.orientation === "vertical" ? wallStart : solved.rangeStartMm,
+      y: solved.orientation === "vertical" ? solved.rangeStartMm : wallStart,
+      width: solved.orientation === "vertical" ? thicknessMm : solved.lengthMm,
+      height: solved.orientation === "vertical" ? solved.lengthMm : thicknessMm,
+      lengthMm: solved.lengthMm,
       thicknessMm,
-      slabIds: [a.slabId, b.slabId] as [string, string],
+      slabIds: solved.slabIds,
     });
   }
 
   // 同一 Slab 同一侧多个连接：Solved 切向范围正长度重叠且指向不同 Slab → 冲突。
-  // 登记每条连接的两侧端点（同一边可连接多个 Slab，PRD 14）。
   const overlapsBySide = new Map<string, Array<{ start: number; end: number; connectionId: string; otherId: string }>>();
-  walls.forEach((wall) => {
-    const connection = connections.find((item) => item.id === wall.connectionId);
-    if (!connection) return;
-    const range = verticalRangeOfWall(wall);
-    for (const endpoint of [connection.a, connection.b]) {
-      const key = `${endpoint.slabId}:${endpoint.side}`;
+  finalSolvedConnections.forEach((solved) => {
+    if (!solved.valid) return;
+    for (const [slabId, side, otherId] of [
+      [solved.slabIds[0], solved.sideA, solved.slabIds[1]],
+      [solved.slabIds[1], solved.sideB, solved.slabIds[0]],
+    ] as Array<[string, FloorEdgeSide, string]>) {
+      const key = `${slabId}:${side}`;
       const list = overlapsBySide.get(key) ?? [];
-      list.push({ ...range, connectionId: connection.id, otherId: endpoint.slabId === connection.a.slabId ? connection.b.slabId : connection.a.slabId });
+      list.push({ start: solved.rangeStartMm, end: solved.rangeEndMm, connectionId: solved.connectionId, otherId });
       overlapsBySide.set(key, list);
     }
   });
@@ -317,11 +544,12 @@ export function solveFloorTopology(plan: FloorPlanState): FloorTopologySolution 
     }
   });
 
-  // Components：Connection 连通性（不含几何接触判断）。
+  // Components：有效 Solved Connection 连通性（不含几何接触判断）。
   const adjacency = new Map<string, Set<string>>(plan.slabs.map((slab) => [slab.id, new Set<string>()]));
-  validConnections.forEach((connection) => {
-    adjacency.get(connection.a.slabId)?.add(connection.b.slabId);
-    adjacency.get(connection.b.slabId)?.add(connection.a.slabId);
+  finalSolvedConnections.forEach((solved) => {
+    if (!solved.valid) return;
+    adjacency.get(solved.slabIds[0])?.add(solved.slabIds[1]);
+    adjacency.get(solved.slabIds[1])?.add(solved.slabIds[0]);
   });
   const seenComponents = new Set<string>();
   const components: FloorTopologyComponent[] = [];
@@ -342,6 +570,8 @@ export function solveFloorTopology(plan: FloorPlanState): FloorTopologySolution 
     components.push({ id: `topology-component:${members.join("|")}`, slabIds: members, slabCount: members.length });
   });
 
+  issues.push(...axisConflicts, ...noOverlapIssues);
+
   const bounds = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
   solvedSlabs.forEach((slab) => {
     bounds.minX = Math.min(bounds.minX, slab.x);
@@ -355,54 +585,112 @@ export function solveFloorTopology(plan: FloorPlanState): FloorTopologySolution 
     bounds.maxX = Math.max(bounds.maxX, wall.x + wall.width);
     bounds.maxY = Math.max(bounds.maxY, wall.y + wall.height);
   });
-  if (!Number.isFinite(bounds.minX)) return {
-    slabs: solvedSlabs,
-    walls,
-    components,
-    issues,
-    bounds: { minX: 0, minY: 0, maxX: 1000, maxY: 1000 },
-  };
+  if (!Number.isFinite(bounds.minX)) {
+    return {
+      slabs: solvedSlabs,
+      solvedConnections: finalSolvedConnections,
+      walls,
+      components,
+      issues,
+      bounds: { minX: 0, minY: 0, maxX: 1000, maxY: 1000 },
+    };
+  }
 
-  return { slabs: solvedSlabs, walls, components, issues, bounds };
+  return { slabs: solvedSlabs, solvedConnections: finalSolvedConnections, walls, components, issues, bounds };
 }
 
-function verticalRangeOfWall(wall: FloorSolvedWall): { start: number; end: number } {
-  return wall.orientation === "vertical"
-    ? { start: wall.y, end: wall.y + wall.height }
-    : { start: wall.x, end: wall.x + wall.width };
+/**
+ * 外墙区间（唯一真值）：每条 Solved Slab Side 的 [0, sideLength] 减去该 Side
+ * 全部有效 Solved Connection 的覆盖区间，剩余区间生成 building-exterior。
+ * Atomic Boundary 与 Physical Layout 必须共用本结果。
+ */
+export function buildFloorTopologyExteriorRanges(
+  plan: FloorPlanState,
+  solution: FloorTopologySolution = solveFloorTopology(plan),
+): FloorTopologyExteriorRange[] {
+  const solvedById = new Map(solution.slabs.map((slab) => [slab.slabId, slab]));
+  const coveredBySide = new Map<string, FloorRange[]>();
+  solution.solvedConnections.forEach((solved) => {
+    if (!solved.valid) return;
+    for (const [slabId, side] of [
+      [solved.slabIds[0], solved.sideA],
+      [solved.slabIds[1], solved.sideB],
+    ] as Array<[string, FloorEdgeSide]>) {
+      const slab = solvedById.get(slabId);
+      if (!slab) continue;
+      const base = solved.orientation === "vertical" ? slab.y : slab.x;
+      const key = `${slabId}:${side}`;
+      const list = coveredBySide.get(key) ?? [];
+      list.push({ start: solved.rangeStartMm - base, end: solved.rangeEndMm - base });
+      coveredBySide.set(key, list);
+    }
+  });
+  const ranges: FloorTopologyExteriorRange[] = [];
+  for (const slab of solution.slabs) {
+    for (const side of SIDES) {
+      const vertical = side === "west" || side === "east";
+      const length = vertical ? slab.height : slab.width;
+      const covered = coveredBySide.get(`${slab.slabId}:${side}`) ?? [];
+      const remaining = subtractFloorRanges({ start: 0, end: length }, covered);
+      for (const range of remaining) {
+        if (range.end - range.start <= EPSILON) continue;
+        ranges.push({
+          slabId: slab.slabId,
+          side,
+          startMm: range.start,
+          endMm: range.end,
+          orientation: vertical ? "vertical" : "horizontal",
+        });
+      }
+    }
+  }
+  return ranges;
 }
 
-function targetForConnection(
+function offsetTarget(
   slabId: string,
-  side: "west" | "east" | "south" | "north",
-  range: FloorEdgeConnection["a"]["range"],
+  side: FloorEdgeSide,
+  startMm: number,
+  endMm: number,
+  sideLengthMm: number,
 ): FloorSupportRuleTarget {
+  const whole = startMm <= EPSILON && endMm >= sideLengthMm - EPSILON;
   return {
     kind: "slab-edge",
     slabId,
     side,
-    range: range.mode === "auto-overlap" ? { mode: "whole" } : { mode: "offset", startMm: range.startMm, endMm: range.endMm },
+    range: whole ? { mode: "whole" } : { mode: "offset", startMm, endMm },
   };
 }
 
 /**
- * Plan V3 Atomic Boundary Segments：来自 Connection + Solved Overlap。
+ * Plan V3 Atomic Boundary Segments：来自 Solved Connection + 区间减法外墙。
  * shared-slab 在 V3 中表示“逻辑连接边界”，不再要求两个 Clear Rect 坐标相等；
  * 段坐标取墙体中心线（display coordinate），正式跨墙长度禁止用 endX-startX 推断。
  */
-export function buildFloorTopologyBoundarySegmentsV3(plan: FloorPlanState): FloorAtomicBoundarySegment[] {
-  const solution = solveFloorTopology(plan);
+export function buildFloorTopologyBoundarySegmentsV3(
+  plan: FloorPlanState,
+  solution: FloorTopologySolution = solveFloorTopology(plan),
+): FloorAtomicBoundarySegment[] {
   const segments: FloorAtomicBoundarySegment[] = [];
-  for (const connection of plan.connections ?? []) {
-    const support = resolveFloorConnectionSupport(connection, plan);
-    const wall = solution.walls.find((item) => item.connectionId === connection.id);
-    const a = solution.slabs.find((item) => item.slabId === connection.a.slabId);
-    const b = solution.slabs.find((item) => item.slabId === connection.b.slabId);
+  const solvedById = new Map(solution.slabs.map((item) => [item.slabId, item]));
+  for (const solved of solution.solvedConnections) {
+    if (!solved.valid) continue;
+    const a = solvedById.get(solved.slabIds[0]);
+    const b = solvedById.get(solved.slabIds[1]);
     if (!a || !b) continue;
-    const vertical = connection.a.side === "west" || connection.a.side === "east";
-    if (support === "inner-wall" && wall) {
+    const lengthA = solved.orientation === "vertical" ? a.height : a.width;
+    const lengthB = solved.orientation === "vertical" ? b.height : b.width;
+    const targets = [
+      offsetTarget(solved.slabIds[0], solved.sideA, solved.aOffsetStartMm, solved.aOffsetEndMm, lengthA),
+      offsetTarget(solved.slabIds[1], solved.sideB, solved.bOffsetStartMm, solved.bOffsetEndMm, lengthB),
+    ];
+    if (solved.support === "inner-wall") {
+      const wall = solution.walls.find((item) => item.connectionId === solved.connectionId);
+      if (!wall) continue;
+      const vertical = wall.orientation === "vertical";
       segments.push({
-        id: `atomic:v3:${connection.id}`,
+        id: `atomic:v3:${solved.connectionId}`,
         orientation: wall.orientation,
         startX: vertical ? wall.x + wall.width / 2 : wall.x,
         startY: vertical ? wall.y : wall.y + wall.height / 2,
@@ -411,93 +699,82 @@ export function buildFloorTopologyBoundarySegmentsV3(plan: FloorPlanState): Floo
         geometryKind: "shared-slab",
         support: "inner-wall",
         thicknessMm: wall.thicknessMm,
-        slabIds: [...wall.slabIds].sort(),
-        targets: [
-          targetForConnection(connection.a.slabId, connection.a.side, connection.a.range),
-          targetForConnection(connection.b.slabId, connection.b.side, connection.b.range),
-        ],
+        slabIds: [...solved.slabIds].sort(),
+        targets,
       });
       continue;
     }
     // continuous：Clear Gap=0，段取两侧 Clear Face 的接触线。
-    const faceA = sideFace(a, connection.a.side);
-    const faceB = sideFace(b, connection.b.side);
+    const faceA = sideFace(a, solved.sideA);
+    const faceB = sideFace(b, solved.sideB);
     const contact = (faceA + faceB) / 2;
-    const tangential = tangentialRange(vertical, a, b);
-    if (tangential.end - tangential.start <= EPSILON) continue;
+    const vertical = solved.orientation === "vertical";
     segments.push({
-      id: `atomic:v3:${connection.id}`,
-      orientation: vertical ? "vertical" : "horizontal",
-      startX: vertical ? contact : tangential.start,
-      startY: vertical ? tangential.start : contact,
-      endX: vertical ? contact : tangential.end,
-      endY: vertical ? tangential.end : contact,
+      id: `atomic:v3:${solved.connectionId}`,
+      orientation: solved.orientation,
+      startX: vertical ? contact : solved.rangeStartMm,
+      startY: vertical ? solved.rangeStartMm : contact,
+      endX: vertical ? contact : solved.rangeEndMm,
+      endY: vertical ? solved.rangeEndMm : contact,
       geometryKind: "shared-slab",
       support: "continuous",
       thicknessMm: 0,
-      slabIds: [a.slabId, b.slabId].sort(),
-      targets: [
-        targetForConnection(connection.a.slabId, connection.a.side, connection.a.range),
-        targetForConnection(connection.b.slabId, connection.b.side, connection.b.range),
-      ],
+      slabIds: [...solved.slabIds].sort(),
+      targets,
     });
   }
-  // 外墙：没有 Connection 覆盖的板边 → building-exterior 整边段（厚度放净空外侧，V1.4A 简化）。
-  const covered = new Map<string, boolean>();
-  for (const connection of plan.connections ?? []) {
-    covered.set(`${connection.a.slabId}:${connection.a.side}`, true);
-    covered.set(`${connection.b.slabId}:${connection.b.side}`, true);
-  }
-  for (const slab of solution.slabs) {
-    const sides: Array<"west" | "east" | "south" | "north"> = ["west", "east", "south", "north"];
-    for (const side of sides) {
-      if (covered.get(`${slab.slabId}:${side}`)) continue;
-      const vertical = side === "west" || side === "east";
-      const coordinate = vertical ? (side === "west" ? slab.x : slab.x + slab.width) : (side === "south" ? slab.y : slab.y + slab.height);
-      const start = vertical ? slab.y : slab.x;
-      const end = vertical ? slab.y + slab.height : slab.x + slab.width;
-      segments.push({
-        id: `atomic:v3:exterior:${slab.slabId}:${side}`,
-        orientation: vertical ? "vertical" : "horizontal",
-        startX: vertical ? coordinate : start,
-        startY: vertical ? start : coordinate,
-        endX: vertical ? coordinate : end,
-        endY: vertical ? end : coordinate,
-        geometryKind: "building-exterior",
-        support: "outer-wall",
-        thicknessMm: Math.max(plan.outerWallThickness, 0),
-        slabIds: [slab.slabId],
-        targets: [{ kind: "slab-edge", slabId: slab.slabId, side, range: { mode: "whole" } }],
-      });
-    }
+  // 外墙：区间减法结果（Partial Side 可生成多段 building-exterior）。
+  const exteriorIndex = new Map<string, number>();
+  for (const range of buildFloorTopologyExteriorRanges(plan, solution)) {
+    const slab = solvedById.get(range.slabId);
+    if (!slab) continue;
+    const vertical = range.orientation === "vertical";
+    const key = `${range.slabId}:${range.side}`;
+    const index = exteriorIndex.get(key) ?? 0;
+    exteriorIndex.set(key, index + 1);
+    const coordinate = vertical
+      ? (range.side === "west" ? slab.x : slab.x + slab.width)
+      : (range.side === "south" ? slab.y : slab.y + slab.height);
+    const start = vertical ? slab.y + range.startMm : slab.x + range.startMm;
+    const end = vertical ? slab.y + range.endMm : slab.x + range.endMm;
+    const sideLengthMm = vertical ? slab.height : slab.width;
+    segments.push({
+      id: `atomic:v3:exterior:${range.slabId}:${range.side}:${index}`,
+      orientation: range.orientation,
+      startX: vertical ? coordinate : start,
+      startY: vertical ? start : coordinate,
+      endX: vertical ? coordinate : end,
+      endY: vertical ? end : coordinate,
+      geometryKind: "building-exterior",
+      support: "outer-wall",
+      thicknessMm: Math.max(plan.outerWallThickness, 0),
+      slabIds: [range.slabId],
+      targets: [offsetTarget(range.slabId, range.side, range.startMm, range.endMm, sideLengthMm)],
+    });
   }
   return segments;
 }
 
-/** Plan V3 Slab Adjacency：来自 connections 与 solved overlap。 */
-export function buildFloorTopologySlabAdjacency(plan: FloorPlanState): Array<{
+/** Plan V3 Slab Adjacency：来自有效 Solved Connections（双端点 Range 求交后的正式区间）。 */
+export function buildFloorTopologySlabAdjacency(
+  plan: FloorPlanState,
+  solution: FloorTopologySolution = solveFloorTopology(plan),
+): Array<{
   slabIds: [string, string];
   segmentIds: string[];
   sharedLengthMm: number;
   supports: Array<"inner-wall" | "continuous">;
 }> {
-  const solution = solveFloorTopology(plan);
   const groups = new Map<string, { slabIds: [string, string]; segmentIds: string[]; sharedLengthMm: number; supports: Array<"inner-wall" | "continuous"> }>();
-  for (const connection of plan.connections ?? []) {
-    const wall = solution.walls.find((item) => item.connectionId === connection.id);
-    const support = resolveFloorConnectionSupport(connection, plan);
-    const a = solution.slabs.find((item) => item.slabId === connection.a.slabId);
-    const b = solution.slabs.find((item) => item.slabId === connection.b.slabId);
-    if (!a || !b) continue;
-    const lengthMm = wall ? wall.lengthMm : (tangentialRange(connection.a.side === "west" || connection.a.side === "east", a, b).end - (tangentialRange(connection.a.side === "west" || connection.a.side === "east", a, b).start));
-    if (lengthMm <= EPSILON) continue;
-    const slabIds = [a.slabId, b.slabId].sort() as [string, string];
+  for (const solved of solution.solvedConnections) {
+    if (!solved.valid || solved.lengthMm <= EPSILON) continue;
+    const slabIds = [...solved.slabIds].sort() as [string, string];
     const key = slabIds.join("|");
     const current = groups.get(key) ?? { slabIds, segmentIds: [], sharedLengthMm: 0, supports: [] as Array<"inner-wall" | "continuous"> };
-    current.segmentIds.push(`atomic:v3:${connection.id}`);
-    current.sharedLengthMm += lengthMm;
-    if (!current.supports.includes(support)) current.supports.push(support);
+    current.segmentIds.push(`atomic:v3:${solved.connectionId}`);
+    current.sharedLengthMm += solved.lengthMm;
+    if (!current.supports.includes(solved.support)) current.supports.push(solved.support);
     groups.set(key, current);
   }
-  return [...groups.values()];
+  return [...groups.values()].sort((left, right) => left.slabIds.join("|").localeCompare(right.slabIds.join("|")));
 }

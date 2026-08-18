@@ -67,7 +67,7 @@ async function installLargeFloorDraft(page: Page): Promise<void> {
   await page.goto("/calculator/floor");
   await page.evaluate(({ draftKey, bottomKey, topKey, roleKey, metaKey }) => {
     localStorage.setItem(draftKey, JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       savedAt: new Date().toISOString(),
       state: {
         coordinateModel: "net-layout-v1",

@@ -10,10 +10,10 @@ import {
 import {
   buildFloorAtomicBoundarySegments,
   buildFloorTopologyCells,
-  validateFloorPlanV2,
   type FloorAtomicBoundarySegment,
   type FloorPlanState,
 } from "./floor-plan";
+import { validateFloorPlanState } from "./floor-topology-adapter";
 import type { FloorBarLine, FloorBarPiece } from "./floor-rebar-types";
 import { buildFloorRebarLayout } from "./floor-rebar-layout";
 import {
@@ -483,7 +483,22 @@ export function calculateFloorTopNormalRebar(
 ): FloorTopCalculation {
   // normalize仅用于存储迁移；正式计算保留NaN、非法枚举等错误并阻止料单。
   const top = input;
-  const geometryIssues = validateFloorPlanV2(plan);
+  // V1.4A.1 Safety Guard：V3 模型的面筋/通墙长度算法尚未 Connection-aware（V1.4C），
+  // 禁止按 Legacy 拓扑静默生成错误料单。
+  if (plan.coordinateModel === "clear-space-physical-v2") {
+    const errors: FloorTopIssue[] = [{
+      code: "topology-v3-calculation-not-ready",
+      message: "当前楼层已使用新版墙带拓扑。面筋计算模块尚未完成V1.4连接路径迁移，为防止生成错误料单，已暂停正式计算。",
+    }];
+    const geometryIssues = validateFloorPlanState(plan);
+    const warnings: FloorTopIssue[] = geometryIssues
+      .filter((issue) => issue.level === "warning")
+      .map(({ code, message, objectIds }) => ({ code, message, objectIds }));
+    const domains = buildFloorBottomRebarDomains(plan);
+    const roleContext = resolveFloorRebarRoleContext(plan, domains, roleState);
+    return emptyCalculation(domains, roleContext.roleDomains, errors, warnings, EMPTY_FLOOR_TOP_ALIGNMENT_PLAN);
+  }
+  const geometryIssues = validateFloorPlanState(plan);
   const warnings: FloorTopIssue[] = geometryIssues
     .filter((issue) => issue.level === "warning")
     .map(({ code, message, objectIds }) => ({ code, message, objectIds }));

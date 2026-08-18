@@ -58,7 +58,7 @@ async function openFloorBom(page: Page, input: FloorDraftInput): Promise<void> {
   await page.goto("/calculator/floor");
   await page.evaluate(({ width, height, opening }) => {
     localStorage.setItem("rebarviz:floor-rebar:draft:v1", JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       savedAt: "2026-08-10T12:00:00.000Z",
       state: {
         coordinateModel: "net-layout-v1",
@@ -233,7 +233,7 @@ test.describe("Floor Print V1整层冻结快照打印", () => {
     await page.goto("/calculator/floor");
     await page.evaluate(() => {
       localStorage.setItem("rebarviz:floor-rebar:draft:v1", JSON.stringify({
-        schemaVersion: 2,
+        schemaVersion: 3,
         savedAt: new Date().toISOString(),
         state: {
           coordinateModel: "net-layout-v1",

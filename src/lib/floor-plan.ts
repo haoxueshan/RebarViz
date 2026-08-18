@@ -814,7 +814,11 @@ function supportRuleIssue(rule: FloorSupportRule, state: FloorPlanState): FloorP
   return issues;
 }
 
-export function validateFloorPlanV2(state: FloorPlanState): FloorPlanIssue[] {
+/**
+ * 基础校验（与坐标模型无关）：对象字段 / 尺寸 / 墙厚 / 吸附 / Opening 覆盖警告 /
+ * Opening 近边警告 / 支承规则基础合法性。V2 与 V3 验证器共用。
+ */
+export function validateFloorPlanBase(state: FloorPlanState): FloorPlanIssue[] {
   const issues: FloorPlanIssue[] = [];
   if (state.coordinateModel !== "net-layout-v1" && state.coordinateModel !== "clear-space-physical-v2") issues.push({ level: "error", code: "coordinate-model-invalid", message: "楼层坐标模型无效。" });
   if (state.slabs.length === 0) issues.push({ level: "error", code: "slab-required", message: "至少需要一个板区。" });
@@ -830,24 +834,12 @@ export function validateFloorPlanV2(state: FloorPlanState): FloorPlanIssue[] {
   };
   state.slabs.forEach((slab, index) => validateObject(slab, slab.name.trim() || `第${index + 1}个板区`, isSlabType(slab.type)));
   state.openings.forEach((opening, index) => validateObject(opening, opening.name.trim() || `第${index + 1}个洞口`, isOpeningType(opening.type)));
-  for (let left = 0; left < state.slabs.length; left += 1) for (let right = left + 1; right < state.slabs.length; right += 1) if (floorSlabsOverlap(state.slabs[left], state.slabs[right])) issues.push({ level: "error", code: "slab-overlap", message: `${state.slabs[left].name}与${state.slabs[right].name}发生面积重叠。`, objectIds: [state.slabs[left].id, state.slabs[right].id] });
-  const sideText: Record<FloorEdgeSide, string> = { west: "西边", east: "东边", south: "南边", north: "北边" };
-  findFloorSlabNearMisses(state).forEach((nearMiss) => {
-    const left = state.slabs.find((slab) => slab.id === nearMiss.slabIds[0]);
-    const right = state.slabs.find((slab) => slab.id === nearMiss.slabIds[1]);
-    issues.push({
-      level: "error",
-      code: "slab-edge-near-miss",
-      message: `${left?.name ?? nearMiss.slabIds[0]}${sideText[nearMiss.sideA]}与${right?.name ?? nearMiss.slabIds[1]}${sideText[nearMiss.sideB]}相差${Number(nearMiss.distanceMm.toFixed(3))}mm，二维图上看似相接，但尚未形成真实共享板边。请将坐标调整为完全重合。`,
-      objectIds: [...nearMiss.slabIds],
-    });
-  });
-  for (let left = 0; left < state.openings.length; left += 1) for (let right = left + 1; right < state.openings.length; right += 1) if (floorOpeningsOverlap(state.openings[left], state.openings[right])) issues.push({ level: "error", code: "opening-overlap", message: `${state.openings[left].name}与${state.openings[right].name}发生面积重叠。`, objectIds: [state.openings[left].id, state.openings[right].id] });
   state.openings.forEach((opening) => {
     const coverage = floorOpeningCoverage(opening, state.slabs);
     if (coverage.coveredAreaMm2 <= EPSILON) issues.push({ level: "warning", code: "opening-uncovered", message: `“${opening.name}”当前未覆盖任何楼板区域，请确认位置。`, objectIds: [opening.id] });
     else if (coverage.coverageRatio < 1 - EPSILON) issues.push({ level: "warning", code: "opening-partial-outside", message: `“${opening.name}”部分区域位于楼板范围之外，请确认是否符合实际楼层。`, objectIds: [opening.id] });
   });
+  const sideText: Record<FloorEdgeSide, string> = { west: "西边", east: "东边", south: "南边", north: "北边" };
   findOpeningSlabNearMisses(state).forEach((nearMiss) => {
     const opening = state.openings.find((item) => item.id === nearMiss.openingId);
     const slab = state.slabs.find((item) => item.id === nearMiss.slabId);
@@ -862,6 +854,31 @@ export function validateFloorPlanV2(state: FloorPlanState): FloorPlanIssue[] {
   if (!Number.isFinite(state.outerWallThickness) || state.outerWallThickness <= 0) issues.push({ level: "error", code: "outer-wall-invalid", message: "外墙厚度必须大于0。" });
   if (!Number.isFinite(state.snapDistanceMm) || state.snapDistanceMm < 0) issues.push({ level: "error", code: "snap-distance-invalid", message: "吸附距离不能为负数。" });
   state.supportRules.forEach((rule) => issues.push(...supportRuleIssue(rule, state)));
+  return issues;
+}
+
+/**
+ * Legacy Net Layout Validator（仅 net-layout-v1 语义）。
+ * clear-space-physical-v2 必须走 validateFloorPlanV3（Canonical Adapter dispatch），
+ * 本函数对 V3 只运行基础字段校验，禁止把 Rect Touch 结果套在 V3 上。
+ */
+export function validateFloorPlanV2(state: FloorPlanState): FloorPlanIssue[] {
+  const issues: FloorPlanIssue[] = validateFloorPlanBase(state);
+  const legacy = state.coordinateModel === "net-layout-v1";
+  if (!legacy) return issues;
+  for (let left = 0; left < state.slabs.length; left += 1) for (let right = left + 1; right < state.slabs.length; right += 1) if (floorSlabsOverlap(state.slabs[left], state.slabs[right])) issues.push({ level: "error", code: "slab-overlap", message: `${state.slabs[left].name}与${state.slabs[right].name}发生面积重叠。`, objectIds: [state.slabs[left].id, state.slabs[right].id] });
+  const sideText: Record<FloorEdgeSide, string> = { west: "西边", east: "东边", south: "南边", north: "北边" };
+  findFloorSlabNearMisses(state).forEach((nearMiss) => {
+    const left = state.slabs.find((slab) => slab.id === nearMiss.slabIds[0]);
+    const right = state.slabs.find((slab) => slab.id === nearMiss.slabIds[1]);
+    issues.push({
+      level: "error",
+      code: "slab-edge-near-miss",
+      message: `${left?.name ?? nearMiss.slabIds[0]}${sideText[nearMiss.sideA]}与${right?.name ?? nearMiss.slabIds[1]}${sideText[nearMiss.sideB]}相差${Number(nearMiss.distanceMm.toFixed(3))}mm，二维图上看似相接，但尚未形成真实共享板边。请将坐标调整为完全重合。`,
+      objectIds: [...nearMiss.slabIds],
+    });
+  });
+  for (let left = 0; left < state.openings.length; left += 1) for (let right = left + 1; right < state.openings.length; right += 1) if (floorOpeningsOverlap(state.openings[left], state.openings[right])) issues.push({ level: "error", code: "opening-overlap", message: `${state.openings[left].name}与${state.openings[right].name}发生面积重叠。`, objectIds: [state.openings[left].id, state.openings[right].id] });
   const atomic = buildFloorAtomicBoundarySegments(state);
   atomic.forEach((segment) => {
     const resolution = resolveFloorBoundarySupportDetails(segment.geometryKind, segment.targets, state);

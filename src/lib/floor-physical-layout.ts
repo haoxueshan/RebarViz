@@ -6,7 +6,10 @@ import {
   type FloorResolvedSupport,
   type FloorSlab,
 } from "./floor-plan";
-import { solveFloorTopology } from "./floor-topology-solver";
+import {
+  buildFloorTopologyExteriorRanges,
+  solveFloorTopology,
+} from "./floor-topology-solver";
 
 /**
  * Floor Physical Wall Layout V1.3（纯派生显示层）：
@@ -574,27 +577,51 @@ function buildFloorPhysicalLayoutFromTopology(plan: FloorPlanState): FloorPhysic
     slabIds: wall.slabIds,
     sourceAtomicIds: [`atomic:v3:${wall.connectionId}`],
   }));
-  // 外墙沿用“未被 Connection 覆盖的有效板边 → outer-wall”，厚度放在 Clear Space 外侧（V1.4A 简化）。
-  const covered = new Set<string>();
-  for (const connection of plan.connections ?? []) {
-    covered.add(`${connection.a.slabId}:${connection.a.side}`);
-    covered.add(`${connection.b.slabId}:${connection.b.side}`);
-  }
-  const sides = ["west", "east", "south", "north"] as const;
-  for (const slab of slabs) {
-    for (const side of sides) {
-      if (covered.has(`${slab.slabId}:${side}`)) continue;
-      const thicknessMm = Math.max(plan.outerWallThickness, 0);
-      if (thicknessMm <= EPSILON) continue;
-      const vertical = side === "west" || side === "east";
-      if (vertical) {
-        const x = side === "west" ? slab.x - thicknessMm : slab.x + slab.width;
-        walls.push({ id: `outer-v3:${slab.slabId}:${side}`, kind: "outer-wall", orientation: "vertical", x, y: slab.y, width: thicknessMm, height: slab.height, lengthMm: slab.height, thicknessMm, slabIds: [slab.slabId], sourceAtomicIds: [], side });
-      } else {
-        const y = side === "south" ? slab.y - thicknessMm : slab.y + slab.height;
-        walls.push({ id: `outer-v3:${slab.slabId}:${side}`, kind: "outer-wall", orientation: "horizontal", x: slab.x, y, width: slab.width, height: thicknessMm, lengthMm: slab.width, thicknessMm, slabIds: [slab.slabId], sourceAtomicIds: [], side });
+  // 外墙：与 Atomic V3 共用同一区间减法结果（Partial Side 可生成多段 outer-wall）。
+  const thicknessMm = Math.max(plan.outerWallThickness, 0);
+  const slabsByPhysicalId = new Map(slabs.map((slab) => [slab.slabId, slab]));
+  if (thicknessMm > EPSILON) {
+    const exteriorIndex = new Map<string, number>();
+    buildFloorTopologyExteriorRanges(plan, solution).forEach((range) => {
+      const slab = slabsByPhysicalId.get(range.slabId);
+      if (!slab) return;
+      const key = `${range.slabId}:${range.side}`;
+      const index = exteriorIndex.get(key) ?? 0;
+      exteriorIndex.set(key, index + 1);
+      if (range.orientation === "vertical") {
+        const x = range.side === "west" ? slab.x - thicknessMm : slab.x + slab.width;
+        walls.push({
+          id: `outer-v3:${range.slabId}:${range.side}:${index}`,
+          kind: "outer-wall",
+          orientation: "vertical",
+          x,
+          y: slab.y + range.startMm,
+          width: thicknessMm,
+          height: range.endMm - range.startMm,
+          lengthMm: range.endMm - range.startMm,
+          thicknessMm,
+          slabIds: [range.slabId],
+          sourceAtomicIds: [`atomic:v3:exterior:${range.slabId}:${range.side}:${index}`],
+          side: range.side,
+        });
+        return;
       }
-    }
+      const y = range.side === "south" ? slab.y - thicknessMm : slab.y + slab.height;
+      walls.push({
+        id: `outer-v3:${range.slabId}:${range.side}:${index}`,
+        kind: "outer-wall",
+        orientation: "horizontal",
+        x: slab.x + range.startMm,
+        y,
+        width: range.endMm - range.startMm,
+        height: thicknessMm,
+        lengthMm: range.endMm - range.startMm,
+        thicknessMm,
+        slabIds: [range.slabId],
+        sourceAtomicIds: [`atomic:v3:exterior:${range.slabId}:${range.side}:${index}`],
+        side: range.side,
+      });
+    });
   }
   walls.sort((left, right) => left.x - right.x || left.y - right.y || left.id.localeCompare(right.id));
   const openings: FloorPhysicalOpening[] = plan.openings.map((opening) => ({

@@ -173,6 +173,24 @@ export function resolveFloorTopThroughPathGeometry(
   path: FloorTopThroughPath,
   atomic = buildFloorAtomicBoundarySegments(plan),
 ): FloorTopThroughGeometry {
+  // V1.4A.1 Safety Guard：V3 通墙路径尚未 Connection-aware（V1.4C），不按 Legacy Rect Touch 解析。
+  if (plan.coordinateModel === "clear-space-physical-v2") {
+    return {
+      pathId: path.id,
+      direction: path.direction,
+      orderedSlabIds: [...new Set(path.slabIds)],
+      runStartMm: 0,
+      runEndMm: 0,
+      validBandIntervals: [],
+      maxBandStartMm: null,
+      maxBandEndMm: null,
+      errors: [issue(
+        "topology-v3-calculation-not-ready",
+        "当前楼层已使用新版墙带拓扑。通墙路径尚未完成V1.4连接路径迁移，无法解析正式通墙几何。",
+        [path.id],
+      )],
+    };
+  }
   const errors: FloorTopIssue[] = [];
   const uniqueIds = [...new Set(path.slabIds)];
   if (uniqueIds.length !== path.slabIds.length || uniqueIds.length < 2) {

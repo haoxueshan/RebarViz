@@ -18,7 +18,7 @@ async function installMultiBlockWorkspace(page: import("@playwright/test").Page)
       height: 2400,
     }));
     localStorage.setItem(draftKey, JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       savedAt: new Date().toISOString(),
       state: {
         coordinateModel: "net-layout-v1",
@@ -156,7 +156,7 @@ test("正方形和不规则Role区域在Navigator定位并共享人工主筋方�
   await page.goto("/calculator/floor");
   await page.evaluate(({ draftKey, roleKey }) => {
     localStorage.setItem(draftKey, JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       savedAt: new Date().toISOString(),
       state: {
         coordinateModel: "net-layout-v1",
@@ -319,7 +319,7 @@ test("楼层阶段选中板区直接看到净尺寸，修改后Canvas实时变�
   await page.goto("/calculator/floor");
   await page.evaluate(({ draftKey, bottomKey, topKey, roleKey }) => {
     localStorage.setItem(draftKey, JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       savedAt: new Date().toISOString(),
       state: {
         coordinateModel: "net-layout-v1",
@@ -354,7 +354,7 @@ test("正方形板区进入地筋即可直接点击主筋方向按钮", async ({
   // 在每次导航前写入测试草稿：避免应用首次 autosave（约 300ms）把默认布局回写覆盖测试数据。
   await page.addInitScript(({ draftKey, bottomKey, topKey, roleKey }) => {
     localStorage.setItem(draftKey, JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       savedAt: new Date().toISOString(),
       state: {
         coordinateModel: "net-layout-v1",
@@ -463,7 +463,7 @@ test("异常洞口伸出很远时适合楼层仍以楼板主体取景，显示�
   await page.goto("/calculator/floor");
   await page.evaluate(({ draftKey, roleKey }) => {
     localStorage.setItem(draftKey, JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       savedAt: new Date().toISOString(),
       state: {
         coordinateModel: "net-layout-v1",

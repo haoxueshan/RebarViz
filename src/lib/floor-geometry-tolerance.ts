@@ -94,8 +94,13 @@ function shiftSlab(slabs: readonly FloorSlab[], slabId: string, axis: "x" | "y",
 /**
  * 几何容差解析：把小于容差的板区边缘重叠/间隙自动纠偏为精确共边。
  * 修正永远落在 pair 中索引靠后的板区（right），并保证不产生新的面积重叠。
+ * V3（clear-space-physical-v2）：Legacy Rect Touch 纠偏禁止作用于 Canonical 数据，
+ * 直接原样返回（V3 交互编辑在 V1.4B 提供）。
  */
 export function resolveFloorGeometryTolerance(plan: FloorPlanState): FloorGeometryToleranceResult {
+  if (plan.coordinateModel === "clear-space-physical-v2") {
+    return { plan, corrections: [], unresolvedIssues: [] };
+  }
   const raw = Number.isFinite(plan.overlapToleranceMm) ? plan.overlapToleranceMm : 10;
   const tolerance = Math.max(0, raw);
   if (tolerance === 0) {

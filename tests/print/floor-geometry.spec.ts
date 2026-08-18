@@ -149,7 +149,7 @@ test("Bottom V1.1迁移复核后，局部continuous与inner-wall同时生成长�
   await page.goto("/calculator/floor");
   await page.evaluate(() => {
     localStorage.setItem("rebarviz:floor-rebar:draft:v1", JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       savedAt: new Date().toISOString(),
       state: {
         coordinateModel: "net-layout-v1",
@@ -250,7 +250,7 @@ test("Top V1楼梯间Opening裁断Piece且洞口边改内墙后增加下料长�
   await page.goto("/calculator/floor");
   await page.evaluate(() => {
     localStorage.setItem("rebarviz:floor-rebar:draft:v1", JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       savedAt: new Date().toISOString(),
       state: {
         coordinateModel: "net-layout-v1",
@@ -337,7 +337,7 @@ test("正方形主筋方向人工选择由地筋和面筋共享，390px无页面
   await page.goto("/calculator/floor");
   await page.evaluate(() => {
     localStorage.setItem("rebarviz:floor-rebar:draft:v1", JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       savedAt: new Date().toISOString(),
       state: {
         coordinateModel: "net-layout-v1",
@@ -380,7 +380,7 @@ test("390px通墙Path被Opening阻断，缩小Band后恢复并持久化Schema 4"
   await page.goto("/calculator/floor");
   await page.evaluate(() => {
     localStorage.setItem("rebarviz:floor-rebar:draft:v1", JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       savedAt: new Date().toISOString(),
       state: {
         coordinateModel: "net-layout-v1",

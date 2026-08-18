@@ -5,6 +5,7 @@ import {
   type FloorPlanState,
   type FloorTopologyCell,
 } from "./floor-plan";
+import { solveFloorTopology } from "./floor-topology-solver";
 
 export type FloorRebarDomain = {
   id: string;
@@ -57,6 +58,60 @@ function atomicCoversEdge(
 }
 
 /**
+ * Plan V3 物理连通域：来自 Solved Connections（continuous 连通，inner-wall 分隔）。
+ * 不再用 Legacy Cells / Rect Touch；域几何取 Solved Clear Rect 并集。
+ * 正式钢筋长度算法（V1.4C）完成前，Bottom/Top 计算对 V3 有 Safety Guard。
+ */
+function buildFloorRebarDomainsV3(plan: FloorPlanState, idPrefix: string): FloorRebarDomain[] {
+  const solution = solveFloorTopology(plan);
+  const solvedById = new Map(solution.slabs.map((slab) => [slab.slabId, slab]));
+  const graph = new Map<string, Set<string>>(plan.slabs.map((slab) => [slab.id, new Set<string>()]));
+  solution.solvedConnections.forEach((solved) => {
+    if (!solved.valid || solved.support !== "continuous") return;
+    graph.get(solved.slabIds[0])?.add(solved.slabIds[1]);
+    graph.get(solved.slabIds[1])?.add(solved.slabIds[0]);
+  });
+  const visited = new Set<string>();
+  const domains: FloorRebarDomain[] = [];
+  [...plan.slabs].sort((left, right) => left.x - right.x || left.y - right.y || left.id.localeCompare(right.id)).forEach((slab) => {
+    if (visited.has(slab.id)) return;
+    const members: string[] = [];
+    const queue = [slab.id];
+    visited.add(slab.id);
+    while (queue.length > 0) {
+      const currentId = queue.shift()!;
+      members.push(currentId);
+      graph.get(currentId)?.forEach((nextId) => {
+        if (visited.has(nextId)) return;
+        visited.add(nextId);
+        queue.push(nextId);
+      });
+    }
+    members.sort();
+    const bounds = members.reduce((acc, id) => {
+      const item = solvedById.get(id);
+      if (!item) return acc;
+      return {
+        minX: Math.min(acc.minX, item.x),
+        minY: Math.min(acc.minY, item.y),
+        maxX: Math.max(acc.maxX, item.x + item.width),
+        maxY: Math.max(acc.maxY, item.y + item.height),
+      };
+    }, { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity });
+    domains.push({
+      id: `${idPrefix}:v3:${members.join("|")}`,
+      slabIds: members,
+      cellIds: [],
+      minX: Number.isFinite(bounds.minX) ? bounds.minX : slab.x,
+      minY: Number.isFinite(bounds.minY) ? bounds.minY : slab.y,
+      maxX: Number.isFinite(bounds.maxX) ? bounds.maxX : slab.x + slab.width,
+      maxY: Number.isFinite(bounds.maxY) ? bounds.maxY : slab.y + slab.height,
+    });
+  });
+  return domains.sort((left, right) => left.id.localeCompare(right.id));
+}
+
+/**
  * 根据有效楼板 cell 与 continuous 支承建立物理连通域。
  * Opening 是否参与由传入 plan 决定，因此 Role 与 Physical 可以复用同一拓扑实现。
  */
@@ -64,6 +119,9 @@ export function buildFloorRebarDomains(
   plan: FloorPlanState,
   idPrefix = "rebar-domain",
 ): FloorRebarDomain[] {
+  if (plan.coordinateModel === "clear-space-physical-v2") {
+    return buildFloorRebarDomainsV3(plan, idPrefix);
+  }
   const cells = buildFloorTopologyCells(plan).filter(
     (cell): cell is FloorTopologyCell & { effectiveSlabId: string } => Boolean(cell.effectiveSlabId),
   );

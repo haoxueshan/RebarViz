@@ -91,17 +91,12 @@ export function floorConnectionClearGapMm(
   return support === "inner-wall" ? Math.max(plan.innerWallThickness, 0) : 0;
 }
 
-/** 解析连接支承：特殊规则 continuous → continuous；否则默认 inner-wall（与既有 Support Resolver 语义一致）。 */
-export function resolveFloorConnectionSupport(
-  connection: FloorEdgeConnection,
-  plan: FloorPlanState,
-): "inner-wall" | "continuous" {
-  const hasContinuous = plan.supportRules.some((rule) =>
-    rule.support === "continuous"
-    && rule.target.kind === "slab-edge"
-    && (rule.target.slabId === connection.a.slabId || rule.target.slabId === connection.b.slabId));
-  return hasContinuous ? "continuous" : "inner-wall";
-}
+/**
+ * Connection Support 解析已迁移到 floor-topology-support.ts：
+ * resolveFloorConnectionSupportDetails 精确匹配 Slab ID + Side + 实际连接覆盖 Range
+ * （复用 resolveFloorBoundarySupportDetails，不再“任一边有 continuous 就整条连接 continuous”）。
+ * 本模块保持零 floor-plan 值依赖（仅 import type），避免 floor-plan ↔ floor-topology 循环。
+ */
 
 /** V1.4B API：查找连接。 */
 export function findFloorConnection(plan: FloorPlanState, id: string): FloorEdgeConnection | null {
@@ -198,4 +193,43 @@ export function parseFloorConnections(value: unknown, slabIds: ReadonlySet<strin
     });
   }
   return connections;
+}
+
+export type FloorRange = { start: number; end: number };
+
+/**
+ * Range Subtraction（V1.4A.1）：whole - union(covered)。
+ * 1. normalize（start<end）；2. clip 到 whole；3. merge overlapping/adjacent covered；
+ * 4. 输出剩余区间（确定性，按 start 升序）。
+ */
+export function subtractFloorRanges(
+  whole: FloorRange,
+  covered: readonly FloorRange[],
+): FloorRange[] {
+  const wholeStart = Math.min(whole.start, whole.end);
+  const wholeEnd = Math.max(whole.start, whole.end);
+  const clipped = covered
+    .map((range) => ({
+      start: Math.max(wholeStart, Math.min(range.start, range.end)),
+      end: Math.min(wholeEnd, Math.max(range.start, range.end)),
+    }))
+    .filter((range) => range.end - range.start > 0)
+    .sort((left, right) => left.start - right.start || left.end - right.end);
+  const merged: FloorRange[] = [];
+  clipped.forEach((range) => {
+    const previous = merged.at(-1);
+    if (previous && range.start <= previous.end) {
+      previous.end = Math.max(previous.end, range.end);
+      return;
+    }
+    merged.push({ ...range });
+  });
+  const remaining: FloorRange[] = [];
+  let cursor = wholeStart;
+  merged.forEach((range) => {
+    if (range.start - cursor > 0) remaining.push({ start: cursor, end: range.start });
+    cursor = Math.max(cursor, range.end);
+  });
+  if (wholeEnd - cursor > 0) remaining.push({ start: cursor, end: wholeEnd });
+  return remaining;
 }

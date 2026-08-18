@@ -10,7 +10,7 @@ test("Floor Top Through Alignment V2：板区7→板区2南北向通墙自动统
   await page.goto("/calculator/floor");
   await page.evaluate(({ draftKey, topKey, roleKey, bottomKey }) => {
     localStorage.setItem(draftKey, JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       savedAt: new Date().toISOString(),
       state: {
         coordinateModel: "net-layout-v1",
@@ -64,7 +64,7 @@ test("Floor Top Through Alignment V2：间距冲突提示待协调", async ({ pa
   await page.goto("/calculator/floor");
   await page.evaluate(({ draftKey, topKey, roleKey, bottomKey }) => {
     localStorage.setItem(draftKey, JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       savedAt: new Date().toISOString(),
       state: {
         coordinateModel: "net-layout-v1",

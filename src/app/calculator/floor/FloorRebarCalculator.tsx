@@ -63,14 +63,12 @@ import {
   parseFloorTopStoredRecord,
 } from "@/lib/floor-top-storage";
 import {
-  buildFloorAtomicBoundarySegments,
   DEFAULT_FLOOR_PLAN_STATE,
   floorPlanBounds,
   nextAvailableFloorName,
   replaceFloorSupportRuleForAtomicSegment,
   snapFloorOpening,
   snapFloorSlab,
-  validateFloorPlanV2,
   type FloorAtomicBoundarySegment,
   type FloorEdgeRange,
   type FloorOpening,
@@ -82,6 +80,10 @@ import {
   type FloorSupportRule,
   type FloorSupportRuleTarget,
 } from "@/lib/floor-plan";
+import {
+  buildCanonicalFloorAtomicBoundarySegments,
+  validateFloorPlanState,
+} from "@/lib/floor-topology-adapter";
 import { createFloorDraftRecord, FLOOR_DRAFT_KEY, parseFloorDraftRecord } from "@/lib/floor-plan-storage";
 import {
   buildFloorRebarRoleDomains,
@@ -594,8 +596,8 @@ export default function FloorRebarCalculator() {
     return () => window.clearTimeout(timer);
   }, [hydrated, roleDomains, roleState]);
 
-  const atomic = useMemo(() => buildFloorAtomicBoundarySegments(canonicalPlan), [canonicalPlan]);
-  const issues = useMemo(() => validateFloorPlanV2(canonicalPlan), [canonicalPlan]);
+  const atomic = useMemo(() => buildCanonicalFloorAtomicBoundarySegments(canonicalPlan), [canonicalPlan]);
+  const issues = useMemo(() => validateFloorPlanState(canonicalPlan), [canonicalPlan]);
   // Floor Assembly V1.3.1：整层拓扑连接分析（Derived only，不写任何 Storage/Schema）。
   const assembly = useMemo(() => buildFloorAssembly(canonicalPlan), [canonicalPlan]);
   const errors = issues.filter((issue) => issue.level === "error");
