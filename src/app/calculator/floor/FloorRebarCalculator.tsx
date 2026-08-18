@@ -112,6 +112,10 @@ import {
   type FloorMultiAlignKind,
 } from "@/lib/floor-docking";
 import {
+  applyFloorSlabJoin,
+  type FloorSlabJoinCandidate,
+} from "@/lib/floor-slab-join";
+import {
   resolveFloorGeometryTolerance,
 } from "@/lib/floor-geometry-tolerance";
 import { floorPhysicalSharedBand } from "@/lib/floor-physical-layout";
@@ -907,6 +911,14 @@ export default function FloorRebarCalculator() {
     applyStateWithHistory(next);
   };
 
+  /** Smart Join V1.3.2：拖动磁吸松手 → 精确 Net 共边，只产生一个 Geometry Mutation（Undo 一步）。 */
+  const handleApplyJoin = (candidate: FloorSlabJoinCandidate) => {
+    const next = applyFloorSlabJoin(state, candidate);
+    if (next === state) return;
+    applyStateWithHistory(next);
+    setSelectedBoundaryId(null);
+  };
+
   const commitHistory = (next: FloorPlanState) => {
     setHistory((current) => pushFloorHistory({ ...current, present: stateRef.current }, next));
   };
@@ -1487,6 +1499,7 @@ export default function FloorRebarCalculator() {
       onMove={moveObject}
       onDragStateChange={setDragActive}
       onQuickDock={applyQuickDock}
+      onJoinApply={handleApplyJoin}
       bottomCalculation={stage === "bottom" ? bottomCalculation : undefined}
       topCalculation={stage === "top" ? topCalculation : undefined}
       roleDomains={roleDomains}

@@ -62,7 +62,8 @@ test("Floor Docking V1拼接模式：Source+Target+北边+Ghost+确认生成0mm�
   await expect(panel).toContainText("源板区：板区B");
   await expect(panel).toContainText("目标板区：板区A");
   await expect(panel).toContainText("方向：北侧");
-  await expect(panel).toContainText("拼接后将形成精确 0mm 共享板边");
+  await expect(panel).toContainText("净跨已对齐（Net Gap 0mm）");
+  await expect(panel).toContainText("将形成内墙 240mm 物理墙带");
   await panel.getByRole("button", { name: "确认拼接" }).click();
 
   await expect(page.locator("[data-near-miss]")).toHaveCount(0);
@@ -126,10 +127,11 @@ test("Floor Docking V1一键修复5mm Near Miss", async ({ page }) => {
 test("Floor Docking V1冲突提示：与第三方重叠时禁止提交", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/calculator/floor");
+  // C 紧贴 A 北侧；B 在远处。B dock 到 A 北侧后与 C 面积重叠 → 禁止提交。
   await setDraft(page, [
     { id: "a", name: "板区A", type: "room", x: 0, y: 0, width: 4200, height: 3600 },
-    { id: "b", name: "板区B", type: "room", x: 0, y: 3605, width: 3600, height: 3600 },
-    { id: "c", name: "板区C", type: "room", x: 200, y: 7000, width: 2000, height: 2000 },
+    { id: "b", name: "板区B", type: "room", x: 0, y: 7000, width: 3600, height: 3600 },
+    { id: "c", name: "板区C", type: "room", x: 0, y: 3600, width: 1000, height: 1000 },
   ], 0);
   await page.reload();
 
@@ -144,7 +146,7 @@ test("Floor Docking V1冲突提示：与第三方重叠时禁止提交", async (
   await expect(panel.getByRole("button", { name: "确认拼接" })).toBeDisabled();
   await panel.getByRole("button", { name: "取消" }).click();
   await expect(panel).toHaveCount(0);
-  await expect.poll(async () => (await savedSlabs(page)).find((slab) => slab.id === "b")?.y).toBe(3605);
+  await expect.poll(async () => (await savedSlabs(page)).find((slab) => slab.id === "b")?.y).toBe(7000);
 });
 
 test("Floor Docking V1多选对齐：左对齐统一X并显示位移确认", async ({ page }) => {

@@ -306,9 +306,13 @@ test("Quick Dock：拖近共边松手精确0mm、一次Undo回原点（PRD 72/75
   const startY = boxA!.y + boxA!.height / 2;
   await slabA.dispatchEvent("pointerdown", { pointerId: 51, pointerType: "mouse", isPrimary: true, buttons: 1, clientX: startX, clientY: startY, bubbles: true });
   await svg.dispatchEvent("pointermove", { pointerId: 51, pointerType: "mouse", buttons: 1, clientX: startX + dxPx, clientY: startY + dyPx, bubbles: true });
-  await expect(page.locator("[data-drag-guide]")).toHaveCount(1);
-  await expect(page.locator("[data-drag-guide]")).toContainText("净跨已对齐");
-  await expect(page.locator("[data-drag-guide]")).toContainText("内墙 240mm");
+  // Smart Join V1.3.2：磁吸连接候选接管 Quick Dock 预览，内墙 240 与结果完全一致。
+  const joinPreview = page.locator("[data-floor-join-preview]");
+  await expect(joinPreview).toHaveCount(1);
+  await expect(joinPreview).toHaveAttribute("data-join-support", "inner-wall");
+  await expect(page.locator("[data-floor-join-wall-preview]")).toHaveAttribute("data-wall-thickness-mm", "240");
+  await expect(joinPreview).toContainText("释放以连接");
+  await expect(joinPreview).toContainText("内墙240mm");
   await svg.dispatchEvent("pointerup", { pointerId: 51, pointerType: "mouse", buttons: 0, clientX: startX + dxPx, clientY: startY + dyPx, bubbles: true });
   await expect.poll(async () => (await savedSlabs(page)).find((slab) => slab.id === "a")?.x ?? 0).toBe(5000);
   await expect.poll(async () => (await savedSlabs(page)).find((slab) => slab.id === "a")?.y ?? 0).toBe(0);
@@ -356,7 +360,7 @@ test("Quick Dock不经过二次普通Snap：preserve的X保持自由拖动值（
   const startY = boxA!.y + boxA!.height / 2;
   await slabA.dispatchEvent("pointerdown", { pointerId: 52, pointerType: "mouse", isPrimary: true, buttons: 1, clientX: startX, clientY: startY, bubbles: true });
   await svg.dispatchEvent("pointermove", { pointerId: 52, pointerType: "mouse", buttons: 1, clientX: startX + dxPx, clientY: startY + dyPx, bubbles: true });
-  await expect(page.locator("[data-drag-guide]")).toHaveCount(1);
+  await expect(page.locator("[data-floor-join-preview]")).toHaveCount(1);
   await svg.dispatchEvent("pointerup", { pointerId: 52, pointerType: "mouse", buttons: 0, clientX: startX + dxPx, clientY: startY + dyPx, bubbles: true });
   await expect.poll(async () => (await savedSlabs(page)).find((slab) => slab.id === "a")?.x ?? 0).toBe(1500);
   await expect.poll(async () => (await savedSlabs(page)).find((slab) => slab.id === "a")?.y ?? 0).toBe(5000);

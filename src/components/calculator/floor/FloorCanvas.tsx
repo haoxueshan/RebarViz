@@ -46,6 +46,14 @@ import {
   type FloorDockPreview,
   type FloorDockRequest,
 } from "@/lib/floor-docking";
+import {
+  findFloorSlabJoinCandidates,
+  floorSlabJoinGuideCoordinate,
+  floorSlabJoinPreviewLabel,
+  selectFloorSlabJoinCandidate,
+  validateFloorJoinCandidate,
+  type FloorSlabJoinCandidate,
+} from "@/lib/floor-slab-join";
 import type { FloorBottomCalculation } from "@/lib/floor-bottom-calculator";
 import type { FloorTopCalculation } from "@/lib/floor-top-calculator";
 import {
@@ -227,6 +235,7 @@ export function FloorCanvas({
   onUndo,
   onRedo,
   onQuickDock,
+  onJoinApply,
   inputProfile = "desktop",
   compactMode = false,
   commandBar = null,
@@ -270,6 +279,8 @@ export function FloorCanvas({
   onRedo?: () => void;
   /** Quick Dock：拖动松手且Smart Guide激活时，把Dock请求交给父层复用floor-docking计算。 */
   onQuickDock?: (request: FloorDockRequest, x: number, y: number) => void;
+  /** Smart Join V1.3.2：拖动松手时存在有效连接候选，由父层 applyFloorSlabJoin 精确提交。 */
+  onJoinApply?: (candidate: FloorSlabJoinCandidate) => void;
   /** UI V3：输入模式决定触摸尺寸（touch≥44px），不再由 xl 断点判断。 */
   inputProfile?: "touch" | "desktop";
   /** UI V5：手机紧凑 Toolbar（移动/拼接/多选 + 更多菜单）。 */
@@ -302,6 +313,10 @@ export function FloorCanvas({
   }, [onZoomChange, viewport.zoom]);
   const [axisLock, setAxisLock] = useState<FloorCanvasAxisLock>("free");
   const [dragPreview, setDragPreview] = useState<{ objectId: string; x: number; y: number } | null>(null);
+  // Smart Join V1.3.2：拖动中的磁吸连接候选（Ref 供 PointerUp 同步读取，State 驱动 SVG 预览）。
+  const [joinPreview, setJoinPreview] = useState<FloorSlabJoinCandidate | null>(null);
+  const joinRef = useRef<FloorSlabJoinCandidate | null>(null);
+  const lastJoinKeyRef = useRef<string | null>(null);
   const [svgWidthPx, setSvgWidthPx] = useState(SVG_WIDTH);
   const [selectedPieceId, setSelectedPieceId] = useState<string | null>(null);
   const highlightedRoleDomain = roleDomains.find((domain) => domain.id === highlightedRoleDomainId);
@@ -541,6 +556,20 @@ export function FloorCanvas({
     slabs: state.slabs.map((slab) => slab.id === source.id ? { ...slab, x, y } : slab),
   });
 
+  /** Smart Join 候选计算：基于拖动中的源板位置（Interaction Capture，不是正式拓扑）。 */
+  const computeJoinCandidate = (movingSlab: FloorSlab, x: number, y: number): FloorSlabJoinCandidate | null => {
+    const previewPlan = stateWithPreviewSource(movingSlab, x, y);
+    const candidates = findFloorSlabJoinCandidates(previewPlan, movingSlab.id);
+    const capture = state.snapDistanceMm > 0 ? state.snapDistanceMm : 150;
+    return selectFloorSlabJoinCandidate(candidates, joinRef.current, capture * 1.2);
+  };
+
+  /** 候选键量化到1mm，避免拖动中每帧重复 setState。 */
+  const joinCandidateKey = (candidate: FloorSlabJoinCandidate | null): string | null => {
+    if (!candidate) return null;
+    return `${candidate.sourceSlabId}|${candidate.targetSlabId}|${candidate.sourceSide}|${candidate.alignment}|${Math.round(candidate.distanceMm)}`;
+  };
+
   /**
    * 交互帧调度（PRD 52-55）：viewport 与 preview 合并而非互相覆盖；
    * RAF 回调同时同步 viewportRef，保证下一次 PointerMove 基于最新交互 Viewport。
@@ -557,7 +586,23 @@ export function FloorCanvas({
         viewportRef.current = pending.viewport;
         setViewport(pending.viewport);
       }
-      if (pending.preview !== undefined) setDragPreview(pending.preview);
+      if (pending.preview !== undefined) {
+        setDragPreview(pending.preview);
+        // Smart Join V1.3.2：拖动帧中计算磁吸连接候选（仅 Slab 拖动）。
+        const previewFrame = pending.preview;
+        const movingSlab = previewFrame
+          ? state.slabs.find((slab) => slab.id === previewFrame.objectId)
+          : null;
+        const nextJoin = movingSlab
+          ? computeJoinCandidate(movingSlab, previewFrame!.x, previewFrame!.y)
+          : null;
+        joinRef.current = nextJoin;
+        const key = joinCandidateKey(nextJoin);
+        if (key !== lastJoinKeyRef.current) {
+          lastJoinKeyRef.current = key;
+          setJoinPreview(nextJoin);
+        }
+      }
     });
   };
 
@@ -661,21 +706,40 @@ export function FloorCanvas({
     const movingSlab = drag.selection.kind === "slab"
       ? state.slabs.find((slab) => slab.id === drag.selection.id)
       : null;
-    // PRD 19-25：Quick Dock只针对FloorSlab，Guide激活时直接复用floor-docking并禁止二次普通Snap。
-    const guide = movingSlab ? computeDragGuide(movingSlab, moved.x, moved.y) : null;
-    if (movingSlab && guide) {
-      const request = quickDockRequest(guide, movingSlab.id);
-      const preview = previewFloorDock(stateWithPreviewSource(movingSlab, moved.x, moved.y), request);
-      if (preview?.valid) {
-        if (onQuickDock) onQuickDock(request, moved.x, moved.y);
-        else onMove(drag.selection, preview.x, preview.y, true);
+    // Smart Join V1.3.2：存在有效连接候选时优先精确 Join，不再走普通 Snap（PRD 49 优先级）。
+    const joinCandidate = movingSlab ? joinRef.current : null;
+    let joined = false;
+    if (movingSlab && joinCandidate) {
+      const validation = validateFloorJoinCandidate(
+        stateWithPreviewSource(movingSlab, moved.x, moved.y),
+        joinCandidate,
+      );
+      if (validation.valid) {
+        if (onJoinApply) onJoinApply(joinCandidate);
+        else onMove(drag.selection, joinCandidate.targetX, joinCandidate.targetY, true);
+        joined = true;
       }
-      // PRD 74：Dock后与第三板区重叠时不提交任何坐标。
-    } else {
-      onMove(drag.selection, moved.x, moved.y, true);
+    }
+    if (!joined) {
+      // PRD 19-25：Quick Dock只针对FloorSlab，Guide激活时直接复用floor-docking并禁止二次普通Snap。
+      const guide = movingSlab ? computeDragGuide(movingSlab, moved.x, moved.y) : null;
+      if (movingSlab && guide) {
+        const request = quickDockRequest(guide, movingSlab.id);
+        const preview = previewFloorDock(stateWithPreviewSource(movingSlab, moved.x, moved.y), request);
+        if (preview?.valid) {
+          if (onQuickDock) onQuickDock(request, moved.x, moved.y);
+          else onMove(drag.selection, preview.x, preview.y, true);
+        }
+        // PRD 74：Dock后与第三板区重叠时不提交任何坐标。
+      } else {
+        onMove(drag.selection, moved.x, moved.y, true);
+      }
     }
     dragRef.current = null;
     setDragPreview(null);
+    joinRef.current = null;
+    lastJoinKeyRef.current = null;
+    setJoinPreview(null);
     onDragStateChange?.(false);
     if (event.pointerType !== "mouse" && event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   };
@@ -687,6 +751,9 @@ export function FloorCanvas({
     cancelPendingInteractionFrame();
     dragRef.current = null;
     setDragPreview(null);
+    joinRef.current = null;
+    lastJoinKeyRef.current = null;
+    setJoinPreview(null);
     onDragStateChange?.(false);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   };
@@ -699,6 +766,9 @@ export function FloorCanvas({
     dragRef.current = null;
     cancelPendingInteractionFrame();
     setDragPreview(null);
+    joinRef.current = null;
+    lastJoinKeyRef.current = null;
+    setJoinPreview(null);
     onDragStateChange?.(false);
     try {
       svgRef.current?.setPointerCapture(event.pointerId);
@@ -1065,16 +1135,20 @@ export function FloorCanvas({
           const movingSlab = state.slabs.find((slab) => slab.id === dragPreview.objectId);
           const moving = movingSlab ?? state.openings.find((opening) => opening.id === dragPreview.objectId);
           if (!moving) return null;
-          const guide = movingSlab ? computeDragGuide(movingSlab, dragPreview.x, dragPreview.y) : null;
+          // Smart Join V1.3.2：存在磁吸候选时优先显示精确 Join 预览（PRD 48：预览与松手结果一致）。
+          const joinCandidate = movingSlab ? joinPreview : null;
+          const guide = !joinCandidate && movingSlab ? computeDragGuide(movingSlab, dragPreview.x, dragPreview.y) : null;
           const dockPreviewResult = movingSlab && guide
             ? previewFloorDock(stateWithPreviewSource(movingSlab, dragPreview.x, dragPreview.y), quickDockRequest(guide, movingSlab.id))
             : null;
           // PRD 19/22：预览位置与最终提交完全一致（由floor-docking计算）。
-          const previewX = dockPreviewResult?.valid ? dockPreviewResult.x : dragPreview.x;
-          const previewY = dockPreviewResult?.valid ? dockPreviewResult.y : dragPreview.y;
-          const aligned = guide ? Math.abs(guide.gapMm) < 1e-6 : false;
-          const conflict = Boolean(dockPreviewResult && !dockPreviewResult.valid);
-          const guideColor = conflict ? "#dc2626" : aligned ? "#16a34a" : "#2563eb";
+          const previewX = joinCandidate ? joinCandidate.targetX : dockPreviewResult?.valid ? dockPreviewResult.x : dragPreview.x;
+          const previewY = joinCandidate ? joinCandidate.targetY : dockPreviewResult?.valid ? dockPreviewResult.y : dragPreview.y;
+          const aligned = joinCandidate ? true : guide ? Math.abs(guide.gapMm) < 1e-6 : false;
+          const conflict = !joinCandidate && Boolean(dockPreviewResult && !dockPreviewResult.valid);
+          const guideColor = joinCandidate
+            ? joinCandidate.predictedSupport === "inner-wall" ? "#2563eb" : "#16a34a"
+            : conflict ? "#dc2626" : aligned ? "#16a34a" : "#2563eb";
           const conflictNames = dockPreviewResult ? dockPreviewResult.conflicts.join("、") : "";
           // Floor Physical V1.3：Ghost 用物理坐标显示；净坐标仍写回 State。
           const physicalSource = movingSlab
@@ -1084,24 +1158,34 @@ export function FloorCanvas({
           const sourcePhysicalY = physicalSource?.y ?? moving.y;
           const physicalPreviewX = sourcePhysicalX + (previewX - moving.x);
           const physicalPreviewY = sourcePhysicalY + (previewY - moving.y);
-          const positionedPlan = dockPreviewResult?.valid && movingSlab
-            ? stateWithPreviewSource(movingSlab, dockPreviewResult.x, dockPreviewResult.y)
-            : null;
+          const positionedPlan = joinCandidate && movingSlab
+            ? stateWithPreviewSource(movingSlab, joinCandidate.targetX, joinCandidate.targetY)
+            : dockPreviewResult?.valid && movingSlab
+              ? stateWithPreviewSource(movingSlab, dockPreviewResult.x, dockPreviewResult.y)
+              : null;
           const previewWalls = positionedPlan
             ? buildFloorPhysicalLayout(positionedPlan).walls.filter((wall) => wall.slabIds.includes(moving.id))
             : [];
           const sharedBand = positionedPlan && guide
             ? floorPhysicalSharedBand(positionedPlan, moving.id, guide.targetSlabId)
             : null;
-          const guideLabel = !guide
-            ? ""
-            : conflict
-              ? `无法拼接：将与${conflictNames}重叠`
-              : aligned
-                ? sharedBand?.hasInner
-                  ? `✓ 净跨已对齐 · 内墙 ${formatMm(sharedBand.gapMm)}mm`
-                  : "✓ 连续楼板 · 物理间距 0mm"
-                : `松手将贴到${guide.targetSlabName}${floorDockDirectionLabel(guide.targetSide)}（差${formatMm(Math.abs(guide.gapMm))}mm）`;
+          // Smart Join 墙体预览（内墙 Ghost）：墙带来自 positionedPlan 的 Physical Layout。
+          const joinWallPreviews = joinCandidate && movingSlab
+            ? buildFloorPhysicalLayout(stateWithPreviewSource(movingSlab, joinCandidate.targetX, joinCandidate.targetY))
+              .walls.filter((wall) => wall.kind === "inner-wall" && wall.slabIds.includes(joinCandidate.sourceSlabId) && wall.slabIds.includes(joinCandidate.targetSlabId))
+            : [];
+          const joinGuideCoordinate = joinCandidate ? floorSlabJoinGuideCoordinate(state, joinCandidate) : null;
+          const guideLabel = joinCandidate
+            ? floorSlabJoinPreviewLabel(state, joinCandidate)
+            : !guide
+              ? ""
+              : conflict
+                ? `无法拼接：将与${conflictNames}重叠`
+                : aligned
+                  ? sharedBand?.hasInner
+                    ? `✓ 净跨已对齐 · 内墙 ${formatMm(sharedBand.gapMm)}mm`
+                    : "✓ 连续楼板 · 物理间距 0mm"
+                  : `松手将贴到${guide.targetSlabName}${floorDockDirectionLabel(guide.targetSide)}（差${formatMm(Math.abs(guide.gapMm))}mm）`;
           return (
             <g clipPath="url(#floor-plot-clip-v22)" data-floor-layer="drag-preview" pointerEvents="none" data-drag-preview="true" data-preview-x={dragPreview.x} data-preview-y={dragPreview.y}>
               <rect x={toX(sourcePhysicalX)} y={toY(sourcePhysicalY + moving.height)} width={Math.max(moving.width * effectiveScale, 1)} height={Math.max(moving.height * effectiveScale, 1)} fill="#94a3b8" fillOpacity="0.22" />
@@ -1110,6 +1194,49 @@ export function FloorCanvas({
                 <rect key={`preview-wall:${wall.id}`} x={toX(wall.x)} y={toY(wall.y + wall.height)} width={Math.max(wall.width * effectiveScale, 0)} height={Math.max(wall.height * effectiveScale, 0)} fill={wall.kind === "outer-wall" ? "#0f172a" : "#2563eb"} fillOpacity="0.55" />
               ))}
               <text x={toX(physicalPreviewX + moving.width / 2)} y={toY(physicalPreviewY + moving.height / 2) + 5} textAnchor="middle" fontSize="13" fontWeight="800" fill={guideColor} style={{ paintOrder: "stroke", stroke: "white", strokeWidth: 4 }}>{moving.name}</text>
+              {joinCandidate && joinGuideCoordinate && (
+                <g
+                  data-floor-join-preview="true"
+                  data-join-source={joinCandidate.sourceSlabId}
+                  data-join-target={joinCandidate.targetSlabId}
+                  data-join-side={joinCandidate.sourceSide}
+                  data-join-distance-mm={Math.round(joinCandidate.distanceMm)}
+                  data-join-shared-length-mm={Math.round(joinCandidate.projectedSharedLengthMm)}
+                  data-join-support={joinCandidate.predictedSupport}
+                >
+                  {joinGuideCoordinate.axis === "x"
+                    ? <line
+                        x1={toX(mapFloorNetAxisPoint("x", joinGuideCoordinate.coordinate, state, physicalLayout, [joinCandidate.targetSlabId]))}
+                        y1={toY(mapFloorNetAxisPoint("y", joinCandidate.projectedSharedStartMm, state, physicalLayout, [joinCandidate.targetSlabId]))}
+                        x2={toX(mapFloorNetAxisPoint("x", joinGuideCoordinate.coordinate, state, physicalLayout, [joinCandidate.targetSlabId]))}
+                        y2={toY(mapFloorNetAxisPoint("y", joinCandidate.projectedSharedEndMm, state, physicalLayout, [joinCandidate.targetSlabId]))}
+                        stroke={guideColor} strokeWidth="4" strokeDasharray={joinCandidate.predictedSupport === "inner-wall" ? undefined : "8 5"} strokeLinecap="round"
+                      />
+                    : <line
+                        x1={toX(mapFloorNetAxisPoint("x", joinCandidate.projectedSharedStartMm, state, physicalLayout, [joinCandidate.targetSlabId]))}
+                        y1={toY(mapFloorNetAxisPoint("y", joinGuideCoordinate.coordinate, state, physicalLayout, [joinCandidate.targetSlabId]))}
+                        x2={toX(mapFloorNetAxisPoint("x", joinCandidate.projectedSharedEndMm, state, physicalLayout, [joinCandidate.targetSlabId]))}
+                        y2={toY(mapFloorNetAxisPoint("y", joinGuideCoordinate.coordinate, state, physicalLayout, [joinCandidate.targetSlabId]))}
+                        stroke={guideColor} strokeWidth="4" strokeDasharray={joinCandidate.predictedSupport === "inner-wall" ? undefined : "8 5"} strokeLinecap="round"
+                      />}
+                  {joinWallPreviews.map((wall) => (
+                    <rect
+                      key={`join-wall-preview:${wall.id}`}
+                      data-floor-join-wall-preview="true"
+                      data-wall-thickness-mm={wall.thicknessMm}
+                      x={toX(wall.x)} y={toY(wall.y + wall.height)}
+                      width={Math.max(wall.width * effectiveScale, 0)} height={Math.max(wall.height * effectiveScale, 0)}
+                      fill="#2563eb" fillOpacity="0.4"
+                    />
+                  ))}
+                  <text
+                    x={toX(physicalPreviewX + moving.width / 2)}
+                    y={toY(physicalPreviewY + moving.height / 2) + 24}
+                    textAnchor="middle" fontSize="11" fontWeight="800" fill={guideColor}
+                    style={{ paintOrder: "stroke", stroke: "white", strokeWidth: 4 }}
+                  >{guideLabel}</text>
+                </g>
+              )}
               {guide && <g data-drag-guide={guide.axis} data-guide-gap={guide.gapMm}>
                 {guide.axis === "x"
                   ? <line x1={toX(mapFloorNetAxisPoint("x", guide.coordinate, state, physicalLayout, [guide.targetSlabId]))} y1={PLOT.y} x2={toX(mapFloorNetAxisPoint("x", guide.coordinate, state, physicalLayout, [guide.targetSlabId]))} y2={PLOT.y + PLOT.height} stroke={guideColor} strokeWidth={aligned ? 3 : 2} strokeDasharray={aligned ? undefined : "6 4"} />

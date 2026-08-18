@@ -6,6 +6,7 @@ import {
   type FloorSlab,
 } from "./floor-plan";
 import { describeSlabOverlap } from "./floor-geometry-tolerance";
+import { buildFloorSlabAdjacency } from "./floor-plan";
 
 const EPSILON = FLOOR_GEOMETRY_EPSILON_MM;
 
@@ -19,6 +20,11 @@ export type FloorDockRequest = {
   alignment: FloorDockAlignment;
 };
 
+export type FloorDockInvalidReason =
+  | "third-party-overlap"
+  | "no-shared-edge"
+  | "topology-conflict";
+
 export type FloorDockPreview = {
   sourceSlabId: string;
   targetSlabId: string;
@@ -31,6 +37,11 @@ export type FloorDockPreview = {
   moveYmm: number;
   valid: boolean;
   conflicts: string[];
+  /** Smart Join V1.3.2：Dock 成功必须真正产生 shared-slab。 */
+  sharedLengthMm: number;
+  resultSupport: "inner-wall" | "continuous" | null;
+  physicalGapMm: number;
+  invalidReason: FloorDockInvalidReason | null;
 };
 
 export const FLOOR_DOCK_DIRECTIONS: FloorDockDirection[] = ["west", "east", "south", "north"];
@@ -86,6 +97,31 @@ export function previewFloorDock(plan: FloorPlanState, request: FloorDockRequest
   const conflicts = plan.slabs
     .filter((slab) => slab.id !== source.id && slab.id !== target.id && floorSlabsOverlap(sourcePreview, slab))
     .map((slab) => slab.name);
+  // Smart Join V1.3.2：Dock 成功必须真正产生 shared-slab（Single Source of Truth），
+  // 不能再只靠 conflicts.length === 0 判定“拼接成功”。
+  const previewPlan: FloorPlanState = {
+    ...plan,
+    slabs: plan.slabs.map((slab) => slab.id === source.id ? sourcePreview : slab),
+  };
+  const adjacency = buildFloorSlabAdjacency(previewPlan).find(
+    (item) => item.slabIds.includes(source.id) && item.slabIds.includes(target.id),
+  );
+  const sharedLengthMm = adjacency?.sharedLengthMm ?? 0;
+  const resultSupport = adjacency
+    ? adjacency.supports.includes("inner-wall")
+      ? "inner-wall"
+      : adjacency.supports.includes("continuous")
+        ? "continuous"
+        : null
+    : null;
+  const invalidReason: FloorDockInvalidReason | null = conflicts.length > 0
+    ? "third-party-overlap"
+    : sharedLengthMm <= EPSILON
+      ? "no-shared-edge"
+      : resultSupport === null
+        ? "topology-conflict"
+        : null;
+  const valid = invalidReason === null;
   return {
     sourceSlabId: source.id,
     targetSlabId: target.id,
@@ -96,9 +132,35 @@ export function previewFloorDock(plan: FloorPlanState, request: FloorDockRequest
     y,
     moveXmm: x - source.x,
     moveYmm: y - source.y,
-    valid: conflicts.length === 0,
+    valid,
     conflicts,
+    sharedLengthMm,
+    resultSupport,
+    physicalGapMm: resultSupport === "inner-wall" ? Math.max(plan.innerWallThickness, 0) : 0,
+    invalidReason,
   };
+}
+
+/**
+ * Smart Join V1.3.2 Auto Dock：评估 preserve/start/center/end 四种对齐，
+ * 选择第一个有效且移动距离最小、共享长度最长的预览。
+ * 全部无效时返回 preserve 预览（携带 invalidReason 供 UI 解释）。
+ */
+export function previewFloorDockAuto(
+  plan: FloorPlanState,
+  sourceSlabId: string,
+  targetSlabId: string,
+  direction: FloorDockDirection,
+): FloorDockPreview | null {
+  const previews = (["preserve", "start", "center", "end"] as const)
+    .map((alignment) => previewFloorDock(plan, { sourceSlabId, targetSlabId, direction, alignment }))
+    .filter((preview): preview is FloorDockPreview => preview !== null);
+  if (previews.length === 0) return null;
+  const valid = previews.filter((preview) => preview.valid);
+  const best = [...(valid.length > 0 ? valid : previews)].sort((left, right) =>
+    left.moveXmm + Math.abs(left.moveYmm) - right.moveXmm - Math.abs(right.moveYmm)
+    || right.sharedLengthMm - left.sharedLengthMm);
+  return best[0] ?? previews[0];
 }
 
 /** 提交拼接；与第三方冲突时保持原位置（valid=false 不写入）。 */
