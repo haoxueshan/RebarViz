@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   clampViewportZoom,
+  ensureFloorBoundsVisible,
   expandViewportBounds,
   FLOOR_CANVAS_MAX_ZOOM,
   FLOOR_CANVAS_MIN_ZOOM,
+  floorViewportWorldBounds,
   panViewportByWorld,
   viewportForBounds,
   zoomViewportAt,
@@ -50,6 +52,47 @@ describe("Floor Canvas Viewport", () => {
     expect(expanded.minY).toBeCloseTo(-240, 9);
     expect(expanded.maxX).toBeCloseTo(1300, 9);
     expect(expanded.maxY).toBeCloseTo(1040, 9);
+  });
+});
+
+describe("Ensure Visible V1.3.1", () => {
+  // effectiveScale=1、plot=1000×650 → 视口世界范围 1000×650。
+  const plotW = 1000;
+  const plotH = 650;
+  const scale = 1;
+
+  it("规则A：对象已完整可见 → Viewport 完全不变", () => {
+    const viewport = { zoom: 1, centerX: 5000, centerY: 4000 };
+    const next = ensureFloorBoundsVisible(viewport, scale, { minX: 4500, minY: 3800, maxX: 5500, maxY: 4200 }, plotW, plotH);
+    expect(next).toEqual(viewport);
+  });
+
+  it("规则B：对象部分超出 → 只平移，Zoom 不变", () => {
+    const viewport = { zoom: 1, centerX: 5000, centerY: 4000 };
+    const next = ensureFloorBoundsVisible(viewport, scale, { minX: 5400, minY: 3800, maxX: 6000, maxY: 4200 }, plotW, plotH);
+    expect(next.zoom).toBe(viewport.zoom);
+    expect(next.centerX).toBeGreaterThan(viewport.centerX);
+    expect(next.centerY).toBeCloseTo(viewport.centerY, 6);
+  });
+
+  it("规则C：对象完全在视口外 → 平移 Center，Zoom 不变", () => {
+    const viewport = { zoom: 1, centerX: 0, centerY: 0 };
+    const next = ensureFloorBoundsVisible(viewport, scale, { minX: 10000, minY: 5000, maxX: 10200, maxY: 5200 }, plotW, plotH);
+    expect(next.zoom).toBe(viewport.zoom);
+    expect(next.centerX).toBeGreaterThan(0);
+    expect(next.centerY).toBeGreaterThan(0);
+    // 对象最终进入可视范围（含安全边距）。
+    const visible = floorViewportWorldBounds(next, next.zoom * scale, plotW, plotH);
+    expect(visible.maxX).toBeGreaterThan(10200);
+    expect(visible.maxY).toBeGreaterThan(5200);
+  });
+
+  it("规则D：对象大于视口 → 允许 Zoom Out，禁止 Zoom In", () => {
+    const viewport = { zoom: 3, centerX: 5000, centerY: 4000 };
+    const next = ensureFloorBoundsVisible(viewport, scale, { minX: 0, minY: 0, maxX: 4000, maxY: 3000 }, plotW, plotH);
+    expect(next.zoom).toBeLessThan(viewport.zoom);
+    expect(next.centerX).toBe(2000);
+    expect(next.centerY).toBe(1500);
   });
 });
 

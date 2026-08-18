@@ -75,6 +75,7 @@ export function FloorWorkspaceNavigator({
   plan,
   selection,
   geometryIssues,
+  disconnectedSlabIds,
   bottomOverrides,
   topOverrides,
   roleItems,
@@ -96,6 +97,8 @@ export function FloorWorkspaceNavigator({
   plan: FloorPlanState;
   selection: FloorSelection;
   geometryIssues: readonly FloorPlanIssue[];
+  /** V1.3.1：尚未连接到整层主体的板区（Assembly Derived）。 */
+  disconnectedSlabIds?: ReadonlySet<string>;
   bottomOverrides: ReadonlySet<string>;
   topOverrides: ReadonlySet<string>;
   roleItems: readonly FloorWorkspaceRoleItem[];
@@ -192,7 +195,8 @@ export function FloorWorkspaceNavigator({
                 const local = stage === "bottom" ? bottomOverrides.has(slab.id) : stage === "top" ? topOverrides.has(slab.id) : false;
                 const invalid = objectErrors.has(slab.id);
                 const warning = !invalid && objectWarnings.has(slab.id);
-                return <button key={slab.id} type="button" aria-current={selected ? "true" : undefined} data-navigator-object-id={slab.id} data-selected={selected ? "true" : "false"} onClick={() => onSelect({ kind: "slab", id: slab.id })} className={`flex min-h-11 w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left ${selected ? "bg-blue-50 ring-1 ring-blue-300" : "hover:bg-slate-50"}`}><Grid2X2 size={15} className={selected ? "text-blue-700" : "text-slate-400"} /><span className="min-w-0 flex-1"><strong className="block truncate text-xs text-slate-900">{slab.name}</strong><span className="block truncate text-[11px] text-slate-500">{SLAB_TYPE_LABELS[slab.type] ?? slab.type}{local ? " · 局部规格" : stage !== "plan" ? " · 整层默认" : ""}</span></span>{invalid ? <AlertTriangle size={15} className="shrink-0 text-rose-600" aria-label="存在几何错误" /> : warning ? <TriangleAlert size={15} className="shrink-0 text-amber-600" aria-label="存在几何警告" /> : local ? <span className="text-blue-600" aria-label="使用局部规格">●</span> : <Check size={14} className="shrink-0 text-emerald-600" />}</button>;
+                const disconnected = disconnectedSlabIds?.has(slab.id) ?? false;
+                return <button key={slab.id} type="button" aria-current={selected ? "true" : undefined} data-navigator-object-id={slab.id} data-selected={selected ? "true" : "false"} data-assembly-status={disconnected ? "disconnected" : "connected"} onClick={() => onSelect({ kind: "slab", id: slab.id })} className={`flex min-h-11 w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left ${selected ? "bg-blue-50 ring-1 ring-blue-300" : "hover:bg-slate-50"}`}><Grid2X2 size={15} className={selected ? "text-blue-700" : "text-slate-400"} /><span className="min-w-0 flex-1"><strong className="block truncate text-xs text-slate-900">{slab.name}</strong><span className="block truncate text-[11px] text-slate-500">{SLAB_TYPE_LABELS[slab.type] ?? slab.type}{local ? " · 局部规格" : stage !== "plan" ? " · 整层默认" : ""}</span></span>{disconnected ? <span data-assembly-status="disconnected" className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">未连接</span> : invalid ? <AlertTriangle size={15} className="shrink-0 text-rose-600" aria-label="存在几何错误" /> : warning ? <TriangleAlert size={15} className="shrink-0 text-amber-600" aria-label="存在几何警告" /> : local ? <span className="text-blue-600" aria-label="使用局部规格">●</span> : <Check size={14} className="shrink-0 text-emerald-600" />}</button>;
               })}
             </div>
           </div>

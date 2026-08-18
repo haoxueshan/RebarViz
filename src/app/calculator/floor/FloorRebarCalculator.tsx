@@ -115,6 +115,7 @@ import {
   resolveFloorGeometryTolerance,
 } from "@/lib/floor-geometry-tolerance";
 import { floorPhysicalSharedBand } from "@/lib/floor-physical-layout";
+import { buildFloorAssembly } from "@/lib/floor-assembly";
 import {
   createFloorHistory,
   pushFloorHistory,
@@ -591,6 +592,8 @@ export default function FloorRebarCalculator() {
 
   const atomic = useMemo(() => buildFloorAtomicBoundarySegments(canonicalPlan), [canonicalPlan]);
   const issues = useMemo(() => validateFloorPlanV2(canonicalPlan), [canonicalPlan]);
+  // Floor Assembly V1.3.1：整层拓扑连接分析（Derived only，不写任何 Storage/Schema）。
+  const assembly = useMemo(() => buildFloorAssembly(canonicalPlan), [canonicalPlan]);
   const errors = issues.filter((issue) => issue.level === "error");
   const warnings = issues.filter((issue) => issue.level === "warning");
   const rawBottomCalculation = useMemo(
@@ -671,8 +674,20 @@ export default function FloorRebarCalculator() {
     if (invalidDrafts.size > 0) result.push({ id: "plan:invalid-drafts", code: "invalid-draft", severity: "error", stage: "plan", title: `有 ${invalidDrafts.size} 个几何数字输入为空或非法。` });
     if (invalidBottomDrafts.size > 0) result.push({ id: "bottom:invalid-drafts", code: "invalid-draft", severity: "error", stage: "bottom", title: `有 ${invalidBottomDrafts.size} 个地筋数字输入为空或非法。` });
     if (invalidTopDrafts.size > 0) result.push({ id: "top:invalid-drafts", code: "invalid-draft", severity: "error", stage: "top", title: `有 ${invalidTopDrafts.size} 个面筋数字输入为空或非法。` });
+    if (!assembly.isFullyConnected) {
+      const disconnectedNames = assembly.disconnectedSlabIds.map((id) => canonicalPlan.slabs.find((slab) => slab.id === id)?.name ?? id);
+      result.push({
+        id: "plan:assembly-disconnected",
+        code: "floor-assembly-disconnected",
+        severity: "warning",
+        stage: "plan",
+        title: `${assembly.disconnectedSlabIds.length}个板区尚未连接到整层主体。`,
+        detail: `未连接板区：${disconnectedNames.join("、")}。建议使用拼接或对齐功能将板区连接到整层。`,
+        objectId: assembly.disconnectedSlabIds[0],
+      });
+    }
     return result;
-  }, [bottomCalculation.errors, bottomCalculation.warnings, canonicalPlan.openings, canonicalPlan.slabs, invalidBottomDrafts.size, invalidDrafts.size, invalidTopDrafts.size, issues, roleDomains, topCalculation.errors, topCalculation.warnings, topState.throughPaths]);
+  }, [assembly, bottomCalculation.errors, bottomCalculation.warnings, canonicalPlan.openings, canonicalPlan.slabs, invalidBottomDrafts.size, invalidDrafts.size, invalidTopDrafts.size, issues, roleDomains, topCalculation.errors, topCalculation.warnings, topState.throughPaths]);
   const workflowIssueCounts: Record<FloorWorkflowStage, number> = {
     plan: workspaceIssues.filter((issue) => issue.stage === "plan").length,
     bottom: workspaceIssues.filter((issue) => issue.stage === "bottom").length,
@@ -786,6 +801,7 @@ export default function FloorRebarCalculator() {
     setInvalidBottomDrafts(new Set());
     setInvalidTopDrafts(new Set());
     setInputRevision((value) => value + 1);
+    requestCanvasFocus("floor");
     window.localStorage.removeItem(FLOOR_DRAFT_KEY);
     window.localStorage.removeItem(FLOOR_REBAR_ROLE_STORAGE_KEY);
     window.localStorage.removeItem(FLOOR_BOTTOM_STORAGE_KEY);
@@ -1477,7 +1493,7 @@ export default function FloorRebarCalculator() {
       roleState={roleState}
       highlightedRoleDomainId={highlightedRoleDomainId}
       highlightedThroughPathId={selectedThroughPathId}
-      initialFitMode={canvasFocusRequest?.mode}
+      initialFitMode="floor"
       focusRequest={canvasFocusRequest}
       compactHeight={touchInput && profile.shortViewport}
       editMode={stage === "plan" ? editMode : "move"}
@@ -1503,7 +1519,7 @@ export default function FloorRebarCalculator() {
       onZoomChange={setCanvasZoomPercent}
     />
   );
-  const overlayNavigator = <FloorWorkspaceNavigator activeSection={navigatorSection} stage={stage} plan={state} selection={selection} geometryIssues={issues} bottomOverrides={new Set(Object.keys(bottomState.slabOverrides))} topOverrides={new Set(Object.keys(topState.slabOverrides))} roleItems={roleItems} throughItems={throughItems} selectedThroughPathId={selectedThroughPathId} onSelect={selectWorkspaceObject} onSelectRole={selectRoleItem} onSelectThrough={selectThroughPath} onAddSlab={addSlab} onAddOpening={addOpening} onDuplicate={duplicateSelected} onDelete={deleteSelected} onAddThrough={addThroughPath} />;
+  const overlayNavigator = <FloorWorkspaceNavigator activeSection={navigatorSection} stage={stage} plan={state} selection={selection} geometryIssues={issues} disconnectedSlabIds={new Set(assembly.disconnectedSlabIds)} bottomOverrides={new Set(Object.keys(bottomState.slabOverrides))} topOverrides={new Set(Object.keys(topState.slabOverrides))} roleItems={roleItems} throughItems={throughItems} selectedThroughPathId={selectedThroughPathId} onSelect={selectWorkspaceObject} onSelectRole={selectRoleItem} onSelectThrough={selectThroughPath} onAddSlab={addSlab} onAddOpening={addOpening} onDuplicate={duplicateSelected} onDelete={deleteSelected} onAddThrough={addThroughPath} />;
   // UI V5：布局只由 profile 决定。Desktop 52px Rail | Canvas（无 44px 列）；
   // Wide（≥1600px）真 Dock：Navigator 220-250 | Canvas 1fr | Inspector 340-380。
   // 注：wide 分支整体替换 grid-cols（Tailwind 自定义 breakpoint 排序不可靠，避免同元素双规则）。
@@ -1528,7 +1544,7 @@ export default function FloorRebarCalculator() {
   const statusDetail = stage === "plan"
     ? editMode === "dock" && dockHoverDirection
       ? `${floorDockDirectionLabel(dockHoverDirection)} · Gap ${dockPreview?.valid ? "0" : "--"}mm · Snap ${formatMm(state.snapDistanceMm)}mm`
-      : `Snap ${formatMm(state.snapDistanceMm)}mm · ${state.slabs.length}板区 · ${state.openings.length}洞口`
+      : `Snap ${formatMm(state.snapDistanceMm)}mm · ${state.slabs.length}板区 · ${state.openings.length}洞口 · ${assembly.isFullyConnected ? "整层已连接" : `未连接${assembly.disconnectedSlabIds.length}`}`
     : stage === "bottom"
       ? `${bottomCalculation.totalPieces} Piece · ${bottomCalculation.totalLengthM.toFixed(3)}m`
       : stage === "top"

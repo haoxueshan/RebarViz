@@ -19,10 +19,12 @@ import {
   type FloorCanvasFitMode,
 } from "@/lib/floor-2d";
 import {
+  ensureFloorBoundsVisible,
   expandViewportBounds,
   viewportForBounds,
   zoomViewportAt,
   type FloorCanvasViewport,
+  type FloorCanvasViewportBounds,
 } from "@/lib/floor-canvas-viewport";
 import {
   buildFloorPhysicalLayout,
@@ -288,7 +290,11 @@ export function FloorCanvas({
   const commandBarHeightRef = useRef(0);
   const transformRef = useRef<{ scale: number }>({ scale: 1 });
   const [fitMode, setFitMode] = useState<FloorCanvasFitMode>(initialFitMode);
-  const [viewport, setViewport] = useState<FloorCanvasViewport>({ zoom: 1, centerX: 0, centerY: 0 });
+  // Floor Physical V1.3：墙体几何唯一来源；canonicalPlan 变化后重新派生，不写任何 State。
+  const physicalLayout: FloorPhysicalLayout = useMemo(() => buildFloorPhysicalLayout(state), [state]);
+  // V1.3.1：世界取景框架只由用户显式 Fit 命令更新；Selection / Drag / Pan / Zoom 不驱动它。
+  const [worldBounds, setWorldBounds] = useState<FloorCanvasViewportBounds>(physicalLayout.floorBounds);
+  const [viewport, setViewport] = useState<FloorCanvasViewport>(() => viewportForBounds(physicalLayout.floorBounds));
   const viewportRef = useRef(viewport);
   viewportRef.current = viewport;
   useEffect(() => {
@@ -299,8 +305,6 @@ export function FloorCanvas({
   const [svgWidthPx, setSvgWidthPx] = useState(SVG_WIDTH);
   const [selectedPieceId, setSelectedPieceId] = useState<string | null>(null);
   const highlightedRoleDomain = roleDomains.find((domain) => domain.id === highlightedRoleDomainId);
-  // Floor Physical V1.3：墙体几何唯一来源；canonicalPlan 变化后重新派生，不写任何 State。
-  const physicalLayout: FloorPhysicalLayout = useMemo(() => buildFloorPhysicalLayout(state), [state]);
   // Dock Ghost 的物理位置：源板放到 Dock 预览坐标后重新派生（与最终 Drop 结果一致）。
   const dockPreviewPlan = useMemo(() => {
     if (!dockPreview) return state;
@@ -313,27 +317,7 @@ export function FloorCanvas({
     () => (dockPreview ? buildFloorPhysicalLayout(dockPreviewPlan) : null),
     [dockPreview, dockPreviewPlan],
   );
-  const bounds = useMemo(() => {
-    if (fitMode === "selection" && selection) {
-      const physical = selection.kind === "slab"
-        ? physicalLayout.slabs.find((slab) => slab.slabId === selection.id)
-        : physicalLayout.openings.find((opening) => opening.openingId === selection.id);
-      if (physical) return { minX: physical.x, minY: physical.y, maxX: physical.x + physical.width, maxY: physical.y + physical.height };
-    }
-    if (fitMode === "domain" && highlightedRoleDomain) {
-      const domainSlabs = physicalLayout.slabs.filter((slab) => highlightedRoleDomain.slabIds.includes(slab.slabId));
-      if (domainSlabs.length > 0) {
-        return domainSlabs.reduce((acc, slab) => ({
-          minX: Math.min(acc.minX, slab.x),
-          minY: Math.min(acc.minY, slab.y),
-          maxX: Math.max(acc.maxX, slab.x + slab.width),
-          maxY: Math.max(acc.maxY, slab.y + slab.height),
-        }), { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity });
-      }
-    }
-    // 默认取景包含外墙实体尺寸；all 模式还纳入物理洞口。
-    return fitMode === "all" ? physicalLayout.bounds : physicalLayout.floorBounds;
-  }, [fitMode, highlightedRoleDomain, physicalLayout, selection]);
+  const bounds = useMemo(() => worldBounds, [worldBounds]);
   const displayBoundaries = useMemo(() => buildFloorDisplayBoundarySegments(state), [state]);
   const atomicBoundaries = useMemo(() => buildFloorAtomicBoundarySegments(state), [state]);
   const atomicById = useMemo(() => new Map(atomicBoundaries.map((segment) => [segment.id, segment])), [atomicBoundaries]);
@@ -381,58 +365,49 @@ export function FloorCanvas({
     };
   }, []);
 
-  const boundsKey = fitMode === "selection" && selection
-    ? `${selection.kind}:${selection.id}`
-    : fitMode === "domain" && highlightedRoleDomain
-      ? highlightedRoleDomain.id
-      : fitMode;
-
-  // UI V3.1：Navigator 与一次性聚焦请求只更新 Viewport，不永久写入 fitMode；
-  // 这样点击不同板区时不会被持续 selection fit 反复重置视口。 
+  // V1.3.1：focusRequest 是一次性命令，只监听 id。
+  // - floor：用户/导入等显式整层取景命令 → 完整 Fit 并更新世界框架；
+  // - selection/domain：Navigator 定位 → Ensure Visible（已可见则完全不动）。
   useEffect(() => {
     if (!focusRequest) return;
+    const effectiveScale = transformRef.current.scale * viewportRef.current.zoom;
     if (focusRequest.mode === "floor") {
-      const base = viewportForBounds(physicalLayout.floorBounds);
+      const nextBounds = physicalLayout.floorBounds;
+      const base = viewportForBounds(nextBounds);
+      setWorldBounds(nextBounds);
       applyViewportImmediate({ ...base, centerY: base.centerY + barShiftMmRef.current });
       return;
     }
+    let target: FloorCanvasViewportBounds | null = null;
     if (focusRequest.mode === "selection" && selection) {
       const physical = selection.kind === "slab"
         ? physicalLayout.slabs.find((slab) => slab.slabId === selection.id)
         : physicalLayout.openings.find((opening) => opening.openingId === selection.id);
       if (physical) {
-        const boundsForTarget = expandViewportBounds({
+        target = {
           minX: physical.x,
           minY: physical.y,
           maxX: physical.x + physical.width,
           maxY: physical.y + physical.height,
-        }, 1.8);
-        applyViewportImmediate(viewportForBounds(boundsForTarget));
+        };
       }
-      return;
-    }
-    if (focusRequest.mode === "domain" && highlightedRoleDomain) {
+    } else if (focusRequest.mode === "domain" && highlightedRoleDomain) {
       const domainSlabs = physicalLayout.slabs.filter((slab) => highlightedRoleDomain.slabIds.includes(slab.slabId));
       if (domainSlabs.length > 0) {
-        const raw = domainSlabs.reduce((acc, slab) => ({
+        target = domainSlabs.reduce((acc, slab) => ({
           minX: Math.min(acc.minX, slab.x),
           minY: Math.min(acc.minY, slab.y),
           maxX: Math.max(acc.maxX, slab.x + slab.width),
           maxY: Math.max(acc.maxY, slab.y + slab.height),
         }), { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity });
-        applyViewportImmediate(viewportForBounds(expandViewportBounds(raw, 1.8)));
       }
+    }
+    if (target) {
+      const next = ensureFloorBoundsVisible(viewportRef.current, effectiveScale, target, PLOT.width, PLOT.height, { marginRatio: 0.1 });
+      if (next !== viewportRef.current) applyViewportImmediate(next);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusRequest?.id, selection, highlightedRoleDomain, physicalLayout]);
-
-  useEffect(() => {
-    const base = viewportForBounds(bounds);
-    setViewport({ ...base, centerY: base.centerY + barShiftMmRef.current });
-    // 只有Fit模式/选中对象变化时才重新适配；Zoom/Pan由用户操作更新Viewport。
-    // Command Bar 出现后的偏移通过 barShiftMmRef 一并带入。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [boundsKey]);
 
   // UI V3.1：Command Bar 真实高度测量，出现时把视口中心向上平移一半高度，
   // 保证 Fit 后的主要对象不被底部 Command Bar 遮挡（只改 Viewport，不改 Geometry）。
@@ -869,29 +844,34 @@ export function FloorCanvas({
                 ? physicalLayout.slabs.find((slab) => slab.slabId === selection.id)
                 : physicalLayout.openings.find((opening) => opening.openingId === selection.id);
               if (physical) {
-                applyViewportImmediate(viewportForBounds({
+                const nextBounds = {
                   minX: physical.x,
                   minY: physical.y,
                   maxX: physical.x + physical.width,
                   maxY: physical.y + physical.height,
-                }));
+                };
+                setWorldBounds(nextBounds);
+                applyViewportImmediate(viewportForBounds(nextBounds));
                 return;
               }
             }
             if (mode === "domain" && highlightedRoleDomain) {
               const domainSlabs = physicalLayout.slabs.filter((slab) => highlightedRoleDomain.slabIds.includes(slab.slabId));
               if (domainSlabs.length > 0) {
-                const raw = domainSlabs.reduce((acc, slab) => ({
+                const nextBounds = domainSlabs.reduce((acc, slab) => ({
                   minX: Math.min(acc.minX, slab.x),
                   minY: Math.min(acc.minY, slab.y),
                   maxX: Math.max(acc.maxX, slab.x + slab.width),
                   maxY: Math.max(acc.maxY, slab.y + slab.height),
                 }), { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity });
-                applyViewportImmediate(viewportForBounds(raw));
+                setWorldBounds(nextBounds);
+                applyViewportImmediate(viewportForBounds(nextBounds));
                 return;
               }
             }
-            const base = viewportForBounds(mode === "all" ? physicalLayout.bounds : physicalLayout.floorBounds);
+            const nextBounds = mode === "all" ? physicalLayout.bounds : physicalLayout.floorBounds;
+            setWorldBounds(nextBounds);
+            const base = viewportForBounds(nextBounds);
             applyViewportImmediate({ ...base, centerY: base.centerY + barShiftMmRef.current });
           }}
           zoomPercent={viewport.zoom * 100}
@@ -976,6 +956,7 @@ export function FloorCanvas({
           onDoubleClick={(event) => {
             if (event.target !== event.currentTarget) return;
             setFitMode("floor");
+            setWorldBounds(physicalLayout.floorBounds);
             applyViewportImmediate(viewportForBounds(physicalLayout.floorBounds));
           }}
         >

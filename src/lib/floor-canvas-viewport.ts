@@ -80,3 +80,85 @@ export function expandViewportBounds(
     maxY: bounds.maxY + padY,
   };
 }
+
+/** 当前 Viewport 覆盖的世界范围（effectiveScale = scale × zoom）。 */
+export function floorViewportWorldBounds(
+  viewport: FloorCanvasViewport,
+  effectiveScale: number,
+  plotWidthMm: number,
+  plotHeightMm: number,
+): FloorCanvasViewportBounds {
+  const safeScale = Math.max(effectiveScale, 1e-9);
+  const halfWidthMm = plotWidthMm / safeScale / 2;
+  const halfHeightMm = plotHeightMm / safeScale / 2;
+  return {
+    minX: viewport.centerX - halfWidthMm,
+    minY: viewport.centerY - halfHeightMm,
+    maxX: viewport.centerX + halfWidthMm,
+    maxY: viewport.centerY + halfHeightMm,
+  };
+}
+
+const ENSURE_VISIBLE_EPSILON = 1e-6;
+
+/**
+ * Ensure Visible（V1.3.1）：把对象带到当前可视区域内，尽量不改变观察尺度。
+ * - 规则A：对象已完整可见 → 返回原 Viewport（Zoom/Center 完全不变）；
+ * - 规则B/C：部分/完全在视口外 → 只平移 Center 进入安全边距，Zoom 不变；
+ * - 规则D：对象大于当前视口 → 允许必要 Zoom Out，禁止 Zoom In。
+ */
+export function ensureFloorBoundsVisible(
+  viewport: FloorCanvasViewport,
+  effectiveScale: number,
+  objectBounds: FloorCanvasViewportBounds,
+  plotWidthMm: number,
+  plotHeightMm: number,
+  options?: { marginRatio?: number },
+): FloorCanvasViewport {
+  const marginRatio = options?.marginRatio ?? 0.1;
+  const safeScale = Math.max(effectiveScale, 1e-9);
+  const viewWidthMm = plotWidthMm / safeScale;
+  const viewHeightMm = plotHeightMm / safeScale;
+  const visible = floorViewportWorldBounds(viewport, safeScale, plotWidthMm, plotHeightMm);
+  if (
+    objectBounds.minX >= visible.minX - ENSURE_VISIBLE_EPSILON
+    && objectBounds.maxX <= visible.maxX + ENSURE_VISIBLE_EPSILON
+    && objectBounds.minY >= visible.minY - ENSURE_VISIBLE_EPSILON
+    && objectBounds.maxY <= visible.maxY + ENSURE_VISIBLE_EPSILON
+  ) {
+    return viewport;
+  }
+  const safe = {
+    minX: visible.minX + viewWidthMm * marginRatio,
+    maxX: visible.maxX - viewWidthMm * marginRatio,
+    minY: visible.minY + viewHeightMm * marginRatio,
+    maxY: visible.maxY - viewHeightMm * marginRatio,
+  };
+  const objectWidth = Math.max(objectBounds.maxX - objectBounds.minX, 1);
+  const objectHeight = Math.max(objectBounds.maxY - objectBounds.minY, 1);
+  const safeWidth = Math.max(safe.maxX - safe.minX, 1);
+  const safeHeight = Math.max(safe.maxY - safe.minY, 1);
+  if (objectWidth <= safeWidth && objectHeight <= safeHeight) {
+    // 规则 B/C：只平移，Zoom 保持不变。
+    const overflowLeft = safe.minX - objectBounds.minX;
+    const overflowRight = objectBounds.maxX - safe.maxX;
+    const overflowBottom = safe.minY - objectBounds.minY;
+    const overflowTop = objectBounds.maxY - safe.maxY;
+    const deltaX = (overflowRight - overflowLeft) / 2;
+    const deltaY = (overflowTop - overflowBottom) / 2;
+    if (Math.abs(deltaX) <= ENSURE_VISIBLE_EPSILON && Math.abs(deltaY) <= ENSURE_VISIBLE_EPSILON) return viewport;
+    return {
+      zoom: viewport.zoom,
+      centerX: viewport.centerX + deltaX,
+      centerY: viewport.centerY + deltaY,
+    };
+  }
+  // 规则 D：对象比视口还大 → 适度 Zoom Out（禁止 Zoom In）。
+  const factor = Math.min(safeWidth / objectWidth, safeHeight / objectHeight);
+  const nextZoom = clampViewportZoom(viewport.zoom * Math.min(factor, 1));
+  return {
+    zoom: nextZoom,
+    centerX: (objectBounds.minX + objectBounds.maxX) / 2,
+    centerY: (objectBounds.minY + objectBounds.maxY) / 2,
+  };
+}
