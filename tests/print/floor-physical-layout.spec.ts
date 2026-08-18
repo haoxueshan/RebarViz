@@ -40,7 +40,7 @@ async function installDefaultWorkspace(page: import("@playwright/test").Page) {
   await page.goto("/calculator/floor");
   await page.evaluate(({ draftKey, bottomKey, topKey, roleKey, state }) => {
     localStorage.setItem(draftKey, JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       savedAt: new Date().toISOString(),
       state,
     }));
@@ -104,7 +104,7 @@ test("Continuous共享边：物理0mm共边且无内墙实体", async ({ page })
     support: "continuous",
   }];
   await page.evaluate(({ draftKey, state }) => {
-    localStorage.setItem(draftKey, JSON.stringify({ schemaVersion: 2, savedAt: new Date().toISOString(), state }));
+    localStorage.setItem(draftKey, JSON.stringify({ schemaVersion: 3, savedAt: new Date().toISOString(), state }));
   }, { draftKey: DRAFT_KEY, state: continuousState });
   await page.reload();
   const canvas = page.locator('svg[aria-label*="整层板区"]');

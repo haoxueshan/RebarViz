@@ -11,6 +11,7 @@ import {
   type FloorTangentConstraint,
 } from "./floor-topology";
 import { solveFloorTopology } from "./floor-topology-solver";
+import { materializeFloorTopologyPositions } from "./floor-topology-editor";
 
 /**
  * Floor Topology V1.4A Legacy Migration：Plan V2（net-layout-v1）→ Plan V3（clear-space-physical-v2）。
@@ -260,12 +261,13 @@ export function migrateFloorPlanV2ToV3(legacy: FloorPlanState): {
     report.wallGapConnections += 1;
   }
   migrationWarning(legacy, report);
+  // V1.4A.2：迁移后 solve + materialize，slab.x/y 即 Physical Canonical 坐标（Editor = Canvas = Solved）。
   return {
-    plan: {
+    plan: materializeFloorTopologyPositions({
       ...legacy,
       coordinateModel: "clear-space-physical-v2",
       connections: confirmed,
-    },
+    }),
     report,
   };
 }

@@ -84,6 +84,15 @@ import {
   buildCanonicalFloorAtomicBoundarySegments,
   validateFloorPlanState,
 } from "@/lib/floor-topology-adapter";
+import {
+  applyFloorSlabPhysicalMoveV3,
+  applyFloorSlabResizeV3,
+  defaultFloorOpeningPositionV3,
+  duplicateFloorSlabPositionV3,
+  floorConnectionsForSlab,
+  nextFloorSlabPhysicalPositionV3,
+  removeFloorConnections,
+} from "@/lib/floor-topology-editor";
 import { createFloorDraftRecord, FLOOR_DRAFT_KEY, parseFloorDraftRecord } from "@/lib/floor-plan-storage";
 import {
   buildFloorRebarRoleDomains,
@@ -747,6 +756,42 @@ export default function FloorRebarCalculator() {
 
   const updateSlab = (patch: Partial<FloorSlab>) => {
     if (!selectedSlab) return;
+    // V1.4A.2：V3 尺寸/位置修改是正式事务（Resize 保持 Connections；位置走 Physical Move + 自动 Detach）。
+    if (state.coordinateModel === "clear-space-physical-v2") {
+      if (patch.width !== undefined || patch.height !== undefined) {
+        let result = applyFloorSlabResizeV3(state, {
+          slabId: selectedSlab.id,
+          width: patch.width,
+          height: patch.height,
+        });
+        if (!result.ok && result.code === "resize-anchor-required") {
+          const horizontal = patch.width !== undefined;
+          const fixedStart = window.confirm(
+            `该房间${horizontal ? "东西" : "南北"}两侧都有连接，请选择固定边：\n确定 = 固定${horizontal ? "西" : "南"}边，取消 = 固定${horizontal ? "东" : "北"}边。`,
+          );
+          result = applyFloorSlabResizeV3(state, {
+            slabId: selectedSlab.id,
+            width: patch.width,
+            height: patch.height,
+            anchorX: horizontal ? (fixedStart ? "west" : "east") : "auto",
+            anchorY: horizontal ? "auto" : (fixedStart ? "south" : "north"),
+          });
+        }
+        if (result.ok) applyStateWithHistory(result.plan);
+        else window.alert(result.message);
+        return;
+      }
+      if (patch.x !== undefined || patch.y !== undefined) {
+        const moved = applyFloorSlabPhysicalMoveV3(
+          state,
+          selectedSlab.id,
+          patch.x ?? selectedSlab.x,
+          patch.y ?? selectedSlab.y,
+        );
+        applyStateWithHistory(moved.plan);
+        return;
+      }
+    }
     const next = resolveFloorGeometryTolerance({
       ...state,
       slabs: state.slabs.map((slab) => slab.id === selectedSlab.id ? { ...slab, ...patch } : slab),
@@ -766,8 +811,12 @@ export default function FloorRebarCalculator() {
   const addSlab = () => {
     // 空白工程的第一个板区从原点创建，后续板区继续放在已有 bounds 右侧。
     const isFirstSlab = state.slabs.length === 0;
+    // V1.4A.2：V3 使用 Physical Clear Bounds（Golden：maxX=10094 → 新板 x=10594）。
+    const v3Position = !isFirstSlab && state.coordinateModel === "clear-space-physical-v2"
+      ? nextFloorSlabPhysicalPositionV3(state)
+      : null;
     const bounds = floorPlanBounds(state.slabs);
-    const next: FloorSlab = { id: nextObjectId("slab"), name: nextAvailableFloorName(state.slabs.map((slab) => slab.name), "板区"), type: "room", x: isFirstSlab ? 0 : bounds.maxX, y: isFirstSlab ? 0 : bounds.minY, width: 3600, height: 3600 };
+    const next: FloorSlab = { id: nextObjectId("slab"), name: nextAvailableFloorName(state.slabs.map((slab) => slab.name), "板区"), type: "room", x: isFirstSlab ? 0 : (v3Position?.x ?? bounds.maxX), y: isFirstSlab ? 0 : (v3Position?.y ?? bounds.minY), width: 3600, height: 3600 };
     applyStateWithHistory({ ...state, slabs: [...state.slabs, next] });
     setSelection({ kind: "slab", id: next.id });
     setSelectedBoundaryId(null);
@@ -779,9 +828,13 @@ export default function FloorRebarCalculator() {
     const host = selectedSlab ?? state.slabs[0];
     const width = host ? Math.min(2400, Math.max(600, host.width / 2)) : 2400;
     const height = host ? Math.min(2400, Math.max(600, host.height / 2)) : 2400;
+    // V1.4A.2：V3 洞口基于 Physical Canonical Host（如 B.x=-1436，而不是 Legacy -1676）。
+    const v3Position = host && state.coordinateModel === "clear-space-physical-v2"
+      ? defaultFloorOpeningPositionV3(state, host.id, width, height)
+      : null;
     const next: FloorOpening = {
       id: nextObjectId("opening"), name: nextAvailableFloorName(state.openings.map((opening) => opening.name), "洞口"), type: "stair",
-      x: host ? host.x + (host.width - width) / 2 : 0, y: host ? host.y + (host.height - height) / 2 : 0, width, height,
+      x: v3Position ? v3Position.x : host ? host.x + (host.width - width) / 2 : 0, y: v3Position ? v3Position.y : host ? host.y + (host.height - height) / 2 : 0, width, height,
     };
     applyStateWithHistory({ ...state, openings: [...state.openings, next] });
     setSelection({ kind: "opening", id: next.id });
@@ -816,7 +869,11 @@ export default function FloorRebarCalculator() {
 
   const duplicateSelected = () => {
     if (selectedSlab) {
-      const next = { ...selectedSlab, id: nextObjectId("slab"), name: nextAvailableFloorName(state.slabs.map((slab) => slab.name), "板区"), x: selectedSlab.x + selectedSlab.width };
+      // V1.4A.2：V3 Duplicate 基于 Physical Canonical 坐标（Golden C：6074+4020+500=10594）；禁止复制 Connections。
+      const v3Position = state.coordinateModel === "clear-space-physical-v2"
+        ? duplicateFloorSlabPositionV3(state, selectedSlab.id)
+        : null;
+      const next = { ...selectedSlab, id: nextObjectId("slab"), name: nextAvailableFloorName(state.slabs.map((slab) => slab.name), "板区"), x: v3Position?.x ?? selectedSlab.x + selectedSlab.width, y: v3Position?.y ?? selectedSlab.y };
       applyStateWithHistory({ ...state, slabs: [...state.slabs, next] });
       setSelection({ kind: "slab", id: next.id });
     } else if (selectedOpening) {
@@ -834,11 +891,16 @@ export default function FloorRebarCalculator() {
     const removedThroughPathIds = selection.kind === "slab"
       ? new Set(topState.throughPaths.filter((path) => path.slabIds.includes(selection.id)).map((path) => path.id))
       : new Set<string>();
+    // V1.4A.2：删除 V3 板区同时删除其全部 Connections（一步 Undo）。
+    const remainingConnections = state.coordinateModel === "clear-space-physical-v2"
+      ? removeFloorConnections(state, floorConnectionsForSlab(state, selection.id).map((connection) => connection.id)).connections
+      : state.connections;
     applyStateWithHistory({
       ...state,
       slabs: selection.kind === "slab" ? state.slabs.filter((slab) => slab.id !== selection.id) : state.slabs,
       openings: selection.kind === "opening" ? state.openings.filter((opening) => opening.id !== selection.id) : state.openings,
       supportRules: state.supportRules.filter((rule) => rule.target.kind === "slab-edge" ? rule.target.slabId !== selection.id : rule.target.openingId !== selection.id),
+      connections: selection.kind === "slab" ? remainingConnections : state.connections,
     });
     if (selection.kind === "slab") {
       setTopState((current) => ({
@@ -869,6 +931,11 @@ export default function FloorRebarCalculator() {
     if (nextSelection.kind === "slab") {
       const object = state.slabs.find((slab) => slab.id === nextSelection.id);
       if (!object) return;
+      // V1.4A.2：V3 禁止 Legacy Snap；拖动走 Physical Move（被破坏的 Connection 自动 Detach，一步 Undo）。
+      if (state.coordinateModel === "clear-space-physical-v2") {
+        applyStateWithHistory(applyFloorSlabPhysicalMoveV3(state, object.id, x, y).plan);
+        return;
+      }
       const moved = { ...object, x, y };
       const finalObject = snapFloorSlab(moved, state.slabs.filter((slab) => slab.id !== object.id), state.snapDistanceMm);
       const next = { ...state, slabs: state.slabs.map((slab) => slab.id === object.id ? finalObject : slab) };
@@ -878,7 +945,10 @@ export default function FloorRebarCalculator() {
     const object = state.openings.find((opening) => opening.id === nextSelection.id);
     if (!object) return;
     const moved = { ...object, x, y };
-    const finalObject = snapFloorOpening(moved, state.slabs, state.openings.filter((opening) => opening.id !== object.id), state.snapDistanceMm);
+    // V1.4A.2：V3 洞口不经过 Legacy Snap（坐标语义保持 Physical Canonical Host）。
+    const finalObject = state.coordinateModel === "clear-space-physical-v2"
+      ? moved
+      : snapFloorOpening(moved, state.slabs, state.openings.filter((opening) => opening.id !== object.id), state.snapDistanceMm);
     const next = { ...state, openings: state.openings.map((opening) => opening.id === object.id ? finalObject : opening) };
     applyStateWithHistory(resolveFloorGeometryTolerance(next).plan);
   };

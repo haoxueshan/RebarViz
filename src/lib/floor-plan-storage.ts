@@ -1,5 +1,6 @@
 import { normalizeFloorPlanState, normalizeFloorPlanStateV3, type FloorPlanState } from "./floor-plan";
 import { migrateFloorPlanV2ToV3 } from "./floor-topology-migration";
+import { materializeFloorTopologyPositions } from "./floor-topology-editor";
 
 export const FLOOR_DRAFT_KEY = "rebarviz:floor-rebar:draft:v1";
 export const FLOOR_DRAFT_SCHEMA_VERSION = 3 as const;
@@ -28,7 +29,8 @@ export function parseFloorDraftRecord(value: unknown): FloorDraftRecord | null {
     return {
       schemaVersion: FLOOR_DRAFT_SCHEMA_VERSION,
       savedAt,
-      state: normalizeFloorPlanStateV3(candidate.state),
+      // V1.4A.2：旧 V1.4A 已保存的 Plan3 加载时安全 Materialize（V3 坐标唯一语义）。
+      state: materializeFloorTopologyPositions(normalizeFloorPlanStateV3(candidate.state)),
     };
   }
   if (candidate.schemaVersion === 2 && candidate.state && typeof candidate.state === "object") {
