@@ -186,9 +186,12 @@ function sortPathIssues(issues: readonly FloorRebarPathIssue[]): FloorRebarPathI
     || left.message.localeCompare(right.message));
 }
 
-export function buildFloorRebarPathContextV3(plan: FloorPlanState): FloorRebarPathContext {
+export function buildFloorRebarPathContextV3(
+  plan: FloorPlanState,
+  precomputedSolution?: FloorTopologySolution,
+): FloorRebarPathContext {
   // Keep one derived solve in the reusable context. The plan itself is never changed.
-  const solution = solveFloorTopology(plan);
+  const solution = precomputedSolution ?? solveFloorTopology(plan);
   const topologyIssues = [...solution.issues].sort((left, right) =>
     left.code.localeCompare(right.code)
     || (left.connectionIds?.join("|") ?? "").localeCompare(right.connectionIds?.join("|") ?? "")

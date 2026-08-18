@@ -3,6 +3,7 @@ import {
   buildFloorDisplayBoundarySegments,
   buildFloorSlabAdjacency,
   findFloorComponents,
+  floorOpeningsOverlap,
   validateFloorPlanBase,
   validateFloorPlanV2,
   type FloorAtomicBoundarySegment,
@@ -11,6 +12,7 @@ import {
   type FloorPlanState,
   type FloorSlabAdjacency,
 } from "./floor-plan";
+import { findFloorOpeningSupportConflicts } from "./floor-opening-support";
 import {
   buildFloorTopologyBoundarySegmentsV3,
   buildFloorTopologyExteriorRanges,
@@ -59,9 +61,12 @@ export function buildCanonicalFloorSlabAdjacency(plan: FloorPlanState): FloorSla
   }));
 }
 
-export function findCanonicalFloorComponents(plan: FloorPlanState): string[][] {
+export function findCanonicalFloorComponents(
+  plan: FloorPlanState,
+  precomputedSolution?: FloorTopologySolution,
+): string[][] {
   if (!isTopologyV3(plan)) return findFloorComponents(plan);
-  return solveFloorTopology(plan).components
+  return (precomputedSolution ?? solveFloorTopology(plan)).components
     .map((component) => [...component.slabIds])
     .sort((left, right) => left.join("|").localeCompare(right.join("|")));
 }
@@ -70,12 +75,36 @@ export function findCanonicalFloorComponents(plan: FloorPlanState): string[][] {
  * V3 独立 Validation：不再运行 Legacy Rect Touch（near miss / legacy adjacency / legacy cells）。
  * 基础字段校验复用 validateFloorPlanBase；连接语义来自 Solver 与精确 Support 解析。
  */
-export function validateFloorPlanV3(plan: FloorPlanState): FloorPlanIssue[] {
+export function validateFloorPlanV3(
+  plan: FloorPlanState,
+  precomputedSolution?: FloorTopologySolution,
+): FloorPlanIssue[] {
   const issues: FloorPlanIssue[] = validateFloorPlanBase(plan);
-  const solution = solveFloorTopology(plan);
+  const solution = precomputedSolution ?? solveFloorTopology(plan);
 
   // Canonical 一致性（只报告，不自动修）：Editor State 必须等于 Solved Physical。
-  issues.push(...validateFloorTopologyMaterialized(plan));
+  issues.push(...validateFloorTopologyMaterialized(plan, solution));
+
+  for (let left = 0; left < plan.openings.length; left += 1) {
+    for (let right = left + 1; right < plan.openings.length; right += 1) {
+      if (!floorOpeningsOverlap(plan.openings[left], plan.openings[right])) continue;
+      issues.push({
+        level: "error",
+        code: "opening-overlap",
+        message: `${plan.openings[left].name} and ${plan.openings[right].name} overlap.`,
+        objectIds: [plan.openings[left].id, plan.openings[right].id],
+      });
+    }
+  }
+
+  findFloorOpeningSupportConflicts(plan).forEach((conflict) => {
+    issues.push({
+      level: "error",
+      code: "support-rule-conflict",
+      message: "An opening edge segment matches conflicting opening-cut and inner-wall support rules.",
+      objectIds: conflict.matchingRuleIds,
+    });
+  });
 
   // Connection 引用 / Side Pair / Range：Solver 已是唯一权威（不重复二次推导）。
   solution.issues.forEach((issue) => {
@@ -110,7 +139,7 @@ export function validateFloorPlanV3(plan: FloorPlanState): FloorPlanIssue[] {
   }
 
   // Assembly / component warning：Connection Graph（不是 Rect Touch）。
-  const components = findCanonicalFloorComponents(plan);
+  const components = findCanonicalFloorComponents(plan, solution);
   if (components.length > 1) {
     issues.push({
       level: "warning",
@@ -123,8 +152,11 @@ export function validateFloorPlanV3(plan: FloorPlanState): FloorPlanIssue[] {
 }
 
 /** Canonical Validator Dispatch：正式消费者唯一入口。 */
-export function validateFloorPlanState(plan: FloorPlanState): FloorPlanIssue[] {
-  return isTopologyV3(plan) ? validateFloorPlanV3(plan) : validateFloorPlanV2(plan);
+export function validateFloorPlanState(
+  plan: FloorPlanState,
+  precomputedSolution?: FloorTopologySolution,
+): FloorPlanIssue[] {
+  return isTopologyV3(plan) ? validateFloorPlanV3(plan, precomputedSolution) : validateFloorPlanV2(plan);
 }
 
 /** 派生几何（单一求解）：atomic / display / adjacency / exterior 共用同一次 Solver 结果。 */

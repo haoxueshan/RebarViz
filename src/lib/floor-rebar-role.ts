@@ -1,5 +1,6 @@
 import { buildFloorRebarDomains, type FloorRebarDomain } from "./floor-rebar-domain";
 import type { FloorPlanState } from "./floor-plan";
+import type { FloorTopologySolution } from "./floor-topology-solver";
 
 export type FloorBarRole = "main" | "secondary";
 export type FloorMainDirection = "x" | "y";
@@ -57,10 +58,13 @@ function rolePlan(plan: FloorPlanState): FloorPlanState {
   };
 }
 
-export function buildFloorRebarRoleDomains(plan: FloorPlanState): FloorRebarRoleDomain[] {
+export function buildFloorRebarRoleDomains(
+  plan: FloorPlanState,
+  precomputedSolution?: FloorTopologySolution,
+): FloorRebarRoleDomain[] {
   const withoutOpenings = rolePlan(plan);
   // Role plan没有Opening，因此各Slab完整面积之和就是参考域实际面积。
-  return buildFloorRebarDomains(withoutOpenings, "role-cell-domain").map((domain) => {
+  return buildFloorRebarDomains(withoutOpenings, "role-cell-domain", precomputedSolution).map((domain) => {
     const areaMm2 = domain.slabIds.reduce((sum, slabId) => {
       const slab = withoutOpenings.slabs.find((item) => item.id === slabId);
       return sum + (slab ? slab.width * slab.height : 0);
@@ -137,8 +141,9 @@ export function resolveFloorRebarRoleContext(
   plan: FloorPlanState,
   physicalDomains: readonly FloorRebarDomain[],
   state: FloorRebarRoleState,
+  precomputedSolution?: FloorTopologySolution,
 ): FloorRebarRoleContext {
-  const roleDomains = buildFloorRebarRoleDomains(plan);
+  const roleDomains = buildFloorRebarRoleDomains(plan, precomputedSolution);
   const errors: FloorRebarRoleIssue[] = [];
   const resolvedByRoleId = new Map<string, ResolvedFloorRole>();
   roleDomains.forEach((domain) => {

@@ -15,6 +15,10 @@ import {
   buildFloorBottomV3LinePieces,
 } from "./floor-bottom-v3";
 import { buildFloorRebarPathContextV3 } from "./floor-rebar-path";
+import {
+  solveFloorTopology,
+  type FloorTopologySolution,
+} from "./floor-topology-solver";
 import type { FloorBarLine, FloorBarPiece } from "./floor-rebar-types";
 import {
   DEFAULT_FLOOR_REBAR_ROLE_STATE,
@@ -203,8 +207,9 @@ function segmentLength(segment: FloorAtomicBoundarySegment): number {
 
 export function buildFloorBottomRebarDomains(
   plan: FloorPlanState,
+  precomputedSolution?: FloorTopologySolution,
 ): FloorRebarDomain[] {
-  return buildFloorRebarDomains(plan, "bottom-domain");
+  return buildFloorRebarDomains(plan, "bottom-domain", precomputedSolution);
 }
 
 function sameSettings(left: FloorBarSettings, right: FloorBarSettings): boolean {
@@ -534,35 +539,30 @@ function calculateFloorBottomRebarV3(
   roleState: FloorRebarRoleState,
   roleReviewRequired: boolean,
 ): FloorBottomCalculation {
-  const geometryIssues = validateFloorPlanState(plan);
+  const topologySolution = solveFloorTopology(plan);
+  const geometryIssues = validateFloorPlanState(plan, topologySolution);
   const warnings: FloorBottomIssue[] = geometryIssues
     .filter((issue) => issue.level === "warning")
     .map(({ code, message, objectIds }) => ({ code, message, objectIds }));
   const geometryErrors: FloorBottomIssue[] = geometryIssues
     .filter((issue) => issue.level === "error")
     .map(({ code, message, objectIds }) => ({ code, message, objectIds }));
-  const domains = buildFloorBottomRebarDomains(plan);
-  const roleContext = resolveFloorRebarRoleContext(plan, domains, roleState);
+  const domains = buildFloorBottomRebarDomains(plan, topologySolution);
+  const roleContext = resolveFloorRebarRoleContext(plan, domains, roleState, topologySolution);
   const reviewErrors: FloorBottomIssue[] = roleReviewRequired ? [{
     code: "bottom-role-review-required",
     message: "旧版本的东西/南北向直径已迁移为主/副筋语义，请确认当前地筋主筋、副筋直径后再生成正式料单。",
-  }] : [];
-  const openingErrors: FloorBottomIssue[] = plan.openings.length > 0 ? [{
-    code: "bottom-v3-opening-clipping-not-ready",
-    message: "新版楼板地筋路径已就绪，但洞口正式裁筋将在V1.4C.3完成；为防止生成穿过洞口的错误料单，当前暂停地筋正式计算。",
-    objectIds: plan.openings.map((opening) => opening.id).sort(),
   }] : [];
   const errors = [
     ...geometryErrors,
     ...roleContext.errors,
     ...reviewErrors,
     ...validateBottomState(plan, bottom, domains, roleContext.mainDirectionByPhysicalDomain),
-    ...openingErrors,
   ];
   if (errors.length > 0) return emptyCalculation(domains, roleContext.roleDomains, errors, warnings);
 
   // One reusable context owns the V3 topology solve used by every scanline.
-  const pathContext = buildFloorRebarPathContextV3(plan);
+  const pathContext = buildFloorRebarPathContextV3(plan, topologySolution);
   if (!pathContext.isValid) {
     const contextErrors: FloorBottomIssue[] = pathContext.topologyIssues
       .filter((issue) => issue.level === "error")

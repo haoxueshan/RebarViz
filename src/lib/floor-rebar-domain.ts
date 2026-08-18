@@ -5,7 +5,10 @@ import {
   type FloorPlanState,
   type FloorTopologyCell,
 } from "./floor-plan";
-import { solveFloorTopology } from "./floor-topology-solver";
+import {
+  solveFloorTopology,
+  type FloorTopologySolution,
+} from "./floor-topology-solver";
 
 export type FloorRebarDomain = {
   id: string;
@@ -62,8 +65,12 @@ function atomicCoversEdge(
  * 不再用 Legacy Cells / Rect Touch；域几何取 Solved Clear Rect 并集。
  * 正式钢筋长度算法（V1.4C）完成前，Bottom/Top 计算对 V3 有 Safety Guard。
  */
-function buildFloorRebarDomainsV3(plan: FloorPlanState, idPrefix: string): FloorRebarDomain[] {
-  const solution = solveFloorTopology(plan);
+function buildFloorRebarDomainsV3(
+  plan: FloorPlanState,
+  idPrefix: string,
+  precomputedSolution?: FloorTopologySolution,
+): FloorRebarDomain[] {
+  const solution = precomputedSolution ?? solveFloorTopology(plan);
   const solvedById = new Map(solution.slabs.map((slab) => [slab.slabId, slab]));
   const graph = new Map<string, Set<string>>(plan.slabs.map((slab) => [slab.id, new Set<string>()]));
   solution.solvedConnections.forEach((solved) => {
@@ -118,9 +125,10 @@ function buildFloorRebarDomainsV3(plan: FloorPlanState, idPrefix: string): Floor
 export function buildFloorRebarDomains(
   plan: FloorPlanState,
   idPrefix = "rebar-domain",
+  precomputedSolution?: FloorTopologySolution,
 ): FloorRebarDomain[] {
   if (plan.coordinateModel === "clear-space-physical-v2") {
-    return buildFloorRebarDomainsV3(plan, idPrefix);
+    return buildFloorRebarDomainsV3(plan, idPrefix, precomputedSolution);
   }
   const cells = buildFloorTopologyCells(plan).filter(
     (cell): cell is FloorTopologyCell & { effectiveSlabId: string } => Boolean(cell.effectiveSlabId),

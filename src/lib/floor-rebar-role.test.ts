@@ -10,6 +10,7 @@ import {
   resolveRoleDomainForPhysicalDomain,
   type FloorRebarRoleState,
 } from "./floor-rebar-role";
+import { solveFloorTopology } from "./floor-topology-solver";
 
 function slab(id: string, x: number, y: number, width: number, height: number): FloorSlab {
   return { id, name: id, type: "room", x, y, width, height };
@@ -26,6 +27,24 @@ function plan(slabs: FloorSlab[], openings: FloorOpening[] = [], supportRules: F
 const emptyRoleState: FloorRebarRoleState = { mainDirectionOverrides: {} };
 
 describe("Floor Rebar Role Domain", () => {
+  it("reuses the physical topology solution after removing opening-only role inputs", () => {
+    const state: FloorPlanState = {
+      ...plan(
+        [slab("a", 0, 0, 4000, 3000)],
+        [opening("o", 1500, 1000, 1000, 1000)],
+        [{
+          id: "opening-wall",
+          target: { kind: "opening-edge", openingId: "o", side: "west", range: { mode: "whole" } },
+          support: "inner-wall",
+        }],
+      ),
+      coordinateModel: "clear-space-physical-v2",
+      connections: [],
+    };
+    const solution = solveFloorTopology(state);
+    expect(buildFloorRebarRoleDomains(state, solution)).toEqual(buildFloorRebarRoleDomains(state));
+  });
+
   it("贯穿Opening只拆Physical Domain，不拆Role Domain", () => {
     const state = plan(
       [slab("a", 0, 0, 6000, 4000)],

@@ -24,7 +24,7 @@ export type FloorBarLine = {
   alignmentGroupId?: string;
 };
 
-/** Opening裁断并解析两端Atomic Boundary后，真正参与下料的一根钢筋实物件。 */
+/** Opening裁断并解析两端正式边界后，真正参与下料的一根钢筋实物件。 */
 export type FloorBarPiece = {
   id: string;
   lineId: string;
@@ -38,9 +38,9 @@ export type FloorBarPiece = {
   runStartMm: number;
   runEndMm: number;
   netLengthMm: number;
-  /** Legacy为Atomic Boundary ID；V3为Connection ID或稳定派生的Exterior Boundary ID。 */
+  /** Legacy为Atomic Boundary ID；V3为Connection ID或稳定派生的Exterior / Opening Boundary ID。 */
   startBoundaryId: string;
-  /** Legacy为Atomic Boundary ID；V3为Connection ID或稳定派生的Exterior Boundary ID。 */
+  /** Legacy为Atomic Boundary ID；V3为Connection ID或稳定派生的Exterior / Opening Boundary ID。 */
   endBoundaryId: string;
   startSupport: FloorResolvedSupport;
   endSupport: FloorResolvedSupport;

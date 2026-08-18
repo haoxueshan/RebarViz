@@ -194,9 +194,12 @@ export function materializeFloorTopologyPositions(plan: FloorPlanState): FloorPl
  * Canonical Consistency Validator（只报告，不偷偷修数据）：
  * V3 逐 Slab 比较 plan.x/y vs solve.x/y，差异 > EPSILON → topology-v3-not-materialized。
  */
-export function validateFloorTopologyMaterialized(plan: FloorPlanState): FloorPlanIssue[] {
+export function validateFloorTopologyMaterialized(
+  plan: FloorPlanState,
+  precomputedSolution?: FloorTopologySolution,
+): FloorPlanIssue[] {
   if (!isV3(plan)) return [];
-  const solution = solveFloorTopology(plan);
+  const solution = precomputedSolution ?? solveFloorTopology(plan);
   const solved = new Map(solution.slabs.map((slab) => [slab.slabId, slab]));
   const issues: FloorPlanIssue[] = [];
   plan.slabs.forEach((slab) => {

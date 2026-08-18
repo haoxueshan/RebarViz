@@ -12,6 +12,7 @@ import {
 import { buildFloorRebarPathContextV3 } from "./floor-rebar-path";
 import { floorRoleDomainKey, type FloorRebarRoleState } from "./floor-rebar-role";
 import { stableFloorConnectionId, type FloorEdgeConnection } from "./floor-topology";
+import { theoreticalUnitWeight } from "./slab-calculator";
 import {
   applyFloorTopologyRepairs,
   detectFloorTopologyRepairCandidates,
@@ -69,7 +70,46 @@ function roleState(entries: Array<[string[], "x" | "y"]>): FloorRebarRoleState {
   return { mainDirectionOverrides: Object.fromEntries(entries.map(([ids, direction]) => [floorRoleDomainKey(ids), direction])) };
 }
 
-describe("Floor Rebar V1.4C.2 Bottom Normal Piece Engine", () => {
+function linePieces(
+  plan: FloorPlanState,
+  direction: "x" | "y",
+  positionMm: number,
+  slabIds = plan.slabs.map((item) => item.id),
+) {
+  const context = buildFloorRebarPathContextV3(plan);
+  const solved = slabIds.flatMap((id) => {
+    const item = context.slabsById.get(id);
+    return item ? [item] : [];
+  });
+  const domain = {
+    id: `test-domain:${slabIds.join("|")}`,
+    slabIds: [...slabIds],
+    cellIds: [],
+    minX: Math.min(...solved.map((item) => item.x)),
+    minY: Math.min(...solved.map((item) => item.y)),
+    maxX: Math.max(...solved.map((item) => item.x + item.width)),
+    maxY: Math.max(...solved.map((item) => item.y + item.height)),
+  };
+  return buildFloorBottomV3LinePieces({
+    context,
+    domain,
+    line: {
+      id: `test-line:${direction}:${positionMm}:${slabIds.join("|")}`,
+      domainId: domain.id,
+      slabIds: [...slabIds],
+      layer: "bottom",
+      direction,
+      role: "main",
+      source: "normal",
+      positionMm,
+    },
+    diameter: 10,
+    spacing: 200,
+    outerWallThicknessMm: plan.outerWallThickness,
+  });
+}
+
+describe("Floor Rebar V1.4C.3 Bottom Opening Clipping", () => {
   it("single room uses physical clear paths and the requested golden lengths", () => {
     const plan = v3Plan([slab("a", 0, 0, 4000, 3000)]);
     const result = calculateFloorBottomRebar(plan, bottom({
@@ -83,6 +123,8 @@ describe("Floor Rebar V1.4C.2 Bottom Normal Piece Engine", () => {
     expect(new Set(result.pieces.filter((piece) => piece.direction === "x").map((piece) => piece.singleLengthMm))).toEqual(new Set([4480]));
     expect(new Set(result.pieces.filter((piece) => piece.direction === "y").map((piece) => piece.singleLengthMm))).toEqual(new Set([3480]));
     expect(result.totalLengthM).toBeCloseTo(136.8, 10);
+    expect(result.totalWeightKg).toBeCloseTo(136.8 * theoreticalUnitWeight(10), 10);
+    expect(result.groups.reduce((sum, group) => sum + group.weightKg, 0)).toBeCloseTo(result.totalWeightKg!, 10);
     expect(result.pieces.every((piece) =>
       piece.intermediateWallMm === 0
       && piece.intermediateBoundaryIds.length === 0
@@ -267,13 +309,45 @@ describe("Floor Rebar V1.4C.2 Bottom Normal Piece Engine", () => {
     expect([lower.startBoundaryId, lower.endBoundaryId]).toEqual(["connection:meng-f:east:meng-k:west", "connection:meng-k:east:meng-l:west"]);
   });
 
-  it("blocks V3 openings, invalid endpoints, and remains deterministic", () => {
+  it("clips a cloned Meng B opening without changing remote pieces", () => {
+    const source = incompleteMengPlan3();
+    const candidates = detectFloorTopologyRepairCandidates(source).candidates;
+    const repaired = applyFloorTopologyRepairs(source, candidates.map((candidate) => ({ candidateId: candidate.id, action: "inner-wall" as const })));
+    if (!repaired.ok) throw new Error(repaired.message);
+    const settings = bottom({
+      countMode: "round",
+      defaults: { mainDiameter: 10, secondaryDiameter: 10, xSpacing: 160, ySpacing: 160 },
+    });
+    const plain = calculateFloorBottomRebar(repaired.plan, settings);
+    const openedPlan = structuredClone(repaired.plan);
+    const context = buildFloorRebarPathContextV3(openedPlan);
+    const b = context.slabsById.get("meng-b")!;
+    openedPlan.openings.push({
+      id: "meng-b-test-opening",
+      name: "Meng B Test Opening",
+      type: "void",
+      x: b.x + b.width * 0.35,
+      y: b.y + b.height * 0.35,
+      width: b.width * 0.3,
+      height: b.height * 0.3,
+    });
+    const opened = calculateFloorBottomRebar(openedPlan, settings);
+    expect(opened.isValid).toBe(true);
+    expect(opened.lines).toEqual(plain.lines);
+    expect(opened.pieces.filter((piece) => piece.slabIds.includes("meng-b")).length)
+      .toBeGreaterThan(plain.pieces.filter((piece) => piece.slabIds.includes("meng-b")).length);
+    expect(opened.pieces.some((piece) => piece.startBoundaryId.startsWith("v3-opening:meng-b-test-opening:")
+      || piece.endBoundaryId.startsWith("v3-opening:meng-b-test-opening:"))).toBe(true);
+    expect(opened.pieces.filter((piece) => !piece.slabIds.includes("meng-b")))
+      .toEqual(plain.pieces.filter((piece) => !piece.slabIds.includes("meng-b")));
+  });
+
+  it("supports V3 openings, rejects invalid endpoints, and remains deterministic", () => {
     const plan = v3Plan([slab("a", 0, 0, 4000, 3000)], [], [], [{ id: "o", name: "O", type: "void", x: 100, y: 100, width: 200, height: 200 }]);
     const result = calculateFloorBottomRebar(plan, bottom());
-    expect(result.isValid).toBe(false);
-    expect(result.errors.map((issue) => issue.code)).toContain("bottom-v3-opening-clipping-not-ready");
-    expect(result.lines).toEqual([]);
-    expect(result.groups).toEqual([]);
+    expect(result.isValid).toBe(true);
+    expect(result.errors).toEqual([]);
+    expect(result.lines.length).toBeGreaterThan(0);
     const stablePlan = v3Plan([slab("a", 0, 0, 4000, 3000)]);
     const stableBottom = bottom();
     const stableRole = roleState([]);
@@ -326,6 +400,185 @@ describe("Floor Rebar V1.4C.2 Bottom Normal Piece Engine", () => {
     const review = calculateFloorBottomRebar(stablePlan, stableBottom, stableRole, true);
     expect(review.errors.map((issue) => issue.code)).toContain("bottom-role-review-required");
     expect(review.groups).toEqual([]);
+  });
+
+  it("clips the single-room golden without changing theoretical lines", () => {
+    const opening = { id: "center", name: "Center", type: "void" as const, x: 1500, y: 1000, width: 1000, height: 1000 };
+    const plainPlan = v3Plan([slab("a", 0, 0, 4000, 3000)]);
+    const plan = v3Plan([slab("a", 0, 0, 4000, 3000)], [], [], [opening]);
+    const settings = bottom({
+      defaults: { mainDiameter: 10, secondaryDiameter: 10, xSpacing: 4000, ySpacing: 5000 },
+    });
+    const beforeInput = structuredClone({ plan, settings });
+    const plain = calculateFloorBottomRebar(plainPlan, settings);
+    const result = calculateFloorBottomRebar(plan, settings);
+    expect(result.isValid).toBe(true);
+    expect(result.lines).toEqual(plain.lines);
+    expect(result).toMatchObject({ totalBarLines: 2, totalPieces: 4 });
+    expect(result.pieces.filter((piece) => piece.direction === "x").map((piece) => piece.singleLengthMm)).toEqual([1740, 1740]);
+    expect(result.pieces.filter((piece) => piece.direction === "y").map((piece) => piece.singleLengthMm)).toEqual([1240, 1240]);
+    expect(result.pieces.filter((piece) => piece.startSupport === "opening-cut" || piece.endSupport === "opening-cut")
+      .every((piece) => piece.startSupport !== "opening-cut" || piece.startAnchorMm === 0)
+      && result.pieces.filter((piece) => piece.startSupport === "opening-cut" || piece.endSupport === "opening-cut")
+        .every((piece) => piece.endSupport !== "opening-cut" || piece.endAnchorMm === 0)).toBe(true);
+    expect(result.pieces.flatMap((piece) => [piece.startBoundaryId, piece.endBoundaryId])
+      .filter((id) => id.startsWith("v3-opening:"))).toHaveLength(4);
+    expect(result.totalLengthM).toBeCloseTo(5.96, 10);
+    expect(result.totalWeightKg).toBeCloseTo(5.96 * theoreticalUnitWeight(10), 10);
+    expect(result.pieces.reduce((sum, piece) => sum + piece.singleLengthMm / 1000, 0)).toBeCloseTo(result.totalLengthM, 10);
+    expect(result.groups.reduce((sum, group) => sum + group.totalLengthM, 0)).toBeCloseTo(result.totalLengthM, 10);
+    expect(result.groups.reduce((sum, group) => sum + group.weightKg, 0)).toBeCloseTo(result.totalWeightKg!, 10);
+    expect(calculateFloorBottomRebar(plan, settings)).toEqual(result);
+    expect({ plan, settings }).toEqual(beforeInput);
+  });
+
+  it("applies whole and partial opening-edge inner-wall anchors", () => {
+    const opening = { id: "o", name: "O", type: "void" as const, x: 1500, y: 1000, width: 1000, height: 1000 };
+    const whole = v3Plan([slab("a", 0, 0, 4000, 3000)], [], [{
+      id: "west-wall",
+      target: { kind: "opening-edge", openingId: "o", side: "west", range: { mode: "whole" } },
+      support: "inner-wall",
+    }], [opening]);
+    const wholePieces = linePieces(whole, "x", 1500).pieces;
+    expect(wholePieces.map((piece) => piece.singleLengthMm)).toEqual([1980, 1740]);
+    expect(wholePieces[0]).toMatchObject({ endSupport: "inner-wall", endAnchorMm: 240 });
+    expect(wholePieces[1]).toMatchObject({ startSupport: "opening-cut", startAnchorMm: 0 });
+
+    const partial = v3Plan([slab("a", 0, 0, 4000, 3000)], [], [{
+      id: "west-lower-wall",
+      target: { kind: "opening-edge", openingId: "o", side: "west", range: { mode: "offset", startMm: 0, endMm: 500 } },
+      support: "inner-wall",
+    }], [opening]);
+    expect(linePieces(partial, "x", 1250).pieces[0]).toMatchObject({ endSupport: "inner-wall", endAnchorMm: 240 });
+    expect(linePieces(partial, "x", 1750).pieces[0]).toMatchObject({ endSupport: "opening-cut", endAnchorMm: 0 });
+    expect(linePieces(partial, "x", 1500).pieces[0]).toMatchObject({ endSupport: "opening-cut", endAnchorMm: 0 });
+  });
+
+  it("normalizes multiple and adjacent cuts and permits complete piece removal", () => {
+    const base = slab("a", 0, 0, 5000, 1000);
+    const multiple = v3Plan([base], [], [], [
+      { id: "o1", name: "O1", type: "void", x: 1000, y: 0, width: 500, height: 1000 },
+      { id: "o2", name: "O2", type: "void", x: 3000, y: 0, width: 500, height: 1000 },
+    ]);
+    const multipleResult = linePieces(multiple, "x", 500);
+    expect(multipleResult.issues).toEqual([]);
+    expect(multipleResult.pieces.map((piece) => [piece.runStartMm, piece.runEndMm])).toEqual([
+      [0, 1000],
+      [1500, 3000],
+      [3500, 5000],
+    ]);
+
+    const adjacent = v3Plan([base], [], [], [
+      { id: "o1", name: "O1", type: "void", x: 1000, y: 0, width: 500, height: 1000 },
+      { id: "o2", name: "O2", type: "void", x: 1500, y: 0, width: 500, height: 1000 },
+    ]);
+    const adjacentResult = linePieces(adjacent, "x", 500);
+    expect(adjacentResult.issues).toEqual([]);
+    expect(adjacentResult.pieces.map((piece) => [piece.runStartMm, piece.runEndMm])).toEqual([[0, 1000], [2000, 5000]]);
+    expect(adjacentResult.pieces.every((piece) => piece.netLengthMm > 0)).toBe(true);
+    expect(adjacentResult.pieces[0].endBoundaryId).toContain("v3-opening:o1:west:");
+    expect(adjacentResult.pieces[1].startBoundaryId).toContain("v3-opening:o2:east:");
+
+    const removed = v3Plan([base], [], [], [
+      { id: "all", name: "All", type: "void", x: 0, y: 0, width: 5000, height: 1000 },
+    ]);
+    expect(linePieces(removed, "x", 500)).toEqual({ pieces: [], issues: [] });
+    const calculation = calculateFloorBottomRebar(removed, bottom({
+      defaults: { mainDiameter: 10, secondaryDiameter: 10, xSpacing: 2000, ySpacing: 6000 },
+    }));
+    expect(calculation.isValid).toBe(true);
+    expect(calculation.totalBarLines).toBeGreaterThan(calculation.totalPieces);
+  });
+
+  it("clips continuous slabs once and rebuilds residual slab traceability", () => {
+    const plan = v3Plan(
+      [slab("a", 0, 0, 2000, 1000), slab("b", 2000, 0, 2000, 1000)],
+      [connection("a", "east", "b", "west")],
+      [
+        { id: "a-cont", target: { kind: "slab-edge", slabId: "a", side: "east", range: { mode: "whole" } }, support: "continuous" },
+        { id: "b-cont", target: { kind: "slab-edge", slabId: "b", side: "west", range: { mode: "whole" } }, support: "continuous" },
+      ],
+      [{ id: "o", name: "O", type: "void", x: 1500, y: 0, width: 1000, height: 1000 }],
+    );
+    const result = linePieces(plan, "x", 500);
+    expect(result.issues).toEqual([]);
+    expect(result.pieces.map((piece) => [piece.runStartMm, piece.runEndMm])).toEqual([[0, 1500], [2500, 4000]]);
+    expect(result.pieces.map((piece) => piece.slabIds)).toEqual([["a"], ["b"]]);
+    expect(result.pieces.some((piece) => piece.runStartMm === 2000 || piece.runEndMm === 2000)).toBe(false);
+  });
+
+  it("clips after inner-wall splitting and only changes the matching spatial chain", () => {
+    const wallPlan = v3Plan(
+      [slab("a", 0, 0, 2000, 1000), slab("b", 2240, 0, 2000, 1000)],
+      [connection("a", "east", "b", "west")],
+      [],
+      [{ id: "wall-cross", name: "Wall Cross", type: "void", x: 1500, y: 0, width: 1240, height: 1000 }],
+    );
+    expect(linePieces(wallPlan, "x", 500, ["a"]).pieces.map((piece) => [piece.runStartMm, piece.runEndMm])).toEqual([[0, 1500]]);
+    expect(linePieces(wallPlan, "x", 500, ["b"]).pieces.map((piece) => [piece.runStartMm, piece.runEndMm])).toEqual([[2740, 4240]]);
+
+    const slabs = [
+      slab("left", 0, 0, 100, 300),
+      slab("bottom", 100, 0, 100, 100),
+      slab("right", 200, 0, 100, 300),
+    ];
+    const connections = [
+      connection("left", "east", "bottom", "west"),
+      connection("bottom", "east", "right", "west"),
+    ];
+    const rules: FloorPlanState["supportRules"] = [
+      { id: "left-bottom", target: { kind: "slab-edge", slabId: "left", side: "east", range: { mode: "whole" } }, support: "continuous" },
+      { id: "bottom-right", target: { kind: "slab-edge", slabId: "bottom", side: "east", range: { mode: "whole" } }, support: "continuous" },
+    ];
+    const plain = v3Plan(slabs, connections, rules);
+    const opened = v3Plan(slabs, connections, rules, [
+      { id: "right-only", name: "Right", type: "void", x: 210, y: 100, width: 50, height: 100 },
+    ]);
+    plain.innerWallThickness = opened.innerWallThickness = 20;
+    plain.outerWallThickness = opened.outerWallThickness = 20;
+    const plainResult = linePieces(plain, "x", 150);
+    const openedResult = linePieces(opened, "x", 150);
+    expect(plainResult.pieces[0]).toEqual(openedResult.pieces[0]);
+    expect(openedResult.pieces.map((piece) => [piece.runStartMm, piece.runEndMm])).toEqual([[0, 100], [200, 210], [260, 300]]);
+  });
+
+  it("keeps partial/outside openings non-blocking and overlap/conflict blocking", () => {
+    const base = slab("a", 0, 0, 4000, 3000);
+    const partial = v3Plan([base], [], [], [
+      { id: "partial", name: "Partial", type: "void", x: -500, y: 0, width: 1500, height: 3000 },
+    ]);
+    const partialLine = linePieces(partial, "x", 1500);
+    expect(partialLine.issues).toEqual([]);
+    expect(partialLine.pieces.map((piece) => [piece.runStartMm, piece.runEndMm])).toEqual([[1000, 4000]]);
+    expect(partialLine.pieces[0]).toMatchObject({ startSupport: "opening-cut", startAnchorMm: 0 });
+    const partialCalculation = calculateFloorBottomRebar(partial, bottom());
+    expect(partialCalculation.isValid).toBe(true);
+    expect(partialCalculation.warnings.map((issue) => issue.code)).toContain("opening-partial-outside");
+
+    const plain = calculateFloorBottomRebar(v3Plan([base]), bottom());
+    const outsidePlan = v3Plan([base], [], [], [
+      { id: "outside", name: "Outside", type: "void", x: 5000, y: 0, width: 1000, height: 1000 },
+    ]);
+    const outside = calculateFloorBottomRebar(outsidePlan, bottom());
+    expect(outside.warnings.map((issue) => issue.code)).toContain("opening-uncovered");
+    expect({ lines: outside.lines, pieces: outside.pieces, groups: outside.groups, totalLengthM: outside.totalLengthM, totalWeightKg: outside.totalWeightKg })
+      .toEqual({ lines: plain.lines, pieces: plain.pieces, groups: plain.groups, totalLengthM: plain.totalLengthM, totalWeightKg: plain.totalWeightKg });
+
+    const overlapPlan = v3Plan([base], [], [], [
+      { id: "o1", name: "O1", type: "void", x: 1000, y: 1000, width: 1000, height: 1000 },
+      { id: "o2", name: "O2", type: "void", x: 1500, y: 1000, width: 1000, height: 1000 },
+    ]);
+    const overlap = calculateFloorBottomRebar(overlapPlan, bottom());
+    expect(overlap.errors.map((issue) => issue.code)).toContain("opening-overlap");
+    expect(overlap).toMatchObject({ isValid: false, lines: [], pieces: [], groups: [], totalWeightKg: null });
+
+    const conflictPlan = v3Plan([base], [], [
+      { id: "cut", target: { kind: "opening-edge", openingId: "o", side: "west", range: { mode: "whole" } }, support: "opening-cut" },
+      { id: "wall", target: { kind: "opening-edge", openingId: "o", side: "west", range: { mode: "whole" } }, support: "inner-wall" },
+    ], [{ id: "o", name: "O", type: "void", x: 1500, y: 1000, width: 1000, height: 1000 }]);
+    const conflict = calculateFloorBottomRebar(conflictPlan, bottom());
+    expect(conflict.errors.map((issue) => issue.code)).toContain("support-rule-conflict");
+    expect(conflict).toMatchObject({ isValid: false, lines: [], pieces: [], groups: [], totalWeightKg: null });
   });
 
   it("blocks global wall-slab geometry errors without partial output", () => {
