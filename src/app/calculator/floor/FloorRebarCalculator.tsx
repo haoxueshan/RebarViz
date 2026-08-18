@@ -8,6 +8,7 @@ import { FloorCanvas, type FloorSelection } from "@/components/calculator/floor/
 import { FloorCanvasCommandBar } from "@/components/calculator/floor/FloorCanvasCommandBar";
 import { FloorTopSettingsPanel } from "@/components/calculator/floor/FloorTopPanel";
 import { FloorIssueCenter } from "@/components/calculator/floor/FloorIssueCenter";
+import { FloorTopologyRepairDialog } from "@/components/calculator/floor/FloorTopologyRepairDialog";
 import { FloorImportProjectDialog } from "@/components/calculator/floor/FloorImportProjectDialog";
 import { FloorNavigatorPalette } from "@/components/calculator/floor/FloorNavigatorPalette";
 import { FloorNewProjectDialog, type FloorNewProjectMode } from "@/components/calculator/floor/FloorNewProjectDialog";
@@ -135,6 +136,11 @@ import {
 } from "@/lib/floor-geometry-tolerance";
 import { floorPhysicalSharedBand } from "@/lib/floor-physical-layout";
 import { buildFloorAssembly } from "@/lib/floor-assembly";
+import {
+  applyFloorTopologyRepairs,
+  detectFloorTopologyRepairCandidates,
+  type FloorTopologyRepairDecision,
+} from "@/lib/floor-topology-repair";
 import {
   createFloorHistory,
   pushFloorHistory,
@@ -444,6 +450,8 @@ export default function FloorRebarCalculator() {
   const [activeInspectorTab, setActiveInspectorTab] = useState<FloorInspectorTab>("object");
   const [issueCenterOpen, setIssueCenterOpen] = useState(false);
   const [issueStageFilter, setIssueStageFilter] = useState<FloorWorkflowStage | null>(null);
+  const [repairDialogOpen, setRepairDialogOpen] = useState(false);
+  const [repairErrorMessage, setRepairErrorMessage] = useState<string | null>(null);
   const [bomFilter, setBomFilter] = useState<"all" | "bottom" | "top" | "through">("all");
   const [canvasZoomPercent, setCanvasZoomPercent] = useState(100);
   const [draftSavedAt, setDraftSavedAt] = useState<number | null>(null);
@@ -631,6 +639,7 @@ export default function FloorRebarCalculator() {
   const issues = useMemo(() => validateFloorPlanState(canonicalPlan), [canonicalPlan]);
   // Floor Assembly V1.3.1：整层拓扑连接分析（Derived only，不写任何 Storage/Schema）。
   const assembly = useMemo(() => buildFloorAssembly(canonicalPlan), [canonicalPlan]);
+  const repairDetection = useMemo(() => detectFloorTopologyRepairCandidates(canonicalPlan), [canonicalPlan]);
   const errors = issues.filter((issue) => issue.level === "error");
   const warnings = issues.filter((issue) => issue.level === "warning");
   const rawBottomCalculation = useMemo(
@@ -1112,6 +1121,7 @@ export default function FloorRebarCalculator() {
         }
       } else if (event.key === "Escape") {
         event.preventDefault();
+        if (repairDialogOpen) { setRepairDialogOpen(false); setRepairErrorMessage(null); return; }
         if (issueCenterOpen) { setIssueCenterOpen(false); return; }
         if (inspectorOpen) { closeInspector(); return; }
         if (navigatorOpen) { closeNavigatorOverlay(); return; }
@@ -1133,7 +1143,7 @@ export default function FloorRebarCalculator() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [history, selection, state, issueCenterOpen, inspectorOpen, navigatorOpen, editMode, dockSourceId, dockTargetId, dockPinned, dockPreview, multiSelection, multiAlignKind, multiAlignPreview, workspaceFullscreen, stage]);
+  }, [history, selection, state, repairDialogOpen, issueCenterOpen, inspectorOpen, navigatorOpen, editMode, dockSourceId, dockTargetId, dockPinned, dockPreview, multiSelection, multiAlignKind, multiAlignPreview, workspaceFullscreen, stage]);
 
   const changeEditMode = (mode: "move" | "dock" | "multi") => {
     setEditMode(mode);
@@ -1435,6 +1445,26 @@ export default function FloorRebarCalculator() {
   const openIssueCenter = (filter: FloorWorkflowStage | null = null) => {
     setIssueStageFilter(filter);
     setIssueCenterOpen(true);
+  };
+
+  const openTopologyRepair = () => {
+    setIssueCenterOpen(false);
+    setRepairErrorMessage(null);
+    setRepairDialogOpen(true);
+  };
+
+  const applyTopologyRepair = (decisions: FloorTopologyRepairDecision[]) => {
+    const result = applyFloorTopologyRepairs(canonicalPlan, decisions);
+    if (!result.ok) {
+      setRepairErrorMessage(result.message);
+      return;
+    }
+    if (result.addedConnectionIds.length > 0) {
+      applyStateWithHistory(result.plan);
+      flashStatus(`已修复 ${result.addedConnectionIds.length} 处板区连接`);
+    }
+    setRepairDialogOpen(false);
+    setRepairErrorMessage(null);
   };
 
   const locateWorkspaceIssue = (issue: FloorWorkspaceIssue) => {
@@ -1815,7 +1845,8 @@ export default function FloorRebarCalculator() {
   return (
     <>
       <FloorWorkspaceShell workflow={workflow} body={workspaceBody} status={statusBar} fullscreen={workspaceFullscreen} />
-      <FloorIssueCenter open={issueCenterOpen} issues={filteredIssueCenterItems} onClose={() => setIssueCenterOpen(false)} onLocate={locateWorkspaceIssue} />
+      <FloorIssueCenter open={issueCenterOpen} issues={filteredIssueCenterItems} canRepairTopology={repairDetection.candidates.length > 0} onClose={() => setIssueCenterOpen(false)} onLocate={locateWorkspaceIssue} onRepairTopology={openTopologyRepair} />
+      {repairDialogOpen && <FloorTopologyRepairDialog candidates={repairDetection.candidates} slabs={canonicalPlan.slabs} innerWallThickness={canonicalPlan.innerWallThickness} errorMessage={repairErrorMessage} onCancel={() => { setRepairDialogOpen(false); setRepairErrorMessage(null); }} onApply={applyTopologyRepair} />}
       {newProjectOpen && <FloorNewProjectDialog currentProjectName={projectName} onCancel={() => setNewProjectOpen(false)} onConfirm={handleNewFloorProject} />}
       <FloorImportProjectDialog open={importDialog.open} fileName={importDialog.fileName} project={importDialog.project} errorMessage={importDialog.errorMessage} onCancel={() => setImportDialog({ open: false, fileName: "", project: null, errorMessage: null })} onConfirm={confirmImportProject} onExportCurrent={() => { handleExportFloorProject(); }} />
       {pendingResize && (
