@@ -10,12 +10,12 @@ import {
 import {
   buildFloorAtomicBoundarySegments,
   buildFloorTopologyCells,
-  type FloorAtomicBoundarySegment,
   type FloorPlanState,
 } from "./floor-plan";
 import { validateFloorPlanState } from "./floor-topology-adapter";
 import type { FloorBarLine, FloorBarPiece } from "./floor-rebar-types";
 import { buildFloorRebarLayout } from "./floor-rebar-layout";
+import { buildFloorRebarCalculationContextV3 } from "./floor-rebar-calculation-context-v3";
 import {
   buildFloorTopAlignmentPlan,
   EMPTY_FLOOR_TOP_ALIGNMENT_PLAN,
@@ -41,6 +41,14 @@ import {
   type CountMode,
   type TopExtraMode,
 } from "./slab-calculator";
+import { buildFloorTopV3LinePieces } from "./floor-top-v3";
+import { resolveFloorTopEndpointAnchor } from "./floor-top-policy";
+
+export {
+  resolveFloorTopEndpointAnchor,
+  shouldApplyTopExtra,
+} from "./floor-top-policy";
+export type { FloorTopEndpointAnchor } from "./floor-top-policy";
 
 export type FloorTopBarSettings = {
   diameter: number;
@@ -261,40 +269,6 @@ export function resolveFloorTopDirectionalSettings(
   };
 }
 
-export function shouldApplyTopExtra(
-  extraMode: TopExtraMode,
-  endpoint: "start" | "end",
-): boolean {
-  return extraMode === "both" || extraMode === endpoint;
-}
-
-export type FloorTopEndpointAnchor = {
-  anchorMm: number | null;
-  extraApplied: boolean;
-};
-
-export function resolveFloorTopEndpointAnchor(
-  segment: Pick<FloorAtomicBoundarySegment, "support" | "thicknessMm">,
-  endpoint: "start" | "end",
-  extraMode: TopExtraMode,
-  topAnchorExtra: number,
-): FloorTopEndpointAnchor {
-  if (segment.support === "outer-wall") {
-    return { anchorMm: segment.thicknessMm, extraApplied: false };
-  }
-  if (segment.support === "inner-wall") {
-    const extraApplied = shouldApplyTopExtra(extraMode, endpoint);
-    return {
-      anchorMm: segment.thicknessMm + (extraApplied ? topAnchorExtra : 0),
-      extraApplied,
-    };
-  }
-  if (segment.support === "opening-cut") {
-    return { anchorMm: 0, extraApplied: false };
-  }
-  return { anchorMm: null, extraApplied: false };
-}
-
 function sameSettings(
   left: FloorTopBarSettings,
   right: FloorTopBarSettings,
@@ -475,6 +449,198 @@ export function buildFloorTopBomGroups(
     left.singleLengthMm - right.singleLengthMm);
 }
 
+export function calculateFloorTopNormalRebarV3(
+  plan: FloorPlanState,
+  top: FloorTopState,
+  roleState: FloorRebarRoleState = DEFAULT_FLOOR_REBAR_ROLE_STATE,
+  roleReviewRequired = false,
+): FloorTopCalculation {
+  const geometryContext = buildFloorRebarCalculationContextV3(plan);
+  const geometryIssues = validateFloorPlanState(
+    geometryContext.plan,
+    geometryContext.solution,
+  );
+  const warnings: FloorTopIssue[] = geometryIssues
+    .filter((issue) => issue.level === "warning")
+    .map(({ code, message, objectIds }) => ({ code, message, objectIds }));
+  const geometryErrors: FloorTopIssue[] = geometryIssues
+    .filter((issue) => issue.level === "error")
+    .map(({ code, message, objectIds }) => ({ code, message, objectIds }));
+  const domains = buildFloorBottomRebarDomains(
+    geometryContext.plan,
+    geometryContext.solution,
+  );
+  const roleContext = resolveFloorRebarRoleContext(
+    geometryContext.plan,
+    domains,
+    roleState,
+    geometryContext.solution,
+  );
+  const reviewErrors: FloorTopIssue[] = roleReviewRequired ? [{
+    code: "top-role-review-required",
+    message: "旧版本的东西/南北向直径已迁移为主/副筋语义，请确认当前面筋主筋、副筋直径后再生成正式料单。",
+  }] : [];
+  const throughErrors: FloorTopIssue[] = top.throughPaths.some((path) => path.enabled)
+    ? [{
+        code: "top-v3-through-not-ready",
+        message: "当前楼层的普通面筋V3路径已可计算，但已启用通墙面筋。通墙路径及跨Domain排筋相位尚未完成Connection-aware迁移，为避免普通面筋相位和替换关系错误，已暂停正式面筋料单。",
+        objectIds: top.throughPaths.filter((path) => path.enabled).map((path) => path.id).sort(),
+      }]
+    : [];
+  const errors = [
+    ...geometryErrors,
+    ...roleContext.errors,
+    ...reviewErrors,
+    ...validateTopState(
+      geometryContext.plan,
+      top,
+      domains,
+      roleContext.mainDirectionByPhysicalDomain,
+    ),
+    ...throughErrors,
+  ];
+  if (errors.length > 0) {
+    return emptyCalculation(
+      domains,
+      roleContext.roleDomains,
+      errors,
+      warnings,
+      EMPTY_FLOOR_TOP_ALIGNMENT_PLAN,
+    );
+  }
+
+  const pathContext = geometryContext.pathContext;
+  if (!pathContext.isValid) {
+    const contextErrors: FloorTopIssue[] = pathContext.topologyIssues
+      .filter((issue) => issue.level === "error")
+      .map((issue) => ({
+        code: issue.code,
+        message: issue.message,
+        objectIds: [...new Set([
+          ...(issue.objectIds ?? []),
+          ...(issue.slabIds ?? []),
+          ...(issue.connectionIds ?? []),
+        ])].sort(),
+      }));
+    return emptyCalculation(
+      domains,
+      roleContext.roleDomains,
+      contextErrors.length > 0 ? contextErrors : [{
+        code: "top-v3-path-context-invalid",
+        message: "新版面筋路径上下文无效，已停止正式计算。",
+      }],
+      warnings,
+      EMPTY_FLOOR_TOP_ALIGNMENT_PLAN,
+    );
+  }
+
+  const lines: FloorBarLine[] = [];
+  const pieces: FloorBarPiece[] = [];
+  const calculationErrors: FloorTopIssue[] = [];
+  const settingsByDomainDirection = new Map<string, FloorTopBarSettings>();
+  domains.forEach((domain) => {
+    const mainDirection = roleContext.mainDirectionByPhysicalDomain.get(domain.id);
+    if (!mainDirection) return;
+    (["x", "y"] as const).forEach((direction) => {
+      const role = resolveFloorBarRole(mainDirection, direction);
+      const settings = resolveFloorTopDirectionalSettings(
+        top,
+        domain.slabIds[0],
+        direction,
+        mainDirection,
+      );
+      settingsByDomainDirection.set(`${domain.id}:${direction}`, settings);
+      const perpendicularStart = direction === "x" ? domain.minY : domain.minX;
+      const perpendicularEnd = direction === "x" ? domain.maxY : domain.maxX;
+      const count = countBars(
+        perpendicularEnd - perpendicularStart,
+        settings.spacing,
+        top.countMode,
+      );
+      const layout = buildFloorRebarLayout({
+        key: `top:${domain.id}:${direction}`,
+        direction,
+        count,
+        spacingMm: settings.spacing,
+        minMm: perpendicularStart,
+        maxMm: perpendicularEnd,
+      });
+      if (layout.positionsMm.length !== count) {
+        calculationErrors.push({
+          code: "top-v3-layout-invalid",
+          message: "面筋排布位置数量与正式根数不一致，已停止计算。",
+          objectIds: [domain.id],
+        });
+        return;
+      }
+      layout.positionsMm.forEach((positionMm, index) => {
+        const line: FloorBarLine = {
+          id: `top:${domain.id}:${direction}:line:${index + 1}`,
+          domainId: domain.id,
+          slabIds: [...domain.slabIds],
+          layer: "top",
+          direction,
+          role,
+          source: "normal",
+          positionMm,
+          alignmentMode: "domain-centered",
+        };
+        lines.push(line);
+        const built = buildFloorTopV3LinePieces({
+          context: pathContext,
+          domain,
+          line,
+          diameter: settings.diameter,
+          spacing: settings.spacing,
+          extraMode: settings.extraMode,
+          topAnchorExtraMm: top.topAnchorExtra,
+          outerWallThicknessMm: geometryContext.plan.outerWallThickness,
+        });
+        calculationErrors.push(...built.issues);
+        pieces.push(...built.pieces);
+      });
+    });
+  });
+  if (calculationErrors.length > 0) {
+    return emptyCalculation(
+      domains,
+      roleContext.roleDomains,
+      calculationErrors,
+      warnings,
+      EMPTY_FLOOR_TOP_ALIGNMENT_PLAN,
+    );
+  }
+
+  const groups = buildFloorTopBomGroups(pieces, settingsByDomainDirection);
+  const totalLengthM = pieces.reduce(
+    (sum, piece) => sum + piece.singleLengthMm / 1000,
+    0,
+  );
+  const totalWeightKg = pieces.reduce(
+    (sum, piece) => sum
+      + piece.singleLengthMm / 1000 * theoreticalUnitWeight(piece.diameter),
+    0,
+  );
+  return {
+    domains,
+    roleDomains: roleContext.roleDomains,
+    lines,
+    pieces,
+    groups,
+    resolvedThroughPaths: [],
+    alignmentPlan: EMPTY_FLOOR_TOP_ALIGNMENT_PLAN,
+    normalPieceCount: pieces.length,
+    throughPieceCount: 0,
+    totalBarLines: lines.length,
+    totalPieces: pieces.length,
+    totalLengthM,
+    totalWeightKg,
+    errors: [],
+    warnings,
+    isValid: true,
+  };
+}
+
 export function calculateFloorTopNormalRebar(
   plan: FloorPlanState,
   input: FloorTopState,
@@ -483,20 +649,13 @@ export function calculateFloorTopNormalRebar(
 ): FloorTopCalculation {
   // normalize仅用于存储迁移；正式计算保留NaN、非法枚举等错误并阻止料单。
   const top = input;
-  // V1.4A.1 Safety Guard：V3 模型的面筋/通墙长度算法尚未 Connection-aware（V1.4C），
-  // 禁止按 Legacy 拓扑静默生成错误料单。
   if (plan.coordinateModel === "clear-space-physical-v2") {
-    const errors: FloorTopIssue[] = [{
-      code: "topology-v3-calculation-not-ready",
-      message: "当前楼层已使用新版墙带拓扑。面筋计算模块尚未完成V1.4连接路径迁移，为防止生成错误料单，已暂停正式计算。",
-    }];
-    const geometryIssues = validateFloorPlanState(plan);
-    const warnings: FloorTopIssue[] = geometryIssues
-      .filter((issue) => issue.level === "warning")
-      .map(({ code, message, objectIds }) => ({ code, message, objectIds }));
-    const domains = buildFloorBottomRebarDomains(plan);
-    const roleContext = resolveFloorRebarRoleContext(plan, domains, roleState);
-    return emptyCalculation(domains, roleContext.roleDomains, errors, warnings, EMPTY_FLOOR_TOP_ALIGNMENT_PLAN);
+    return calculateFloorTopNormalRebarV3(
+      plan,
+      top,
+      roleState,
+      roleReviewRequired,
+    );
   }
   const geometryIssues = validateFloorPlanState(plan);
   const warnings: FloorTopIssue[] = geometryIssues

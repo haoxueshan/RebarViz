@@ -541,12 +541,17 @@ describe("正式计算 V3 Safety Guard", () => {
     expect(calculation.totalLengthM).toBeGreaterThan(0);
   });
 
-  it("Top V3：Blocking Issue，不产生任何 BOM", () => {
-    const calculation = calculateFloorTopRebar(v3(), DEFAULT_FLOOR_TOP_STATE);
-    expect(calculation.errors.map((issue) => issue.code)).toContain("topology-v3-calculation-not-ready");
-    expect(calculation.isValid).toBe(false);
-    expect(calculation.groups).toEqual([]);
-    expect(calculation.totalLengthM).toBe(0);
+  it("Top V3：Normal正式出料，不再回退generic guard", () => {
+    const calculation = calculateFloorTopRebar(v3(), DEFAULT_FLOOR_TOP_STATE, {
+      mainDirectionOverrides: {
+        [floorRoleDomainKey(["a"])]: "x",
+        [floorRoleDomainKey(["b"])]: "x",
+      },
+    });
+    expect(calculation.errors.map((issue) => issue.code)).not.toContain("topology-v3-calculation-not-ready");
+    expect(calculation.isValid).toBe(true);
+    expect(calculation.groups.length).toBeGreaterThan(0);
+    expect(calculation.totalLengthM).toBeGreaterThan(0);
   });
 
   it("Through V3：几何解析返回 Blocking Error（不抛异常）", () => {
