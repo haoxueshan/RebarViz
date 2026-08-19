@@ -86,7 +86,7 @@ async function generateSnapshot(page: Page): Promise<string> {
   await expect(openButton).toBeEnabled();
   await openButton.click();
   await expect(page.getByTestId("floor-print-dialog")).toBeVisible();
-  await expect(page.getByLabel("纸张")).toHaveValue("A3");
+  await expect(page.getByLabel("纸张")).toHaveValue("A4");
   await expect(page.getByLabel("方向")).toHaveValue("landscape");
   await page.getByLabel("项目名称").fill("郝家住宅");
   await page.getByLabel("楼层名称").fill("二层顶板");
@@ -98,10 +98,10 @@ async function generateSnapshot(page: Page): Promise<string> {
   return id!;
 }
 
-async function makeA3Pdf(page: Page, testInfo: TestInfo): Promise<void> {
+async function makeA4LandscapePdf(page: Page, testInfo: TestInfo): Promise<void> {
   await page.emulateMedia({ media: "print" });
   const bytes = await page.pdf({
-    path: testInfo.outputPath("floor-print-a3-landscape.pdf"),
+    path: testInfo.outputPath("floor-print-a4-landscape.pdf"),
     preferCSSPageSize: true,
     printBackground: true,
   });
@@ -110,25 +110,34 @@ async function makeA3Pdf(page: Page, testInfo: TestInfo): Promise<void> {
   expect(pdf.getPageCount()).toBeGreaterThanOrEqual(5);
   for (const pdfPage of pdf.getPages()) {
     const size = pdfPage.getSize();
-    expect(Math.abs(size.width - 1190.55)).toBeLessThan(1);
-    expect(Math.abs(size.height - 841.89)).toBeLessThan(1);
+    expect(Math.abs(size.width - 841.89)).toBeLessThan(1);
+    expect(Math.abs(size.height - 595.28)).toBeLessThan(1);
   }
 }
 
 test.describe("Floor Print V1整层冻结快照打印", () => {
-  test("料单Tab生成正式快照，D/M图表关联、刷新不重算并输出A3横向PDF", async ({ page }, testInfo) => {
+  test("料单Tab生成正式快照，D/M图表关联、刷新不重算并输出A4横向PDF", async ({ page }, testInfo) => {
     await openFloorBom(page, { width: 4200, height: 3600 });
     await expect(page.getByText("整层地筋 + 面筋料单")).toBeVisible();
     const snapshotId = await generateSnapshot(page);
 
     await expect(page.getByTestId("floor-print-preview")).toBeVisible();
     await expect(page.locator('[data-floor-print-status="official"]')).toBeVisible();
-    await expect(page.getByText("正式下料单").first()).toBeVisible();
     await expect(page.locator('svg[data-floor-print-plan="bottom"] [data-mark="D01"]')).not.toHaveCount(0);
     await expect(page.locator('tr[data-print-mark="D01"]').first()).toBeVisible();
     await expect(page.locator('svg[data-floor-print-plan="top"] [data-mark="M01"]')).not.toHaveCount(0);
     await expect(page.locator('tr[data-print-mark="M01"]').first()).toBeVisible();
-    await expect(page.getByText("郝家住宅")).toBeVisible();
+    await expect(page.locator('svg[data-floor-print-plan="geometry"] [data-slab-label="S01"]')).toHaveCount(1);
+    const bottomSlabLabel = page.locator('svg[data-floor-print-plan="bottom"] [data-slab-label="S01"]');
+    await expect(bottomSlabLabel).toContainText("主");
+    await expect(bottomSlabLabel).toContainText("副");
+    const monochrome = await page.locator('svg[data-floor-print-plan="bottom"]').evaluate((svg) => ({
+      markup: svg.innerHTML,
+      outerWallFills: [...svg.querySelectorAll('[data-wall-kind="outer-wall"]')].map((wall) => wall.getAttribute("fill")),
+    }));
+    expect(monochrome.markup).not.toContain("#2563eb");
+    expect(monochrome.outerWallFills.length).toBeGreaterThan(0);
+    expect(monochrome.outerWallFills).not.toContain("#171717");
 
     const before = await readSnapshotFromIndexedDb(page, snapshotId);
     expect((before as { summary: { totalPieceCount: number } }).summary.totalPieceCount).toBeGreaterThan(0);
@@ -138,10 +147,16 @@ test.describe("Floor Print V1整层冻结快照打印", () => {
       localStorage.setItem("rebarviz:floor-rebar:draft:v1", JSON.stringify(draft));
     });
     await page.reload();
-    await expect(page.getByText("郝家住宅")).toBeVisible();
+    await expect(page.getByTestId("floor-print-report")).toBeVisible();
     const after = await readSnapshotFromIndexedDb(page, snapshotId);
     expect(after).toEqual(before);
-    await makeA3Pdf(page, testInfo);
+    await page.emulateMedia({ media: "print" });
+    const printOverflow = await page.locator('[data-testid="floor-print-report"]').evaluate((report) => ({
+      scrollWidth: report.scrollWidth,
+      clientWidth: report.clientWidth,
+    }));
+    expect(printOverflow.scrollWidth).toBeLessThanOrEqual(printOverflow.clientWidth + 1);
+    await makeA4LandscapePdf(page, testInfo);
   });
 
   test("同一Mark在两个分离空间带各标一次但BOM仍只有一行", async ({ page }) => {
@@ -287,7 +302,7 @@ test.describe("Floor Print V1整层冻结快照打印", () => {
     await expect(page.locator('svg[data-floor-print-plan="top"] [data-mark="T01"][data-source="through"]')).not.toHaveCount(0);
     await expect(page.locator('svg[data-floor-print-plan="top"] [data-mark="T01"] [data-through-outer="true"]')).not.toHaveCount(0);
     await expect(page.locator('svg[data-floor-print-plan="top"] [data-mark="T01"] [data-through-inner="true"]')).not.toHaveCount(0);
-    await expect(page.locator('tr[data-print-mark="T01"]')).toContainText("通墙面筋 · 通墙01");
+    await expect(page.locator('[data-area-header]').filter({ hasText: "通墙面筋 · 通墙01" })).toBeVisible();
     const frozen = await readSnapshotFromIndexedDb(page, snapshotId) as {
       schemaVersion: number;
       summary: { topThroughPieceCount: number };

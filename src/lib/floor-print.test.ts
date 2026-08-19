@@ -145,13 +145,15 @@ describe("Floor Print资格与正式数据一致性", () => {
     const site = floorPrintOptionsForPreset("site");
     expect(site).toMatchObject({
       preset: "site",
-      paperSize: "A3",
+      paperSize: "A4",
       orientation: "landscape",
-      sections: { bottomPlan: true, topPlan: true, combinedBom: false, calculationParameters: false },
+      lengthUnit: "mm",
+      sections: { summary: false, floorPlan: true, bottomPlan: true, topPlan: true, combinedBom: false, calculationParameters: false },
     });
     const full = floorPrintOptionsForPreset("full");
+    expect(full).toMatchObject({ preset: "full", paperSize: "A3", orientation: "landscape", lengthUnit: "mm" });
     expect(Object.values(full.sections).every(Boolean)).toBe(true);
-    expect(detectFloorPrintPreset({ ...site, sections: { ...site.sections, floorPlan: true } })).toBe("custom");
+    expect(detectFloorPrintPreset({ ...site, sections: { ...site.sections, summary: true } })).toBe("custom");
   });
 });
 

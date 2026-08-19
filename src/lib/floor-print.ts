@@ -20,6 +20,12 @@ import {
   solveFloorTopology,
   type FloorTopologySolution,
 } from "./floor-topology-solver";
+import {
+  buildFloorPrintSlabRefs,
+  floorPrintAreaKey,
+  floorPrintSlabRefMap,
+  type FloorPrintSlabRef,
+} from "./floor-print-layout";
 import type { FloorBarLine, FloorBarPiece } from "./floor-rebar-types";
 import type { FloorBarRole } from "./floor-rebar-role";
 import type {
@@ -79,8 +85,8 @@ export type FloorPrintOptions = {
 };
 
 const SITE_SECTIONS: FloorPrintOptions["sections"] = {
-  summary: true,
-  floorPlan: false,
+  summary: false,
+  floorPlan: true,
   bottomPlan: true,
   bottomBom: true,
   topPlan: true,
@@ -104,7 +110,7 @@ const FULL_SECTIONS: FloorPrintOptions["sections"] = {
 
 export const DEFAULT_FLOOR_PRINT_OPTIONS: FloorPrintOptions = {
   preset: "site",
-  paperSize: "A3",
+  paperSize: "A4",
   orientation: "landscape",
   lengthUnit: "mm",
   sections: SITE_SECTIONS,
@@ -125,6 +131,9 @@ export function floorPrintOptionsForPreset(
   return {
     ...structuredClone(DEFAULT_FLOOR_PRINT_OPTIONS),
     preset: "full",
+    paperSize: "A3",
+    orientation: "landscape",
+    lengthUnit: "mm",
     sections: structuredClone(FULL_SECTIONS),
     display: {
       slabNames: true,
@@ -536,14 +545,51 @@ function compareCandidateRows(left: FloorPrintBomCandidate, right: FloorPrintBom
     left.slabIds.join("|").localeCompare(right.slabIds.join("|"));
 }
 
+function compareBottomPrintCandidateRows(
+  left: FloorPrintBomCandidate,
+  right: FloorPrintBomCandidate,
+  refs: readonly FloorPrintSlabRef[],
+): number {
+  const refsById = floorPrintSlabRefMap(refs);
+  const areaSort = (row: FloorPrintBomCandidate) => {
+    const matched = row.slabIds
+      .flatMap((slabId) => {
+        const ref = refsById.get(slabId);
+        return ref ? [ref] : [];
+      })
+      .sort((first, second) => first.sortIndex - second.sortIndex || first.slabId.localeCompare(second.slabId));
+    return {
+      sortIndex: matched[0]?.sortIndex ?? Number.MAX_SAFE_INTEGER,
+      key: floorPrintAreaKey(row.slabIds),
+    };
+  };
+  const leftArea = areaSort(left);
+  const rightArea = areaSort(right);
+  return leftArea.sortIndex - rightArea.sortIndex ||
+    leftArea.key.localeCompare(rightArea.key) ||
+    ROLE_ORDER[left.role] - ROLE_ORDER[right.role] ||
+    DIRECTION_ORDER[left.direction] - DIRECTION_ORDER[right.direction] ||
+    right.diameter - left.diameter ||
+    left.singleLengthMm - right.singleLengthMm ||
+    left.spacing - right.spacing ||
+    left.sortPositionMm - right.sortPositionMm ||
+    left.sortRunStartMm - right.sortRunStartMm ||
+    left.id.localeCompare(right.id);
+}
+
 export function assignFloorPrintMarks(
   rows: readonly FloorPrintBomCandidate[],
   layer: FloorPrintLayerName,
+  slabRefs: readonly FloorPrintSlabRef[] = [],
 ): FloorPrintBomRow[] {
   let bottomIndex = 0;
   let normalTopIndex = 0;
   let throughTopIndex = 0;
-  return [...rows].sort(compareCandidateRows).map((row) => {
+  const compare = layer === "bottom" && slabRefs.length > 0
+    ? (left: FloorPrintBomCandidate, right: FloorPrintBomCandidate) =>
+      compareBottomPrintCandidateRows(left, right, slabRefs)
+    : compareCandidateRows;
+  return [...rows].sort(compare).map((row) => {
     const prefix = layer === "bottom" ? "D" : row.source === "through" ? "T" : "M";
     const index = layer === "bottom"
       ? ++bottomIndex
@@ -624,6 +670,7 @@ function buildPrintLayer(
   layer: FloorPrintLayerName,
   calculation: LayerCalculation,
   plan: FloorPlanState,
+  slabRefs: readonly FloorPrintSlabRef[] = [],
 ): FloorPrintLayer {
   const pieceById = new Map(calculation.pieces.map((piece) => [piece.id, piece]));
   const lineById = new Map(calculation.lines.map((line) => [line.id, line]));
@@ -642,6 +689,7 @@ function buildPrintLayer(
       throughPathNames,
     )),
     layer,
+    slabRefs,
   );
   const markByPiece = new Map<string, string>();
   rows.forEach((row) => row.pieceIds.forEach((pieceId) => markByPiece.set(pieceId, row.mark)));
@@ -763,9 +811,6 @@ export function buildFloorPrintContent(
   if (consistency.length > 0) {
     throw new FloorPrintBuildError(consistency[0].code, consistency[0].message);
   }
-  const bottom = buildPrintLayer("bottom", bottomCalculation, plan);
-  const top = buildPrintLayer("top", topCalculation, plan);
-  const combinedRows = [...bottom.rows, ...top.rows];
   const topologySolution = plan.coordinateModel === "clear-space-physical-v2"
     ? precomputedSolution ?? solveFloorTopology(plan)
     : undefined;
@@ -796,6 +841,11 @@ export function buildFloorPrintContent(
     })),
     physical,
   };
+  // S references are presentation-only, but their physical order governs Bottom print marks.
+  const slabRefs = buildFloorPrintSlabRefs(geometry);
+  const bottom = buildPrintLayer("bottom", bottomCalculation, plan, slabRefs);
+  const top = buildPrintLayer("top", topCalculation, plan);
+  const combinedRows = [...bottom.rows, ...top.rows];
   const summary: FloorPrintSummary = {
     slabCount: plan.slabs.length,
     openingCount: plan.openings.length,

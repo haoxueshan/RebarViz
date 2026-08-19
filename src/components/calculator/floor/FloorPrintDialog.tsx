@@ -93,10 +93,11 @@ export function FloorPrintDialog({
                   className={`min-h-11 rounded-xl border px-2 text-sm font-semibold ${options.preset === preset ? "border-blue-600 bg-blue-50 text-blue-700" : "border-slate-300 bg-white text-slate-700"} disabled:cursor-default`}
                   aria-pressed={options.preset === preset}
                 >
-                  {preset === "site" ? "现场料单" : preset === "full" ? "完整报告" : "自定义"}
+                  {preset === "site" ? "A4现场施工" : preset === "full" ? "完整报告" : "自定义"}
                 </button>
               ))}
             </div>
+            <p className="mt-3 text-xs leading-5 text-slate-500">A4现场施工模板按黑白打印优化，板区使用 S 编号并按板区组织主筋与副筋。</p>
           </section>
 
           <section>

@@ -5,6 +5,11 @@ import type {
   FloorPrintSnapshot,
 } from "@/lib/floor-print";
 import { floorOpeningTouchesFloor } from "@/lib/floor-2d";
+import {
+  buildFloorPrintAreaGroups,
+  buildFloorPrintSlabRefs,
+  floorPrintMarks,
+} from "@/lib/floor-print-layout";
 import { FloorPrintPlanSvg } from "./FloorPrintPlanSvg";
 import styles from "./FloorPrintReport.module.css";
 
@@ -135,6 +140,81 @@ function LayerBomTable({
   );
 }
 
+function SiteLayerBomTable({
+  title,
+  rows,
+  snapshot,
+}: {
+  title: string;
+  rows: readonly FloorPrintBomRow[];
+  snapshot: FloorPrintSnapshot;
+}) {
+  const slabRefs = buildFloorPrintSlabRefs(snapshot.geometry);
+  const normalGroups = buildFloorPrintAreaGroups(rows.filter((row) => row.source === "normal"), slabRefs)
+    .map((group) => ({ group, heading: group.displayName, key: `normal:${group.areaKey}` }));
+  const throughRowsByPath = new Map<string, FloorPrintBomRow[]>();
+  rows.filter((row) => row.source === "through").forEach((row) => {
+    const pathKey = row.throughPathId ?? row.throughPathName ?? "through";
+    const pathRows = throughRowsByPath.get(pathKey) ?? [];
+    pathRows.push(row);
+    throughRowsByPath.set(pathKey, pathRows);
+  });
+  const throughGroups = [...throughRowsByPath.entries()].flatMap(([pathKey, pathRows]) =>
+    buildFloorPrintAreaGroups(pathRows, slabRefs).map((group) => ({
+      group,
+      key: `through:${pathKey}:${group.areaKey}`,
+      heading: `通墙面筋 · ${pathRows[0]?.throughPathName ?? "通墙路径"} · ${group.displayName}`,
+    })));
+  const groups = [...normalGroups, ...throughGroups];
+  return (
+    <section className={`${styles.pageSection} ${styles.pageBreak}`} data-print-section={`${rows[0]?.layer ?? "combined"}-bom`}>
+      <h2 className={styles.sectionTitle}>
+        <span>{title}</span>
+        <span className={styles.sectionNote}>按板区组织正式 FloorBarPiece，下料长度以 D/M/T 编号料单为准</span>
+      </h2>
+      <div className={styles.tableWrap}>
+        <table className={`${styles.table} ${styles.siteTable}`}>
+          <thead>
+            <tr>
+              <th style={{ width: "12%" }}>编号</th>
+              <th style={{ width: "14%" }}>主/副</th>
+              <th style={{ width: "17%" }}>方向</th>
+              <th style={{ width: "20%" }}>规格</th>
+              <th style={{ width: "23%" }}>单根长度</th>
+              <th style={{ width: "14%" }}>根数</th>
+            </tr>
+          </thead>
+          {groups.map(({ group, heading, key }) => {
+            const groupRows = [...group.mainRows, ...group.secondaryRows];
+            return (
+              <tbody
+                key={key}
+                className={groupRows.length <= 6 ? styles.smallAreaGroup : undefined}
+                data-area-group={group.areaKey}
+              >
+                <tr className={styles.areaHeaderRow} data-area-header={group.areaKey}>
+                  <td colSpan={6}>{heading}</td>
+                </tr>
+                {groupRows.map((row) => (
+                  <tr key={`${row.layer}:${row.mark}`} data-print-mark={row.mark} data-source={row.source}>
+                    <td className={styles.mark}>{row.mark}</td>
+                    <td>{roleLabel(row.role)}</td>
+                    <td>{directionLabel(row.direction)}</td>
+                    <td>Φ{row.diameter}@{row.spacing}</td>
+                    <td>{formatSingleLength(row.singleLengthMm, snapshot.options.lengthUnit)}</td>
+                    <td>{row.count}</td>
+                  </tr>
+                ))}
+              </tbody>
+            );
+          })}
+        </table>
+      </div>
+      <p className={styles.subtotal}>本层小计：{rows.reduce((sum, row) => sum + row.count, 0)} 件 · {formatNumber(rows.reduce((sum, row) => sum + row.totalLengthM, 0))} m</p>
+    </section>
+  );
+}
+
 function PlanPage({
   snapshot,
   mode,
@@ -145,6 +225,10 @@ function PlanPage({
   title: string;
 }) {
   const pieces = mode === "bottom" ? snapshot.bottom.pieces : mode === "top" ? snapshot.top.pieces : [];
+  const rows = mode === "bottom" ? snapshot.bottom.rows : mode === "top" ? snapshot.top.rows : [];
+  const areaGroups = mode === "bottom"
+    ? buildFloorPrintAreaGroups(rows, buildFloorPrintSlabRefs(snapshot.geometry))
+    : [];
   const geometryNote = snapshot.source.coordinateModel === "clear-space-physical-v2"
     ? "本图使用正式V3物理净空、墙体与实物钢筋坐标；下料长度以D/M/T编号料单为准"
     : "本图为净跨布置示意；实际钢筋下料长度以D/M/T编号料单为准";
@@ -155,14 +239,27 @@ function PlanPage({
         <span className={styles.sectionNote}>{geometryNote}</span>
       </h2>
       <div className={styles.planFrame}>
-        <FloorPrintPlanSvg geometry={snapshot.geometry} coordinateModel={snapshot.source.coordinateModel} mode={mode} pieces={pieces} display={snapshot.options.display} />
+        <FloorPrintPlanSvg geometry={snapshot.geometry} coordinateModel={snapshot.source.coordinateModel} mode={mode} pieces={pieces} rows={rows} display={snapshot.options.display} />
       </div>
+      {mode === "bottom" && (
+        <div className={styles.areaIndex} aria-label="板区施工索引">
+          <strong>板区施工索引</strong>
+          <div className={styles.areaIndexGrid}>
+            {areaGroups.map((group) => (
+              <span key={group.areaKey} data-area-index={group.areaKey}>
+                {group.displayName}　主 {floorPrintMarks(group.mainRows) || "-"}　副 {floorPrintMarks(group.secondaryRows) || "-"}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
     </section>
   );
 }
 
 export function FloorPrintReport({ snapshot }: { snapshot: FloorPrintSnapshot }) {
   const sections = snapshot.options.sections;
+  const isSitePreset = snapshot.options.preset === "site";
   const uncoveredOpenings = snapshot.geometry.openings.filter((opening) =>
     !floorOpeningTouchesFloor(opening, snapshot.geometry));
   return (
@@ -194,9 +291,13 @@ export function FloorPrintReport({ snapshot }: { snapshot: FloorPrintSnapshot })
 
       {sections.floorPlan && <PlanPage snapshot={snapshot} mode="geometry" title="整层楼板平面" />}
       {sections.bottomPlan && <PlanPage snapshot={snapshot} mode="bottom" title="地筋平铺图" />}
-      {sections.bottomBom && <LayerBomTable title="地筋下料单" rows={snapshot.bottom.rows} layer={snapshot.bottom} snapshot={snapshot} />}
+      {sections.bottomBom && (isSitePreset
+        ? <SiteLayerBomTable title="地筋下料单" rows={snapshot.bottom.rows} snapshot={snapshot} />
+        : <LayerBomTable title="地筋下料单" rows={snapshot.bottom.rows} layer={snapshot.bottom} snapshot={snapshot} />)}
       {sections.topPlan && <PlanPage snapshot={snapshot} mode="top" title="面筋平铺图（普通 + 通墙）" />}
-      {sections.topBom && <LayerBomTable title="面筋下料单（普通 + 通墙）" rows={snapshot.top.rows} layer={snapshot.top} snapshot={snapshot} />}
+      {sections.topBom && (isSitePreset
+        ? <SiteLayerBomTable title="面筋下料单（普通 + 通墙）" rows={snapshot.top.rows} snapshot={snapshot} />
+        : <LayerBomTable title="面筋下料单（普通 + 通墙）" rows={snapshot.top.rows} layer={snapshot.top} snapshot={snapshot} />)}
       {sections.combinedBom && <LayerBomTable title="地筋 + 面筋综合明细" rows={snapshot.combinedRows} layer={{
         rows: snapshot.combinedRows,
         pieces: [...snapshot.bottom.pieces, ...snapshot.top.pieces],

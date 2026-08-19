@@ -19,6 +19,10 @@ import {
   validateFloorPrintBomConsistency,
 } from "./floor-print";
 import {
+  buildFloorPrintAreaGroups,
+  buildFloorPrintSlabRefs,
+} from "./floor-print-layout";
+import {
   buildFloorRebarCalculationContextV3,
 } from "./floor-rebar-calculation-context-v3";
 import {
@@ -418,6 +422,16 @@ describe("Floor Rebar V1.4D.0 Production Golden House", () => {
     expect(getFloorPrintEligibility(input, context.solution)).toMatchObject({ eligible: true, errors: [] });
     expect(validateFloorPrintBomConsistency(bottom, top)).toEqual([]);
     const content = buildFloorPrintContent(plan, bottom, top, context.solution);
+    const slabRefs = buildFloorPrintSlabRefs(content.geometry);
+    expect(buildFloorPrintSlabRefs(content.geometry)).toEqual(slabRefs);
+    expect(new Set(slabRefs.map((ref) => ref.printId)).size).toBe(plan.slabs.length);
+    const bottomAreas = buildFloorPrintAreaGroups(content.bottom.rows, slabRefs);
+    expect(bottomAreas.flatMap((area) => [...area.mainRows, ...area.secondaryRows]).map((row) => row.id).sort())
+      .toEqual(content.bottom.rows.map((row) => row.id).sort());
+    expect(content.bottom.rows.flatMap((row) => row.pieceIds).sort())
+      .toEqual(bottom.pieces.map((piece) => piece.id).sort());
+    expect(content.top.rows.flatMap((row) => row.pieceIds).sort())
+      .toEqual(top.pieces.map((piece) => piece.id).sort());
     expect(content.parameters.coordinateModel).toBe("clear-space-physical-v2");
     expect(content.summary).toMatchObject({
       bottomPieceCount: 20,
