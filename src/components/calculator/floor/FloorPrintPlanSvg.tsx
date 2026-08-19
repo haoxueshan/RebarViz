@@ -4,6 +4,7 @@ import {
 } from "@/lib/floor-physical-layout";
 import type { FloorSlab } from "@/lib/floor-plan";
 import type {
+  FloorPrintCoordinateModel,
   FloorPrintGeometry,
   FloorPrintOptions,
   FloorPrintPiece,
@@ -15,6 +16,7 @@ const VIEW_PADDING = 70;
 
 type FloorPrintPlanSvgProps = {
   geometry: FloorPrintGeometry;
+  coordinateModel: FloorPrintCoordinateModel;
   mode: "geometry" | "bottom" | "top";
   pieces?: readonly FloorPrintPiece[];
   display: FloorPrintOptions["display"];
@@ -35,6 +37,7 @@ function labelForMode(mode: FloorPrintPlanSvgProps["mode"]): string {
 
 export function FloorPrintPlanSvg({
   geometry,
+  coordinateModel,
   mode,
   pieces = [],
   display,
@@ -54,8 +57,10 @@ export function FloorPrintPlanSvg({
   const originY = (VIEW_HEIGHT - drawnHeight) / 2 + worldBounds.maxY * scale;
   const toX = (value: number) => originX + value * scale;
   const toY = (value: number) => originY - value * scale;
-  const mapNet = (axis: "x" | "y", value: number, slabIds: readonly string[] = []) =>
-    physical ? mapFloorNetAxisPoint(axis, value, { slabs: netSlabs }, physical, slabIds) : value;
+  const mapCoordinate = (axis: "x" | "y", value: number, slabIds: readonly string[] = []) =>
+    physical && coordinateModel === "net-layout-v1"
+      ? mapFloorNetAxisPoint(axis, value, { slabs: netSlabs }, physical, slabIds)
+      : value;
   const slabDraw = (slab: { id: string; x: number; y: number }) => {
     if (!physical) return { x: slab.x, y: slab.y };
     const item = physical.slabs.find((entry) => entry.slabId === slab.id);
@@ -77,10 +82,10 @@ export function FloorPrintPlanSvg({
     const xDirection = piece.direction === "x";
     const prefer = piece.slabIds;
     return {
-      x1: toX(mapNet("x", xDirection ? piece.runStartMm : piece.positionMm, prefer)),
-      y1: toY(mapNet("y", xDirection ? piece.positionMm : piece.runStartMm, prefer)),
-      x2: toX(mapNet("x", xDirection ? piece.runEndMm : piece.positionMm, prefer)),
-      y2: toY(mapNet("y", xDirection ? piece.positionMm : piece.runEndMm, prefer)),
+      x1: toX(mapCoordinate("x", xDirection ? piece.runStartMm : piece.positionMm, prefer)),
+      y1: toY(mapCoordinate("y", xDirection ? piece.positionMm : piece.runStartMm, prefer)),
+      x2: toX(mapCoordinate("x", xDirection ? piece.runEndMm : piece.positionMm, prefer)),
+      y2: toY(mapCoordinate("y", xDirection ? piece.positionMm : piece.runEndMm, prefer)),
     };
   };
 
@@ -153,11 +158,11 @@ export function FloorPrintPlanSvg({
           ? netSlabs.filter((slab) => Math.abs(slab.x - boundary.startX) <= 1e-4 || Math.abs(slab.x + slab.width - boundary.startX) <= 1e-4).map((slab) => slab.id)
           : netSlabs.filter((slab) => Math.abs(slab.y - boundary.startY) <= 1e-4 || Math.abs(slab.y + slab.height - boundary.startY) <= 1e-4).map((slab) => slab.id);
         if (boundary.orientation === "vertical") {
-          const x = toX(mapNet("x", boundary.startX, prefer));
-          return <line key={`${boundary.orientation}:${boundary.startX}:${boundary.startY}:${index}`} x1={x} y1={toY(mapNet("y", boundary.startY, prefer))} x2={x} y2={toY(mapNet("y", boundary.endY, prefer))} stroke="#171717" strokeWidth="1.7" strokeDasharray="10 7" strokeLinecap="square" />;
+          const x = toX(mapCoordinate("x", boundary.startX, prefer));
+          return <line key={`${boundary.orientation}:${boundary.startX}:${boundary.startY}:${index}`} x1={x} y1={toY(mapCoordinate("y", boundary.startY, prefer))} x2={x} y2={toY(mapCoordinate("y", boundary.endY, prefer))} stroke="#171717" strokeWidth="1.7" strokeDasharray="10 7" strokeLinecap="square" />;
         }
-        const y = toY(mapNet("y", boundary.startY, prefer));
-        return <line key={`${boundary.orientation}:${boundary.startX}:${boundary.startY}:${index}`} x1={toX(mapNet("x", boundary.startX, prefer))} y1={y} x2={toX(mapNet("x", boundary.endX, prefer))} y2={y} stroke="#171717" strokeWidth="1.7" strokeDasharray="10 7" strokeLinecap="square" />;
+        const y = toY(mapCoordinate("y", boundary.startY, prefer));
+        return <line key={`${boundary.orientation}:${boundary.startX}:${boundary.startY}:${index}`} x1={toX(mapCoordinate("x", boundary.startX, prefer))} y1={y} x2={toX(mapCoordinate("x", boundary.endX, prefer))} y2={y} stroke="#171717" strokeWidth="1.7" strokeDasharray="10 7" strokeLinecap="square" />;
       })}
 
       {throughPieces.map((piece) => (
@@ -190,8 +195,8 @@ export function FloorPrintPlanSvg({
           return found ? [found] : [];
         })[0];
         if (!piece) return null;
-        const x = toX(mapNet("x", cluster.centerX, piece.slabIds));
-        const y = toY(mapNet("y", cluster.centerY, piece.slabIds));
+        const x = toX(mapCoordinate("x", cluster.centerX, piece.slabIds));
+        const y = toY(mapCoordinate("y", cluster.centerY, piece.slabIds));
         const text = display.barSpecification ? `${cluster.mark}  Φ${piece.diameter}@${piece.spacing}` : cluster.mark;
         return (
           <g key={`mark:${cluster.mark}:${cluster.pieceIds.join("|")}`} data-mark-label={cluster.mark} data-mark-cluster-size={cluster.pieceIds.length} pointerEvents="none">

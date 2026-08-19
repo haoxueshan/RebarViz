@@ -686,7 +686,7 @@ export default function FloorRebarCalculator() {
     bottomRoleReviewRequired,
     topRoleReviewRequired,
     invalidDraftCount: invalidDrafts.size + invalidBottomDrafts.size + invalidTopDrafts.size,
-  }), [bottomCalculation, bottomRoleReviewRequired, canonicalPlan, invalidBottomDrafts.size, invalidDrafts.size, invalidTopDrafts.size, topCalculation, topRoleReviewRequired]);
+  }, calculationContextV3?.solution), [bottomCalculation, bottomRoleReviewRequired, calculationContextV3?.solution, canonicalPlan, invalidBottomDrafts.size, invalidDrafts.size, invalidTopDrafts.size, topCalculation, topRoleReviewRequired]);
   const roleItems = useMemo<FloorWorkspaceRoleItem[]>(() => roleDomains.map((domain, index) => {
     const resolved = resolveFloorRoleDomainMainDirection(domain, roleState);
     const mainLabel = resolved.mainDirection === "x" ? "东西向主筋" : resolved.mainDirection === "y" ? "南北向主筋" : "主筋方向待确认";
@@ -1786,7 +1786,7 @@ export default function FloorRebarCalculator() {
           {state.slabs.length === 0 ? (
             <div className="mx-auto max-w-md rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center" data-testid="floor-bom-empty"><p className="font-bold text-slate-900">尚未创建板区</p><p className="mt-1 text-xs text-slate-500">料单根据板区、地筋与面筋设置生成，请先创建板区。</p></div>
           ) : (
-            <FloorBomPanel plan={state} bottom={bottomCalculation} top={topCalculation} bottomRoleReviewRequired={bottomRoleReviewRequired} topRoleReviewRequired={topRoleReviewRequired} invalidDraftCount={invalidDrafts.size + invalidBottomDrafts.size + invalidTopDrafts.size} initialFilter={bomFilter} />
+            <FloorBomPanel plan={canonicalPlan} bottom={bottomCalculation} top={topCalculation} bottomRoleReviewRequired={bottomRoleReviewRequired} topRoleReviewRequired={topRoleReviewRequired} invalidDraftCount={invalidDrafts.size + invalidBottomDrafts.size + invalidTopDrafts.size} topologySolution={calculationContextV3?.solution} initialFilter={bomFilter} />
           )}
         </div>
       ) : (

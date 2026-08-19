@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { createFloorProductionGoldenPlan } from "./__fixtures__/floor-production-golden-v3";
 import {
   buildFloorPhysicalLayout,
   floorPhysicalSharedBand,
@@ -9,6 +10,8 @@ import {
   type FloorPlanState,
   type FloorSlab,
 } from "./floor-plan";
+import { buildFloorRebarCalculationContextV3 } from "./floor-rebar-calculation-context-v3";
+import * as floorTopologySolver from "./floor-topology-solver";
 
 function makePlan(
   slabs: FloorSlab[],
@@ -32,6 +35,19 @@ function slab(id: string, x: number, y: number, width: number, height: number): 
 }
 
 describe("buildFloorPhysicalLayout", () => {
+  it("V3 reuses a precomputed solution and keeps the one-solve fallback", () => {
+    const plan = createFloorProductionGoldenPlan();
+    const context = buildFloorRebarCalculationContextV3(plan);
+    const solve = vi.spyOn(floorTopologySolver, "solveFloorTopology");
+    solve.mockClear();
+    const fromSolution = buildFloorPhysicalLayout(plan, context.solution);
+    expect(solve).toHaveBeenCalledTimes(0);
+    const fallback = buildFloorPhysicalLayout(plan);
+    expect(solve).toHaveBeenCalledTimes(1);
+    expect(fallback).toEqual(fromSolution);
+    solve.mockRestore();
+  });
+
   it("默认双房间：内墙240真实占位，外墙370在净室外侧，总宽8780", () => {
     const layout = buildFloorPhysicalLayout(DEFAULT_FLOOR_PLAN_STATE);
     const a = layout.slabs.find((item) => item.slabId === "floor-slab-a");

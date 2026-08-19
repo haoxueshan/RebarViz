@@ -3,6 +3,12 @@ import {
   calculateFloorBottomRebar,
   DEFAULT_FLOOR_BOTTOM_STATE,
 } from "./floor-bottom-calculator";
+import {
+  createFloorProductionGoldenBottomState,
+  createFloorProductionGoldenPlan,
+  createFloorProductionGoldenRoleState,
+  createFloorProductionGoldenTopState,
+} from "./__fixtures__/floor-production-golden-v3";
 import type { FloorPlanState } from "./floor-plan";
 import {
   buildFloorPrintSnapshot,
@@ -68,6 +74,23 @@ function fixture() {
   });
 }
 
+function v3Fixture() {
+  const plan = createFloorProductionGoldenPlan();
+  const role = createFloorProductionGoldenRoleState();
+  return buildFloorPrintSnapshot({
+    plan,
+    bottom: calculateFloorBottomRebar(plan, createFloorProductionGoldenBottomState(), role),
+    top: calculateFloorTopRebar(plan, createFloorProductionGoldenTopState(), role),
+    bottomRoleReviewRequired: false,
+    topRoleReviewRequired: false,
+    invalidDraftCount: 0,
+    project: { projectName: "Production Golden House V1", floorName: "L2", remark: "" },
+    options: structuredClone(DEFAULT_FLOOR_PRINT_OPTIONS),
+    snapshotId: "floor-print-storage-v3-test",
+    createdAt: "2026-08-19T00:00:00.000Z",
+  });
+}
+
 describe("Floor Print Snapshot Storage", () => {
   it("按ID保存和恢复完整结果快照，刷新不依赖当前计算草稿", () => {
     const storage = new MemoryStorage();
@@ -82,6 +105,25 @@ describe("Floor Print Snapshot Storage", () => {
     expect(parseFloorPrintSnapshot({ ...snapshot, schemaVersion: 99 })).toBeNull();
     expect(parseFloorPrintSnapshot({ ...snapshot, bottom: { ...snapshot.bottom, rows: null } })).toBeNull();
     expect(parseFloorPrintSnapshot({ ...snapshot, summary: { ...snapshot.summary, totalWeightKg: Number.NaN } })).toBeNull();
+  });
+
+  it("Schema 2保存并恢复V3真实坐标模型与正式物理几何", () => {
+    const storage = new MemoryStorage();
+    const snapshot = v3Fixture();
+    expect(snapshot.schemaVersion).toBe(2);
+    expect(snapshot.parameters.coordinateModel).toBe("clear-space-physical-v2");
+    expect(snapshot.source.coordinateModel).toBe("clear-space-physical-v2");
+    expect(snapshot.geometry.physical).toBeDefined();
+    saveFloorPrintSnapshot(storage, snapshot);
+    expect(loadFloorPrintSnapshot(storage, snapshot.id)).toEqual(snapshot);
+    expect(parseFloorPrintSnapshot({
+      ...snapshot,
+      source: { ...snapshot.source, coordinateModel: "net-layout-v1" },
+    })).toBeNull();
+    expect(parseFloorPrintSnapshot({
+      ...snapshot,
+      geometry: { ...snapshot.geometry, physical: null },
+    })).toBeNull();
   });
 
   it("Schema 1快照迁移为Schema 2并把旧Top/Bottom统一标记为normal", () => {

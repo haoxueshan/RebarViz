@@ -14,6 +14,12 @@ import {
   buildFloorPhysicalLayout,
   type FloorPhysicalLayout,
 } from "./floor-physical-layout";
+import { validateFloorPlanState } from "./floor-topology-adapter";
+import {
+  buildFloorTopologyBoundarySegmentsV3,
+  solveFloorTopology,
+  type FloorTopologySolution,
+} from "./floor-topology-solver";
 import type { FloorBarLine, FloorBarPiece } from "./floor-rebar-types";
 import type { FloorBarRole } from "./floor-rebar-role";
 import type {
@@ -27,6 +33,7 @@ export const FLOOR_PRINT_SUM_EPSILON = 1e-6;
 export type FloorPrintStatus = "draft" | "official";
 export type FloorPrintLayerName = "bottom" | "top";
 export type FloorPrintDirection = "x" | "y";
+export type FloorPrintCoordinateModel = FloorPlanState["coordinateModel"];
 
 export type FloorPrintEligibilityIssue = {
   code: string;
@@ -252,7 +259,7 @@ export type FloorPrintSummary = {
 };
 
 export type FloorPrintParameters = {
-  coordinateModel: "net-layout-v1";
+  coordinateModel: FloorPrintCoordinateModel;
   innerWallThicknessMm: number;
   outerWallThicknessMm: number;
   bottomPhysicalDomainCount: number;
@@ -276,7 +283,7 @@ export type FloorPrintSnapshot = {
   options: FloorPrintOptions;
   source: {
     calculator: "floor-rebar";
-    coordinateModel: "net-layout-v1";
+    coordinateModel: FloorPrintCoordinateModel;
   };
 };
 
@@ -439,14 +446,31 @@ export function validateFloorPrintBomConsistency(
 
 export function getFloorPrintEligibility(
   input: FloorPrintEligibilityInput,
+  precomputedSolution?: FloorTopologySolution,
 ): FloorPrintEligibility {
-  const geometryIssues = validateFloorPlanV2(input.plan);
+  const topologySolution = input.plan.coordinateModel === "clear-space-physical-v2"
+    ? precomputedSolution ?? solveFloorTopology(input.plan)
+    : undefined;
+  const geometryIssues = input.plan.coordinateModel === "clear-space-physical-v2"
+    ? validateFloorPlanState(input.plan, topologySolution)
+    : validateFloorPlanV2(input.plan);
+  const physicalIssues = topologySolution
+    ? buildFloorPhysicalLayout(input.plan, topologySolution).issues
+    : [];
+  const geometryIssueCodes = new Set(geometryIssues.map((issue) => issue.code));
+  const physicalOnlyIssues = physicalIssues.filter((issue) => !geometryIssueCodes.has(issue.code));
   const errors: FloorPrintEligibilityIssue[] = geometryIssues
     .filter((issue) => issue.level === "error")
     .map(({ code, message }) => ({ code, message }));
   const warnings: FloorPrintEligibilityIssue[] = geometryIssues
     .filter((issue) => issue.level === "warning")
     .map(({ code, message }) => ({ code, message }));
+  errors.push(...physicalOnlyIssues
+    .filter((issue) => issue.level === "error")
+    .map(({ code, message }) => ({ code, message })));
+  warnings.push(...physicalOnlyIssues
+    .filter((issue) => issue.level === "warning")
+    .map(({ code, message }) => ({ code, message })));
 
   if (!input.bottom.isValid) {
     errors.push(...input.bottom.errors.map(({ code, message }) => ({ code, message })));
@@ -733,6 +757,7 @@ export function buildFloorPrintContent(
   plan: FloorPlanState,
   bottomCalculation: FloorBottomCalculation,
   topCalculation: FloorTopCalculation,
+  precomputedSolution?: FloorTopologySolution,
 ): FloorPrintContent {
   const consistency = validateFloorPrintBomConsistency(bottomCalculation, topCalculation);
   if (consistency.length > 0) {
@@ -741,12 +766,27 @@ export function buildFloorPrintContent(
   const bottom = buildPrintLayer("bottom", bottomCalculation, plan);
   const top = buildPrintLayer("top", topCalculation, plan);
   const combinedRows = [...bottom.rows, ...top.rows];
+  const topologySolution = plan.coordinateModel === "clear-space-physical-v2"
+    ? precomputedSolution ?? solveFloorTopology(plan)
+    : undefined;
+  const physical = buildFloorPhysicalLayout(plan, topologySolution);
+  const physicalError = plan.coordinateModel === "clear-space-physical-v2"
+    ? physical.issues.find((issue) => issue.level === "error")
+    : undefined;
+  if (physicalError) {
+    throw new FloorPrintBuildError(physicalError.code, physicalError.message);
+  }
+  const boundarySegments = topologySolution
+    ? buildFloorTopologyBoundarySegmentsV3(plan, topologySolution)
+    : buildFloorAtomicBoundarySegments(plan);
   const geometry: FloorPrintGeometry = {
     // 未覆盖楼板的远端洞口仍保留在快照中供报告提示，但不能压缩正式楼板图。
     bounds: calculateFloorCanvasBounds(plan, "floor"),
     slabs: plan.slabs.map((slab) => ({ ...slab })),
     openings: plan.openings.map((opening) => ({ ...opening })),
-    boundaries: buildFloorAtomicBoundarySegments(plan).map((segment) => ({
+    // V3 uses the formal Solved Connection / Exterior Range adapter. Legacy
+    // remains on Atomic Boundary. Physical walls are authoritative in V3.
+    boundaries: boundarySegments.map((segment) => ({
       orientation: segment.orientation,
       startX: segment.startX,
       startY: segment.startY,
@@ -754,7 +794,7 @@ export function buildFloorPrintContent(
       endY: segment.endY,
       support: segment.support,
     })),
-    physical: buildFloorPhysicalLayout(plan),
+    physical,
   };
   const summary: FloorPrintSummary = {
     slabCount: plan.slabs.length,
@@ -779,8 +819,8 @@ export function buildFloorPrintContent(
     combinedRows,
     diameterSummary: buildDiameterSummary(combinedRows),
     parameters: {
-      // 打印快照冻结的是 Net 语义几何（V1.4A 打印链路暂未迁移，正式迁移留给 V1.4C）。
-      coordinateModel: "net-layout-v1",
+      // Snapshot records the Plan's real geometry semantics: Legacy Net or V3 Physical Clear Space.
+      coordinateModel: plan.coordinateModel,
       innerWallThicknessMm: plan.innerWallThickness,
       outerWallThicknessMm: plan.outerWallThickness,
       bottomPhysicalDomainCount: bottomCalculation.domains.length,
@@ -807,8 +847,12 @@ export function createFloorPrintSnapshotId(now = new Date()): string {
 
 export function buildFloorPrintSnapshot(
   input: FloorPrintSnapshotInput,
+  precomputedSolution?: FloorTopologySolution,
 ): FloorPrintSnapshot {
-  const eligibility = getFloorPrintEligibility(input);
+  const topologySolution = input.plan.coordinateModel === "clear-space-physical-v2"
+    ? precomputedSolution ?? solveFloorTopology(input.plan)
+    : undefined;
+  const eligibility = getFloorPrintEligibility(input, topologySolution);
   if (!eligibility.eligible) {
     const first = eligibility.errors[0] ?? {
       code: "floor-print-ineligible",
@@ -816,7 +860,7 @@ export function buildFloorPrintSnapshot(
     };
     throw new FloorPrintBuildError(first.code, first.message);
   }
-  const content = buildFloorPrintContent(input.plan, input.bottom, input.top);
+  const content = buildFloorPrintContent(input.plan, input.bottom, input.top, topologySolution);
   const snapshot: FloorPrintSnapshot = {
     schemaVersion: FLOOR_PRINT_SNAPSHOT_SCHEMA_VERSION,
     id: input.snapshotId ?? createFloorPrintSnapshotId(
@@ -833,7 +877,7 @@ export function buildFloorPrintSnapshot(
     options: structuredClone(input.options),
     source: {
       calculator: "floor-rebar",
-      coordinateModel: "net-layout-v1",
+      coordinateModel: input.plan.coordinateModel,
     },
   };
   return structuredClone(snapshot);

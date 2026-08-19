@@ -18,6 +18,7 @@ import {
   persistFloorPrintSnapshot,
 } from "@/lib/floor-print-snapshot-db";
 import type { FloorTopCalculation } from "@/lib/floor-top-calculator";
+import type { FloorTopologySolution } from "@/lib/floor-topology-solver";
 import { FloorPrintDialog } from "./FloorPrintDialog";
 
 function formatNumber(value: number, digits = 2): string {
@@ -63,6 +64,7 @@ export function FloorBomPanel({
   bottomRoleReviewRequired,
   topRoleReviewRequired,
   invalidDraftCount,
+  topologySolution,
   initialFilter = "all",
 }: {
   plan: FloorPlanState;
@@ -71,6 +73,7 @@ export function FloorBomPanel({
   bottomRoleReviewRequired: boolean;
   topRoleReviewRequired: boolean;
   invalidDraftCount: number;
+  topologySolution?: FloorTopologySolution;
   initialFilter?: "all" | "bottom" | "top" | "through";
 }) {
   const router = useRouter();
@@ -87,15 +90,15 @@ export function FloorBomPanel({
     bottomRoleReviewRequired,
     topRoleReviewRequired,
     invalidDraftCount,
-  }), [bottom, bottomRoleReviewRequired, invalidDraftCount, plan, top, topRoleReviewRequired]);
+  }, topologySolution), [bottom, bottomRoleReviewRequired, invalidDraftCount, plan, top, topologySolution, topRoleReviewRequired]);
   const content = useMemo(() => {
     if (!eligibility.eligible) return null;
     try {
-      return buildFloorPrintContent(plan, bottom, top);
+      return buildFloorPrintContent(plan, bottom, top, topologySolution);
     } catch {
       return null;
     }
-  }, [bottom, eligibility.eligible, plan, top]);
+  }, [bottom, eligibility.eligible, plan, top, topologySolution]);
   const filteredRows = useMemo(() => {
     if (!content) return [];
     const query = previewQuery.trim().toLocaleLowerCase("zh-CN");
@@ -123,7 +126,7 @@ export function FloorBomPanel({
         invalidDraftCount,
         project,
         options,
-      });
+      }, topologySolution);
       // 主存储 IndexedDB；不可用时 sessionStorage 单快照 fallback。
       await persistFloorPrintSnapshot(snapshot);
       setBuildError(null);

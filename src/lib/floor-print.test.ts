@@ -121,6 +121,8 @@ describe("Floor Print资格与正式数据一致性", () => {
     expect(snapshot.geometry.slabs[0].name).toBe(originalName);
     expect(snapshot.summary.totalWeightKg).toBe(originalWeight);
     expect(snapshot.status).toBe("official");
+    expect(snapshot.parameters.coordinateModel).toBe("net-layout-v1");
+    expect(snapshot.source.coordinateModel).toBe("net-layout-v1");
   });
 
   it("净跨拓扑允许负坐标，打印只禁止负长度而不误判世界坐标", () => {
@@ -157,6 +159,8 @@ describe("Floor Print BOM与编号", () => {
   it("D/M编号分层生成，综合视图不合并Bottom与Top", () => {
     const input = snapshotInput();
     const content = buildFloorPrintContent(input.plan, input.bottom, input.top);
+    expect(content.parameters.coordinateModel).toBe("net-layout-v1");
+    expect(content.geometry.boundaries.length).toBeGreaterThan(0);
     expect(content.bottom.rows.every((row) => row.mark.startsWith("D"))).toBe(true);
     expect(content.top.rows.every((row) => row.mark.startsWith("M"))).toBe(true);
     expect(content.combinedRows).toHaveLength(content.bottom.rows.length + content.top.rows.length);

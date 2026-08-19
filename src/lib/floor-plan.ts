@@ -167,9 +167,9 @@ export const DEFAULT_FLOOR_PLAN_STATE: FloorPlanState = {
 };
 
 /**
- * Floor坐标是“净跨拓扑坐标”，用于拼接有板区域，而不是含墙厚的建筑物理坐标。
- * 未来任何正式钢筋长度都禁止直接使用 endX-startX；必须组合净跨、经过墙厚、
- * 端部规则与Opening裁断后计算。
+ * Legacy net-layout-v1 使用净跨拓扑坐标；V3 clear-space-physical-v2 使用物理净空坐标，
+ * 正式连接与墙带由 Topology Solver 派生。任何正式钢筋长度都禁止仅用 endX-startX；
+ * 必须组合净跨、经过墙厚、端部规则与 Opening 裁断后计算。
  */
 
 function finiteNumber(value: unknown, fallback: number): number {

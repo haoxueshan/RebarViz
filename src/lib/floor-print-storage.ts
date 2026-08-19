@@ -26,6 +26,10 @@ function isFiniteNonNegative(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
+function isFloorPrintCoordinateModel(value: unknown): value is FloorPrintSnapshot["source"]["coordinateModel"] {
+  return value === "net-layout-v1" || value === "clear-space-physical-v2";
+}
+
 function hasBooleanKeys(value: unknown, keys: readonly string[]): boolean {
   return isObject(value) && keys.every((key) => typeof value[key] === "boolean");
 }
@@ -95,6 +99,37 @@ function validLayer(value: unknown): boolean {
     isFiniteNonNegative(value.totalLengthM) && isFiniteNonNegative(value.totalWeightKg);
 }
 
+function validPhysicalBounds(value: unknown): boolean {
+  return isObject(value) && [value.minX, value.minY, value.maxX, value.maxY]
+    .every((item) => typeof item === "number" && Number.isFinite(item));
+}
+
+function validPhysicalLayout(value: unknown): boolean {
+  if (!isObject(value) || !validPhysicalBounds(value.bounds) || !validPhysicalBounds(value.floorBounds) ||
+    !Array.isArray(value.slabs) || !Array.isArray(value.openings) ||
+    !Array.isArray(value.walls) || !Array.isArray(value.issues)) return false;
+  const finite = (item: unknown) => typeof item === "number" && Number.isFinite(item);
+  const validSlab = (item: unknown) => isObject(item) && typeof item.slabId === "string" &&
+    [item.netX, item.netY, item.x, item.y, item.width, item.height, item.offsetX, item.offsetY].every(finite) &&
+    Number(item.width) > 0 && Number(item.height) > 0;
+  const validOpening = (item: unknown) => isObject(item) && typeof item.openingId === "string" &&
+    [item.netX, item.netY, item.x, item.y, item.width, item.height, item.offsetX, item.offsetY].every(finite) &&
+    Number(item.width) > 0 && Number(item.height) > 0;
+  const validWall = (item: unknown) => isObject(item) && typeof item.id === "string" &&
+    ["inner-wall", "outer-wall"].includes(String(item.kind)) &&
+    ["horizontal", "vertical"].includes(String(item.orientation)) &&
+    [item.x, item.y, item.width, item.height, item.lengthMm, item.thicknessMm].every(finite) &&
+    [item.width, item.height, item.lengthMm, item.thicknessMm].every((number) => Number(number) >= 0) &&
+    Array.isArray(item.slabIds) && item.slabIds.every((id) => typeof id === "string") &&
+    Array.isArray(item.sourceAtomicIds) && item.sourceAtomicIds.every((id) => typeof id === "string") &&
+    (item.side === undefined || ["west", "east", "south", "north"].includes(String(item.side)));
+  const validIssue = (item: unknown) => isObject(item) &&
+    ["warning", "error"].includes(String(item.level)) &&
+    typeof item.code === "string" && typeof item.message === "string";
+  return value.slabs.every(validSlab) && value.openings.every(validOpening) &&
+    value.walls.every(validWall) && value.issues.every(validIssue);
+}
+
 function validGeometry(value: unknown): boolean {
   if (!isObject(value) || !isObject(value.bounds)) return false;
   const bounds = value.bounds;
@@ -107,7 +142,8 @@ function validGeometry(value: unknown): boolean {
     ["horizontal", "vertical"].includes(String(item.orientation)) &&
     ["outer-wall", "inner-wall", "continuous", "opening-cut"].includes(String(item.support)) &&
     [item.startX, item.startY, item.endX, item.endY].every((number) => typeof number === "number" && Number.isFinite(number));
-  return value.slabs.every(validRect) && value.openings.every(validRect) && value.boundaries.every(validBoundary);
+  return value.slabs.every(validRect) && value.openings.every(validRect) && value.boundaries.every(validBoundary) &&
+    (value.physical === undefined || value.physical === null || validPhysicalLayout(value.physical));
 }
 
 export function parseFloorPrintSnapshot(value: unknown): FloorPrintSnapshot | null {
@@ -139,7 +175,7 @@ export function parseFloorPrintSnapshot(value: unknown): FloorPrintSnapshot | nu
     value.summary.totalLengthM,
     value.summary.totalWeightKg,
   ].every(isFiniteNonNegative)) return null;
-  if (!isObject(value.parameters) || value.parameters.coordinateModel !== "net-layout-v1" || ![
+  if (!isObject(value.parameters) || !isFloorPrintCoordinateModel(value.parameters.coordinateModel) || ![
     value.parameters.innerWallThicknessMm,
     value.parameters.outerWallThicknessMm,
     value.parameters.bottomPhysicalDomainCount,
@@ -147,7 +183,14 @@ export function parseFloorPrintSnapshot(value: unknown): FloorPrintSnapshot | nu
     value.parameters.roleDomainCount,
   ].every(isFiniteNonNegative)) return null;
   if (!isFloorPrintOptions(value.options)) return null;
-  if (!isObject(value.source) || value.source.calculator !== "floor-rebar" || value.source.coordinateModel !== "net-layout-v1") return null;
+  if (!isObject(value.source) || value.source.calculator !== "floor-rebar" ||
+    !isFloorPrintCoordinateModel(value.source.coordinateModel) ||
+    value.source.coordinateModel !== value.parameters.coordinateModel) return null;
+  if (value.source.coordinateModel === "clear-space-physical-v2") {
+    if (!isObject(value.geometry) || !validPhysicalLayout(value.geometry.physical)) return null;
+    const physical = value.geometry.physical as Record<string, unknown>;
+    if ((physical.issues as unknown[]).some((issue) => isObject(issue) && issue.level === "error")) return null;
+  }
   return structuredClone(value as FloorPrintSnapshot);
 }
 

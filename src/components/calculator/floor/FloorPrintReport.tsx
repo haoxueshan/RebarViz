@@ -145,14 +145,17 @@ function PlanPage({
   title: string;
 }) {
   const pieces = mode === "bottom" ? snapshot.bottom.pieces : mode === "top" ? snapshot.top.pieces : [];
+  const geometryNote = snapshot.source.coordinateModel === "clear-space-physical-v2"
+    ? "本图使用正式V3物理净空、墙体与实物钢筋坐标；下料长度以D/M/T编号料单为准"
+    : "本图为净跨布置示意；实际钢筋下料长度以D/M/T编号料单为准";
   return (
     <section className={`${styles.pageSection} ${styles.planPage}`} data-print-section={`${mode}-plan`}>
       <h2 className={styles.sectionTitle}>
         <span>{title}</span>
-        <span className={styles.sectionNote}>本图为净跨布置示意；实际钢筋下料长度以D/M/T编号料单为准</span>
+        <span className={styles.sectionNote}>{geometryNote}</span>
       </h2>
       <div className={styles.planFrame}>
-        <FloorPrintPlanSvg geometry={snapshot.geometry} mode={mode} pieces={pieces} display={snapshot.options.display} />
+        <FloorPrintPlanSvg geometry={snapshot.geometry} coordinateModel={snapshot.source.coordinateModel} mode={mode} pieces={pieces} display={snapshot.options.display} />
       </div>
     </section>
   );
@@ -181,7 +184,7 @@ export function FloorPrintReport({ snapshot }: { snapshot: FloorPrintSnapshot })
           </div>
           <div className={styles.parameterGrid}>
             <div className={styles.parameterCard}><span className={styles.parameterLabel}>板区 / 洞口</span><strong className={styles.parameterValue}>{snapshot.summary.slabCount} / {snapshot.summary.openingCount}</strong></div>
-            <div className={styles.parameterCard}><span className={styles.parameterLabel}>坐标模型</span><strong className={styles.parameterValue}>net-layout-v1</strong></div>
+            <div className={styles.parameterCard}><span className={styles.parameterLabel}>坐标模型</span><strong className={styles.parameterValue}>{snapshot.source.coordinateModel}</strong></div>
             <div className={styles.parameterCard}><span className={styles.parameterLabel}>快照Schema</span><strong className={styles.parameterValue}>{snapshot.schemaVersion}</strong></div>
           </div>
           {snapshot.project.remark && <div className={styles.remark}><strong>备注：</strong>{snapshot.project.remark}</div>}

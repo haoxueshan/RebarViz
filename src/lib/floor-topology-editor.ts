@@ -230,7 +230,7 @@ export function buildFloorEditorGeometry(plan: FloorPlanState): FloorEditorGeome
   plan.slabs.forEach((slab) => {
     connectionsBySlab.set(slab.id, floorConnectionsForSlab(plan, slab.id));
   });
-  return { solution, physical: buildFloorPhysicalLayout(plan), connectionsBySlab };
+  return { solution, physical: buildFloorPhysicalLayout(plan, solution), connectionsBySlab };
 }
 
 export type FloorConnectionEvaluation =

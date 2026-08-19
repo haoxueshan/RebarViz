@@ -9,17 +9,19 @@ import {
 import {
   buildFloorTopologyExteriorRanges,
   solveFloorTopology,
+  type FloorTopologySolution,
 } from "./floor-topology-solver";
 
 /**
  * Floor Physical Wall Layout V1.3（纯派生显示层）：
- * 把 net-layout-v1 的净跨拓扑坐标转换为真实建筑物理平面坐标。
+ * - Legacy net-layout-v1：把净跨拓扑坐标映射到真实建筑物理平面。
+ * - V3 clear-space-physical-v2：直接消费 Solved Clear Slabs / Walls，禁止再次增加墙偏移。
  *
  * 关键不变量：
- * 1. FloorPlanState 的 slab.x/y/width/height 永远保持净跨语义，禁止写回；
+ * 1. 本模块只返回派生副本，禁止写回 FloorPlanState；
  * 2. 本模块是纯函数，无 React / DOM / localStorage / 副作用；
  * 3. 墙体是唯一 Geometry 来源（Canvas 与 Print 共用）；
- * 4. 正式钢筋计算仍使用 Net Layout，本层只负责显示映射。
+ * 4. Legacy 钢筋坐标需要显示映射；V3 钢筋坐标已经是 Physical，不得二次映射。
  */
 
 const EPSILON = 1e-4;
@@ -475,11 +477,17 @@ function buildPhysicalOpenings(
 }
 
 /** 主入口：由 FloorPlanState 确定性派生真实物理平面。 */
-export function buildFloorPhysicalLayout(plan: FloorPlanState): FloorPhysicalLayout {
+export function buildFloorPhysicalLayout(
+  plan: FloorPlanState,
+  precomputedSolution?: FloorTopologySolution,
+): FloorPhysicalLayout {
   // Plan V3（clear-space-physical-v2）：物理布局来自 Topology Solver；
   // Slab 位置已经是求解后的 Clear Space 物理位置，禁止再次加墙偏移（避免墙厚×2）。
   if (plan.coordinateModel === "clear-space-physical-v2") {
-    return buildFloorPhysicalLayoutFromTopology(plan);
+    return buildFloorPhysicalLayoutFromTopology(
+      plan,
+      precomputedSolution ?? solveFloorTopology(plan),
+    );
   }
   const issues: FloorPhysicalLayoutIssue[] = [];
   const { x, y, bands } = buildConstraintEdges(plan);
@@ -544,8 +552,10 @@ export function buildFloorPhysicalLayout(plan: FloorPlanState): FloorPhysicalLay
  * Plan V3 物理布局 Adapter：直接消费 Topology Solver 的 Solved Clear Slabs 与 Wall Bands。
  * 禁止二次加 240 偏移（墙厚只由 Solver 插入一次）。
  */
-function buildFloorPhysicalLayoutFromTopology(plan: FloorPlanState): FloorPhysicalLayout {
-  const solution = solveFloorTopology(plan);
+function buildFloorPhysicalLayoutFromTopology(
+  plan: FloorPlanState,
+  solution: FloorTopologySolution,
+): FloorPhysicalLayout {
   const issues: FloorPhysicalLayoutIssue[] = solution.issues.map((issue) => ({
     level: issue.level,
     code: issue.code,

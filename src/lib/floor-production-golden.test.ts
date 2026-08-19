@@ -404,6 +404,7 @@ describe("Floor Rebar V1.4D.0 Production Golden House", () => {
 
   it("passes the official Print gate and exposes BOM values without recalculating geometry", () => {
     const { plan, bottom, top } = calculateProduction();
+    const context = buildFloorRebarCalculationContextV3(plan);
     const input = {
       plan,
       bottom,
@@ -412,9 +413,12 @@ describe("Floor Rebar V1.4D.0 Production Golden House", () => {
       topRoleReviewRequired: false,
       invalidDraftCount: 0,
     };
-    expect(getFloorPrintEligibility(input)).toMatchObject({ eligible: true, errors: [] });
+    const solve = vi.spyOn(floorTopologySolver, "solveFloorTopology");
+    solve.mockClear();
+    expect(getFloorPrintEligibility(input, context.solution)).toMatchObject({ eligible: true, errors: [] });
     expect(validateFloorPrintBomConsistency(bottom, top)).toEqual([]);
-    const content = buildFloorPrintContent(plan, bottom, top);
+    const content = buildFloorPrintContent(plan, bottom, top, context.solution);
+    expect(content.parameters.coordinateModel).toBe("clear-space-physical-v2");
     expect(content.summary).toMatchObject({
       bottomPieceCount: 20,
       topPieceCount: 19,
@@ -432,20 +436,71 @@ describe("Floor Rebar V1.4D.0 Production Golden House", () => {
     );
     expect(content.top.rows.some((row) => row.source === "through" && row.throughPathId === "golden-through-b-c" && row.singleLengthMm === 6970 && row.count === 1)).toBe(true);
     expect(content.top.rows.reduce((sum, row) => sum + row.count, 0)).toBe(19);
+    expect(content.top.pieces.find((piece) => piece.source === "through")).toMatchObject({
+      throughPathId: "golden-through-b-c",
+      positionMm: 1500,
+      runStartMm: 3240,
+      runEndMm: 9480,
+      singleLengthMm: 6970,
+    });
+    const physical = content.geometry.physical!;
+    expect(physical.slabs.map((slab) => [slab.slabId, slab.x, slab.width])).toEqual([
+      ["production-a", 0, 3000],
+      ["production-b", 3240, 3000],
+      ["production-c", 6480, 3000],
+    ]);
+    expect(physical.openings).toContainEqual(expect.objectContaining({
+      openingId: "golden-opening",
+      x: 1000,
+      y: 2200,
+      width: 1000,
+      height: 600,
+      offsetX: 0,
+      offsetY: 0,
+    }));
+    const innerWalls = physical.walls.filter((wall) => wall.kind === "inner-wall");
+    expect(innerWalls).toEqual(expect.arrayContaining([
+      expect.objectContaining({ x: 3000, y: 0, width: 240, height: 3000, sourceAtomicIds: ["atomic:v3:connection:production-a:east:production-b:west"] }),
+      expect.objectContaining({ x: 6240, y: 0, width: 240, height: 3000, sourceAtomicIds: ["atomic:v3:connection:production-b:east:production-c:west"] }),
+    ]));
+    expect(physical.walls).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "outer-wall", slabIds: ["production-a"], side: "west", thicknessMm: 240 }),
+      expect.objectContaining({ kind: "outer-wall", slabIds: ["production-c"], side: "east", thicknessMm: 240 }),
+      expect.objectContaining({ kind: "outer-wall", side: "south", thicknessMm: 240 }),
+      expect.objectContaining({ kind: "outer-wall", side: "north", thicknessMm: 240 }),
+    ]));
+    expect(content.geometry.boundaries.filter((boundary) => boundary.support === "inner-wall")).toEqual([
+      { orientation: "vertical", startX: 3120, startY: 0, endX: 3120, endY: 3000, support: "inner-wall" },
+      { orientation: "vertical", startX: 6360, startY: 0, endX: 6360, endY: 3000, support: "inner-wall" },
+    ]);
     const snapshot = buildFloorPrintSnapshot({
       ...input,
       project: { projectName: "Production Golden House V1", floorName: "Level 2", remark: "Production gate" },
       options: structuredClone(DEFAULT_FLOOR_PRINT_OPTIONS),
       createdAt: "2026-08-19T00:00:00.000Z",
       snapshotId: "production-golden-snapshot",
-    });
+    }, context.solution);
     expect(snapshot.status).toBe("official");
+    expect(snapshot.parameters.coordinateModel).toBe("clear-space-physical-v2");
+    expect(snapshot.source.coordinateModel).toBe("clear-space-physical-v2");
+    expect(snapshot.source.coordinateModel).toBe(snapshot.parameters.coordinateModel);
     expect(snapshot.project).toEqual({
       projectName: "Production Golden House V1",
       floorName: "Level 2",
       remark: "Production gate",
     });
     expect(snapshot.summary).toEqual(content.summary);
+    expect(solve).toHaveBeenCalledTimes(0);
+    solve.mockRestore();
+
+    const fallbackSnapshot = buildFloorPrintSnapshot({
+      ...input,
+      project: { projectName: "Production Golden House V1", floorName: "Level 2", remark: "Production gate" },
+      options: structuredClone(DEFAULT_FLOOR_PRINT_OPTIONS),
+      createdAt: "2026-08-19T00:00:00.000Z",
+      snapshotId: "production-golden-snapshot",
+    });
+    expect(fallbackSnapshot).toEqual(snapshot);
   });
 
   it("blocks print for invalid role, topology, Through and settings", () => {
