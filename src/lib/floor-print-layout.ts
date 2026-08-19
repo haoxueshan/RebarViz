@@ -23,6 +23,15 @@ export type FloorPrintSlabRebarSummary = {
   secondaryRows: FloorPrintBomRow[];
 };
 
+export type FloorPrintSiteIndexEntry = {
+  key: string;
+  kind: "slab" | "joint" | "through";
+  displayName: string;
+  mainMarks: string;
+  secondaryMarks: string;
+  sortIndex: number;
+};
+
 type PrintSlabGeometry = FloorPrintGeometry["slabs"][number];
 
 const POSITION_EPSILON = 1e-4;
@@ -178,4 +187,63 @@ export function buildFloorPrintSlabRebarSummaries(
 
 export function floorPrintMarks(rows: readonly FloorPrintBomRow[]): string {
   return rows.map((row) => row.mark).join("/");
+}
+
+/**
+ * Site-plan index order is independent from the order in which rows happen to
+ * be rendered: individual slabs, joint areas, then Through paths.
+ */
+export function buildFloorPrintSiteIndex(
+  normalRows: readonly FloorPrintBomRow[],
+  throughRows: readonly FloorPrintBomRow[],
+  refs: readonly FloorPrintSlabRef[],
+): FloorPrintSiteIndexEntry[] {
+  const normalGroups = buildFloorPrintAreaGroups(normalRows, refs);
+  const byArea = new Map(normalGroups.map((group) => [group.areaKey, group]));
+  const slabEntries = refs.map((ref) => {
+    const group = byArea.get(ref.slabId);
+    return {
+      key: `slab:${ref.slabId}`,
+      kind: "slab" as const,
+      displayName: `${ref.printId} 路 ${ref.name}`,
+      mainMarks: floorPrintMarks(group?.mainRows ?? []) || "-",
+      secondaryMarks: floorPrintMarks(group?.secondaryRows ?? []) || "-",
+      sortIndex: ref.sortIndex,
+    };
+  });
+  const jointEntries = normalGroups
+    .filter((group) => group.slabIds.length > 1)
+    .map((group) => ({
+      key: `joint:${group.areaKey}`,
+      kind: "joint" as const,
+      displayName: group.displayName,
+      mainMarks: floorPrintMarks(group.mainRows) || "-",
+      secondaryMarks: floorPrintMarks(group.secondaryRows) || "-",
+      sortIndex: group.sortIndex,
+    }));
+  const throughByPath = new Map<string, FloorPrintBomRow[]>();
+  throughRows.forEach((row) => {
+    const key = row.throughPathId ?? row.throughPathName ?? row.mark;
+    const grouped = throughByPath.get(key) ?? [];
+    grouped.push(row);
+    throughByPath.set(key, grouped);
+  });
+  const throughEntries = [...throughByPath.entries()]
+    .map(([pathKey, pathRows]) => {
+      const slabRefs = [...new Set(pathRows.flatMap((row) => row.slabIds))]
+        .flatMap((slabId) => refs.find((ref) => ref.slabId === slabId) ?? [])
+        .sort((left, right) => left.sortIndex - right.sortIndex || left.slabId.localeCompare(right.slabId));
+      const mainRows = pathRows.filter((row) => row.role === "main");
+      const secondaryRows = pathRows.filter((row) => row.role === "secondary");
+      return {
+        key: `through:${pathKey}`,
+        kind: "through" as const,
+        displayName: `${pathRows[0]?.throughPathName ?? "通墙路径"} 路 ${slabRefs.map((ref) => ref.printId).join("→") || "-"}`,
+        mainMarks: floorPrintMarks(mainRows) || "-",
+        secondaryMarks: floorPrintMarks(secondaryRows) || "-",
+        sortIndex: slabRefs[0]?.sortIndex ?? Number.MAX_SAFE_INTEGER,
+      };
+    })
+    .sort((left, right) => left.displayName.localeCompare(right.displayName, "zh-CN") || left.key.localeCompare(right.key));
+  return [...slabEntries, ...jointEntries, ...throughEntries];
 }

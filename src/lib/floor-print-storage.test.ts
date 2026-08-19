@@ -150,6 +150,40 @@ describe("Floor Print Snapshot Storage", () => {
   });
 });
 
+describe("Floor Print V4.1 legacy layout migration", () => {
+  it("loads pre-V4.1 snapshots without changing schema and derives their page layout", () => {
+    const current = fixture();
+    const legacySite = structuredClone(current) as unknown as { options: Record<string, unknown> };
+    delete legacySite.options.layoutMode;
+    expect(parseFloorPrintSnapshot(legacySite)?.options).toMatchObject({ preset: "site", layoutMode: "site" });
+
+    const legacyFull = structuredClone(current) as unknown as { options: Record<string, unknown> };
+    legacyFull.options.preset = "full";
+    delete legacyFull.options.layoutMode;
+    expect(parseFloorPrintSnapshot(legacyFull)?.options).toMatchObject({ preset: "full", layoutMode: "report" });
+
+    const legacyCustom = structuredClone(current) as unknown as { options: Record<string, unknown> };
+    legacyCustom.options.preset = "custom";
+    delete legacyCustom.options.layoutMode;
+    expect(parseFloorPrintSnapshot(legacyCustom)?.options).toMatchObject({ preset: "custom", layoutMode: "report" });
+  });
+
+  it("migrates old settings with deterministic site/report layout fallbacks", () => {
+    const oldOptions = structuredClone(DEFAULT_FLOOR_PRINT_OPTIONS) as unknown as Record<string, unknown>;
+    delete oldOptions.layoutMode;
+    expect(parseFloorPrintSettingsRecord({
+      schemaVersion: 1,
+      savedAt: "2026-08-20T00:00:00.000Z",
+      options: oldOptions,
+    })?.options.layoutMode).toBe("site");
+    expect(parseFloorPrintSettingsRecord({
+      schemaVersion: 1,
+      savedAt: "2026-08-20T00:00:00.000Z",
+      options: { ...oldOptions, preset: "custom" },
+    })?.options.layoutMode).toBe("report");
+  });
+});
+
 describe("Floor Print Settings Storage", () => {
   it("只持久化打印偏好并校验schema", () => {
     const storage = new MemoryStorage();

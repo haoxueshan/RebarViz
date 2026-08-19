@@ -3,6 +3,7 @@ import type { FloorPrintBomCandidate, FloorPrintGeometry } from "./floor-print";
 import { assignFloorPrintMarks } from "./floor-print";
 import {
   buildFloorPrintAreaGroups,
+  buildFloorPrintSiteIndex,
   buildFloorPrintSlabRefs,
 } from "./floor-print-layout";
 
@@ -108,5 +109,37 @@ describe("Floor Print V4 layout derivation", () => {
     expect(joint.mainRows.map((row) => row.pieceIds[0])).toEqual(["joint-main:1"]);
     expect(groups.find((group) => group.slabIds.join("|") === "a")?.mainRows).toHaveLength(2);
     expect(groups.find((group) => group.slabIds.join("|") === "a")?.secondaryRows).toHaveLength(2);
+  });
+
+  it("builds a stable site index as slabs, joint areas, then Through paths", () => {
+    const refs = buildFloorPrintSlabRefs(geometry([
+      { id: "a", name: "板区1", type: "room", x: 0, y: 0, width: 100, height: 100 },
+      { id: "b", name: "板区2", type: "room", x: 100, y: 0, width: 100, height: 100 },
+      { id: "c", name: "板区3", type: "room", x: 200, y: 0, width: 100, height: 100 },
+    ]));
+    const normalRows = assignFloorPrintMarks([
+      candidate("a-main", "main", ["a"]),
+      candidate("joint-main", "main", ["a", "b"]),
+    ], "bottom", refs);
+    const throughRows = [{
+      ...normalRows[0],
+      id: "top:T01",
+      mark: "T01",
+      layer: "top" as const,
+      source: "through" as const,
+      throughPathId: "through-a-c",
+      throughPathName: "通墙01",
+      slabIds: ["a", "b", "c"],
+    }];
+    const index = buildFloorPrintSiteIndex(normalRows, throughRows, refs);
+    expect(index.map((entry) => entry.kind)).toEqual(["slab", "slab", "slab", "joint", "through"]);
+    expect(index.map((entry) => entry.key)).toEqual([
+      "slab:a",
+      "slab:b",
+      "slab:c",
+      "joint:a|b",
+      "through:through-a-c",
+    ]);
+    expect(index.find((entry) => entry.key === "slab:c")).toMatchObject({ mainMarks: "-", secondaryMarks: "-" });
   });
 });

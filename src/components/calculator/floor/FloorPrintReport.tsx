@@ -7,8 +7,8 @@ import type {
 import { floorOpeningTouchesFloor } from "@/lib/floor-2d";
 import {
   buildFloorPrintAreaGroups,
+  buildFloorPrintSiteIndex,
   buildFloorPrintSlabRefs,
-  floorPrintMarks,
 } from "@/lib/floor-print-layout";
 import { FloorPrintPlanSvg } from "./FloorPrintPlanSvg";
 import styles from "./FloorPrintReport.module.css";
@@ -92,7 +92,7 @@ function LayerBomTable({
         <span className={styles.sectionNote}>数量来自实际 FloorBarPiece；单根下料不使用平均长度</span>
       </h2>
       <div className={styles.tableWrap}>
-        <table className={styles.table}>
+        <table className={styles.table} data-print-bom-layout="report">
           <thead>
             <tr>
               <th style={{ width: "7%" }}>编号</th>
@@ -173,7 +173,7 @@ function SiteLayerBomTable({
         <span className={styles.sectionNote}>按板区组织正式 FloorBarPiece，下料长度以 D/M/T 编号料单为准</span>
       </h2>
       <div className={styles.tableWrap}>
-        <table className={`${styles.table} ${styles.siteTable}`}>
+        <table className={`${styles.table} ${styles.siteTable}`} data-print-bom-layout="site">
           <thead>
             <tr>
               <th style={{ width: "12%" }}>编号</th>
@@ -226,8 +226,12 @@ function PlanPage({
 }) {
   const pieces = mode === "bottom" ? snapshot.bottom.pieces : mode === "top" ? snapshot.top.pieces : [];
   const rows = mode === "bottom" ? snapshot.bottom.rows : mode === "top" ? snapshot.top.rows : [];
-  const areaGroups = mode === "bottom"
-    ? buildFloorPrintAreaGroups(rows, buildFloorPrintSlabRefs(snapshot.geometry))
+  const areaIndexEntries = mode === "bottom"
+    ? buildFloorPrintSiteIndex(
+      rows.filter((row) => row.source === "normal"),
+      snapshot.top.rows.filter((row) => row.source === "through"),
+      buildFloorPrintSlabRefs(snapshot.geometry),
+    )
     : [];
   const geometryNote = snapshot.source.coordinateModel === "clear-space-physical-v2"
     ? "本图使用正式V3物理净空、墙体与实物钢筋坐标；下料长度以D/M/T编号料单为准"
@@ -244,10 +248,10 @@ function PlanPage({
       {mode === "bottom" && (
         <div className={styles.areaIndex} aria-label="板区施工索引">
           <strong>板区施工索引</strong>
-          <div className={styles.areaIndexGrid}>
-            {areaGroups.map((group) => (
-              <span key={group.areaKey} data-area-index={group.areaKey}>
-                {group.displayName}　主 {floorPrintMarks(group.mainRows) || "-"}　副 {floorPrintMarks(group.secondaryRows) || "-"}
+          <div className={styles.areaIndexGrid} data-area-index-columns={areaIndexEntries.length <= 8 ? 2 : 3}>
+            {areaIndexEntries.map((entry) => (
+              <span key={entry.key} data-area-index={entry.key} data-area-index-kind={entry.kind}>
+                {entry.displayName}　主 {entry.mainMarks}　副 {entry.secondaryMarks}
               </span>
             ))}
           </div>
@@ -259,11 +263,11 @@ function PlanPage({
 
 export function FloorPrintReport({ snapshot }: { snapshot: FloorPrintSnapshot }) {
   const sections = snapshot.options.sections;
-  const isSitePreset = snapshot.options.preset === "site";
+  const isSiteLayout = snapshot.options.layoutMode === "site";
   const uncoveredOpenings = snapshot.geometry.openings.filter((opening) =>
     !floorOpeningTouchesFloor(opening, snapshot.geometry));
   return (
-    <article className={`${styles.report} ${paperClass(snapshot)}`} data-floor-print-status={snapshot.status} data-testid="floor-print-report">
+    <article className={`${styles.report} ${paperClass(snapshot)}`} data-floor-print-status={snapshot.status} data-floor-print-layout={snapshot.options.layoutMode} data-testid="floor-print-report">
       {snapshot.status === "draft" && <div className={styles.draftWatermark}>草稿 · 不可用于正式下料</div>}
 
       {sections.summary && (
@@ -291,11 +295,11 @@ export function FloorPrintReport({ snapshot }: { snapshot: FloorPrintSnapshot })
 
       {sections.floorPlan && <PlanPage snapshot={snapshot} mode="geometry" title="整层楼板平面" />}
       {sections.bottomPlan && <PlanPage snapshot={snapshot} mode="bottom" title="地筋平铺图" />}
-      {sections.bottomBom && (isSitePreset
+      {sections.bottomBom && (isSiteLayout
         ? <SiteLayerBomTable title="地筋下料单" rows={snapshot.bottom.rows} snapshot={snapshot} />
         : <LayerBomTable title="地筋下料单" rows={snapshot.bottom.rows} layer={snapshot.bottom} snapshot={snapshot} />)}
       {sections.topPlan && <PlanPage snapshot={snapshot} mode="top" title="面筋平铺图（普通 + 通墙）" />}
-      {sections.topBom && (isSitePreset
+      {sections.topBom && (isSiteLayout
         ? <SiteLayerBomTable title="面筋下料单（普通 + 通墙）" rows={snapshot.top.rows} snapshot={snapshot} />
         : <LayerBomTable title="面筋下料单（普通 + 通墙）" rows={snapshot.top.rows} layer={snapshot.top} snapshot={snapshot} />)}
       {sections.combinedBom && <LayerBomTable title="地筋 + 面筋综合明细" rows={snapshot.combinedRows} layer={{

@@ -1,11 +1,93 @@
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { PDFDocument } from "pdf-lib";
+import {
+  calculateFloorBottomRebar,
+  DEFAULT_FLOOR_BOTTOM_STATE,
+} from "../../src/lib/floor-bottom-calculator";
+import {
+  createFloorProductionGoldenBottomState,
+  createFloorProductionGoldenPlan,
+  createFloorProductionGoldenRoleState,
+  createFloorProductionGoldenTopState,
+} from "../../src/lib/__fixtures__/floor-production-golden-v3";
+import {
+  buildFloorPrintSnapshot,
+  DEFAULT_FLOOR_PRINT_OPTIONS,
+} from "../../src/lib/floor-print";
+import type { FloorPlanState, FloorSlab } from "../../src/lib/floor-plan";
+import {
+  calculateFloorTopRebar,
+  DEFAULT_FLOOR_TOP_STATE,
+} from "../../src/lib/floor-top-calculator";
 
 type FloorDraftInput = {
   width: number;
   height: number;
   opening?: { x: number; y: number; width: number; height: number };
 };
+
+function buildOfficialPrintSnapshot(input: {
+  plan: FloorPlanState;
+  bottomState: typeof DEFAULT_FLOOR_BOTTOM_STATE;
+  topState: typeof DEFAULT_FLOOR_TOP_STATE;
+  roleState?: Parameters<typeof calculateFloorBottomRebar>[2];
+  projectName: string;
+  snapshotId: string;
+}) {
+  const bottom = calculateFloorBottomRebar(input.plan, input.bottomState, input.roleState);
+  const top = calculateFloorTopRebar(input.plan, input.topState, input.roleState);
+  expect(bottom.isValid).toBe(true);
+  expect(top.isValid).toBe(true);
+  return buildFloorPrintSnapshot({
+    plan: input.plan,
+    bottom,
+    top,
+    bottomRoleReviewRequired: false,
+    topRoleReviewRequired: false,
+    invalidDraftCount: 0,
+    project: { projectName: input.projectName, floorName: "二层顶板", remark: "A4打印压力回归" },
+    options: structuredClone(DEFAULT_FLOOR_PRINT_OPTIONS),
+    snapshotId: input.snapshotId,
+    createdAt: "2026-08-20T00:00:00.000Z",
+  });
+}
+
+function buildTwelveSlabStressSnapshot() {
+  const slabs: FloorSlab[] = [
+    ["a", 0, 0, 3600, 2600], ["b", 3600, 0, 3300, 2600], ["c", 6900, 0, 3400, 2600], ["d", 10300, 0, 3000, 2600],
+    ["e", 0, 2600, 3000, 2800], ["f", 3000, 2600, 4200, 2800], ["g", 7200, 2600, 3000, 2800], ["h", 10200, 2600, 3100, 2800],
+    ["i", 0, 5400, 4000, 2400], ["j", 4000, 5400, 3200, 2400], ["k", 7200, 5400, 3600, 2400], ["l", 10800, 5400, 2500, 2400],
+  ].map(([id, x, y, width, height]) => ({
+    id: String(id), name: `板区${String(id).toUpperCase()}`, type: "room", x: Number(x), y: Number(y), width: Number(width), height: Number(height),
+  }));
+  const plan: FloorPlanState = {
+    coordinateModel: "net-layout-v1",
+    slabs,
+    openings: [{ id: "stress-opening", name: "楼梯间", type: "stair", x: 900, y: 700, width: 1200, height: 1000 }],
+    supportRules: [],
+    innerWallThickness: 240,
+    outerWallThickness: 370,
+    snapDistanceMm: 150,
+    overlapToleranceMm: 10,
+  };
+  const topState = structuredClone(DEFAULT_FLOOR_TOP_STATE);
+  topState.throughPaths = [{
+    id: "stress-through-a-d",
+    name: "通墙压力路径",
+    direction: "x",
+    slabIds: ["a", "b", "c", "d"],
+    bandStartMm: 1800,
+    bandEndMm: 2600,
+    enabled: true,
+  }];
+  return buildOfficialPrintSnapshot({
+    plan,
+    bottomState: structuredClone(DEFAULT_FLOOR_BOTTOM_STATE),
+    topState,
+    projectName: "十二板区压力工程",
+    snapshotId: "twelve-slab-a4-pdf",
+  });
+}
 
 /** 从 IndexedDB 读取打印快照（V1.2 起主存储，sessionStorage 仅 legacy fallback）。 */
 async function readSnapshotFromIndexedDb(page: Page, id: string): Promise<unknown> {
@@ -115,6 +197,13 @@ async function makeA4LandscapePdf(page: Page, testInfo: TestInfo): Promise<void>
   }
 }
 
+async function openFrozenSnapshot(page: Page, snapshot: { id: string }): Promise<void> {
+  await page.goto("/calculator/floor");
+  await writeSnapshotToIndexedDb(page, snapshot.id, snapshot);
+  await page.goto(`/calculator/floor/print?id=${snapshot.id}`);
+  await expect(page.getByTestId("floor-print-preview")).toBeVisible();
+}
+
 test.describe("Floor Print V1整层冻结快照打印", () => {
   test("料单Tab生成正式快照，D/M图表关联、刷新不重算并输出A4横向PDF", async ({ page }, testInfo) => {
     await openFloorBom(page, { width: 4200, height: 3600 });
@@ -131,6 +220,20 @@ test.describe("Floor Print V1整层冻结快照打印", () => {
     const bottomSlabLabel = page.locator('svg[data-floor-print-plan="bottom"] [data-slab-label="S01"]');
     await expect(bottomSlabLabel).toContainText("主");
     await expect(bottomSlabLabel).toContainText("副");
+    const annotationBounds = await page.locator('svg[data-floor-print-plan="bottom"] [data-annotation-x]').evaluateAll((elements) =>
+      elements.map((element) => ({
+        x: Number(element.getAttribute("data-annotation-x")),
+        y: Number(element.getAttribute("data-annotation-y")),
+        width: Number(element.getAttribute("data-annotation-width")),
+        height: Number(element.getAttribute("data-annotation-height")),
+      })));
+    expect(annotationBounds.length).toBeGreaterThan(0);
+    annotationBounds.forEach((bounds) => {
+      expect(bounds.x).toBeGreaterThanOrEqual(0);
+      expect(bounds.y).toBeGreaterThanOrEqual(0);
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(1200);
+      expect(bounds.y + bounds.height).toBeLessThanOrEqual(720);
+    });
     const monochrome = await page.locator('svg[data-floor-print-plan="bottom"]').evaluate((svg) => ({
       markup: svg.innerHTML,
       outerWallFills: [...svg.querySelectorAll('[data-wall-kind="outer-wall"]')].map((wall) => wall.getAttribute("fill")),
@@ -156,6 +259,32 @@ test.describe("Floor Print V1整层冻结快照打印", () => {
       clientWidth: report.clientWidth,
     }));
     expect(printOverflow.scrollWidth).toBeLessThanOrEqual(printOverflow.clientWidth + 1);
+    await makeA4LandscapePdf(page, testInfo);
+  });
+
+  test("Production Golden House通过正式计算链生成A4横向PDF", async ({ page }, testInfo) => {
+    const snapshot = buildOfficialPrintSnapshot({
+      plan: createFloorProductionGoldenPlan(),
+      bottomState: createFloorProductionGoldenBottomState(),
+      topState: createFloorProductionGoldenTopState(),
+      roleState: createFloorProductionGoldenRoleState(),
+      projectName: "Production Golden House",
+      snapshotId: "production-golden-a4-pdf",
+    });
+    expect(snapshot.status).toBe("official");
+    await openFrozenSnapshot(page, snapshot);
+    await expect(page.locator('svg[data-floor-print-plan="bottom"] [data-slab-label]')).toHaveCount(3);
+    await expect(page.locator('svg[data-floor-print-plan="top"] [data-area-callout-kind="through"]')).toHaveCount(1);
+    await makeA4LandscapePdf(page, testInfo);
+  });
+
+  test("十二板区压力工程通过正式计算链生成A4横向PDF", async ({ page }, testInfo) => {
+    const snapshot = buildTwelveSlabStressSnapshot();
+    expect(snapshot.status).toBe("official");
+    expect(snapshot.top.rows.some((row) => row.source === "through")).toBe(true);
+    await openFrozenSnapshot(page, snapshot);
+    await expect(page.locator('svg[data-floor-print-plan="bottom"] [data-slab-label]')).toHaveCount(12);
+    await expect(page.locator('svg[data-floor-print-plan="top"] [data-area-callout-kind="through"]')).toHaveCount(1);
     await makeA4LandscapePdf(page, testInfo);
   });
 
@@ -217,6 +346,40 @@ test.describe("Floor Print V1整层冻结快照打印", () => {
       elements.map((element) => element.getAttribute("data-print-piece-id")));
     expect(printedPieceIds).toEqual(expect.arrayContaining((clipped ?? []).map((piece) => piece.id)));
     await expect(page.getByText("楼梯间").first()).toBeVisible();
+  });
+
+  test("Site preset remains a six-column site layout after custom content changes", async ({ page }) => {
+    await openFloorBom(page, { width: 4200, height: 3600 });
+    await page.getByTestId("open-floor-print-dialog").click();
+    await page.getByLabel("按直径汇总").uncheck();
+    await page.getByTestId("generate-floor-print-preview").click();
+    await page.waitForURL(/\/calculator\/floor\/print\?id=/);
+    const snapshotId = new URL(page.url()).searchParams.get("id")!;
+    const snapshot = await readSnapshotFromIndexedDb(page, snapshotId) as {
+      options: { preset: string; layoutMode: string };
+    };
+    expect(snapshot.options).toEqual(expect.objectContaining({ preset: "custom", layoutMode: "site" }));
+    await expect(page.getByTestId("floor-print-report")).toHaveAttribute("data-floor-print-layout", "site");
+    await expect(page.locator('table[data-print-bom-layout="site"]')).toHaveCount(2);
+    await expect(page.locator('[data-area-header]').first()).toBeVisible();
+    await expect(page.locator('[data-area-index-kind="slab"]')).not.toHaveCount(0);
+  });
+
+  test("Full preset remains a report BOM layout after custom content changes", async ({ page }) => {
+    await openFloorBom(page, { width: 4200, height: 3600 });
+    await page.getByTestId("open-floor-print-dialog").click();
+    await page.getByRole("button", { name: "完整报告" }).click();
+    await page.getByLabel("计算参数").uncheck();
+    await page.getByTestId("generate-floor-print-preview").click();
+    await page.waitForURL(/\/calculator\/floor\/print\?id=/);
+    const snapshotId = new URL(page.url()).searchParams.get("id")!;
+    const snapshot = await readSnapshotFromIndexedDb(page, snapshotId) as {
+      options: { preset: string; layoutMode: string };
+    };
+    expect(snapshot.options).toEqual(expect.objectContaining({ preset: "custom", layoutMode: "report" }));
+    await expect(page.getByTestId("floor-print-report")).toHaveAttribute("data-floor-print-layout", "report");
+    await expect(page.locator('table[data-print-bom-layout="report"]')).toHaveCount(3);
+    await expect(page.locator('table[data-print-bom-layout="site"]')).toHaveCount(0);
   });
 
   test("A4纵向选项生成正确纸张方向", async ({ page }) => {
@@ -302,6 +465,7 @@ test.describe("Floor Print V1整层冻结快照打印", () => {
     await expect(page.locator('svg[data-floor-print-plan="top"] [data-mark="T01"][data-source="through"]')).not.toHaveCount(0);
     await expect(page.locator('svg[data-floor-print-plan="top"] [data-mark="T01"] [data-through-outer="true"]')).not.toHaveCount(0);
     await expect(page.locator('svg[data-floor-print-plan="top"] [data-mark="T01"] [data-through-inner="true"]')).not.toHaveCount(0);
+    await expect(page.locator('svg[data-floor-print-plan="top"] [data-area-callout-kind="through"]')).toHaveCount(1);
     await expect(page.locator('[data-area-header]').filter({ hasText: "通墙面筋 · 通墙01" })).toBeVisible();
     const frozen = await readSnapshotFromIndexedDb(page, snapshotId) as {
       schemaVersion: number;

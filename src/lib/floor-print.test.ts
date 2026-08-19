@@ -12,6 +12,7 @@ import {
   detectFloorPrintPreset,
   floorPrintOptionsForPreset,
   getFloorPrintEligibility,
+  normalizeFloorPrintOptions,
   validateFloorPrintBomConsistency,
   type FloorPrintBomCandidate,
 } from "./floor-print";
@@ -19,6 +20,7 @@ import {
   calculateFloorTopRebar,
   DEFAULT_FLOOR_TOP_STATE,
 } from "./floor-top-calculator";
+import { buildFloorPrintSlabRefs } from "./floor-print-layout";
 
 function slab(id: string, width = 4200, height = 3600): FloorSlab {
   return { id, name: `板区${id.toUpperCase()}`, type: "room", x: 0, y: 0, width, height };
@@ -145,19 +147,88 @@ describe("Floor Print资格与正式数据一致性", () => {
     const site = floorPrintOptionsForPreset("site");
     expect(site).toMatchObject({
       preset: "site",
+      layoutMode: "site",
       paperSize: "A4",
       orientation: "landscape",
       lengthUnit: "mm",
       sections: { summary: false, floorPlan: true, bottomPlan: true, topPlan: true, combinedBom: false, calculationParameters: false },
     });
     const full = floorPrintOptionsForPreset("full");
-    expect(full).toMatchObject({ preset: "full", paperSize: "A3", orientation: "landscape", lengthUnit: "mm" });
+    expect(full).toMatchObject({ preset: "full", layoutMode: "report", paperSize: "A3", orientation: "landscape", lengthUnit: "mm" });
     expect(Object.values(full.sections).every(Boolean)).toBe(true);
     expect(detectFloorPrintPreset({ ...site, sections: { ...site.sections, summary: true } })).toBe("custom");
+  });
+
+  it("keeps page composition when a preset becomes custom", () => {
+    const siteCustom = {
+      ...floorPrintOptionsForPreset("site"),
+      sections: { ...floorPrintOptionsForPreset("site").sections, diameterSummary: false },
+    };
+    expect(detectFloorPrintPreset(siteCustom)).toBe("custom");
+    expect(normalizeFloorPrintOptions({ ...siteCustom, preset: "custom" })?.layoutMode).toBe("site");
+
+    const fullCustom = {
+      ...floorPrintOptionsForPreset("full"),
+      sections: { ...floorPrintOptionsForPreset("full").sections, calculationParameters: false },
+    };
+    expect(detectFloorPrintPreset(fullCustom)).toBe("custom");
+    expect(normalizeFloorPrintOptions({ ...fullCustom, preset: "custom" })?.layoutMode).toBe("report");
   });
 });
 
 describe("Floor Print BOM与编号", () => {
+  it("runs a twelve-slab residential stress plan through the formal Bottom, Top and Through calculations", () => {
+    const slabs: FloorSlab[] = [
+      ["a", 0, 0, 3600, 2600], ["b", 3600, 0, 3300, 2600], ["c", 6900, 0, 3400, 2600], ["d", 10300, 0, 3000, 2600],
+      ["e", 0, 2600, 3000, 2800], ["f", 3000, 2600, 4200, 2800], ["g", 7200, 2600, 3000, 2800], ["h", 10200, 2600, 3100, 2800],
+      ["i", 0, 5400, 4000, 2400], ["j", 4000, 5400, 3200, 2400], ["k", 7200, 5400, 3600, 2400], ["l", 10800, 5400, 2500, 2400],
+    ].map(([id, x, y, width, height]) => ({
+      id: String(id), name: `板区${String(id).toUpperCase()}`, type: "room", x: Number(x), y: Number(y), width: Number(width), height: Number(height),
+    }));
+    const state: FloorPlanState = {
+      coordinateModel: "net-layout-v1",
+      slabs,
+      openings: [{ id: "stress-opening", name: "楼梯间", type: "stair", x: 900, y: 700, width: 1200, height: 1000 }],
+      supportRules: [],
+      innerWallThickness: 240,
+      outerWallThickness: 370,
+      snapDistanceMm: 150,
+      overlapToleranceMm: 10,
+    };
+    const bottom = calculateFloorBottomRebar(state, structuredClone(DEFAULT_FLOOR_BOTTOM_STATE));
+    const topState = structuredClone(DEFAULT_FLOOR_TOP_STATE);
+    topState.throughPaths = [{
+      id: "stress-through-a-d",
+      name: "通墙压力路径",
+      direction: "x",
+      slabIds: ["a", "b", "c", "d"],
+      bandStartMm: 1800,
+      bandEndMm: 2600,
+      enabled: true,
+    }];
+    const top = calculateFloorTopRebar(state, topState);
+    expect(bottom.isValid).toBe(true);
+    expect(top.isValid).toBe(true);
+    expect(top.pieces.some((piece) => piece.source === "through")).toBe(true);
+    const snapshot = buildFloorPrintSnapshot({
+      plan: state,
+      bottom,
+      top,
+      bottomRoleReviewRequired: false,
+      topRoleReviewRequired: false,
+      invalidDraftCount: 0,
+      project: { projectName: "十二板区压力工程", floorName: "二层", remark: "" },
+      options: structuredClone(DEFAULT_FLOOR_PRINT_OPTIONS),
+      snapshotId: "twelve-slab-stress",
+      createdAt: "2026-08-20T00:00:00.000Z",
+    });
+    expect(snapshot.summary.slabCount).toBe(12);
+    expect(snapshot.summary.openingCount).toBe(1);
+    expect(snapshot.top.rows.filter((row) => row.source === "through")).toHaveLength(1);
+    expect(new Set(buildFloorPrintSlabRefs(snapshot.geometry).map((entry) => entry.printId)).size).toBe(12);
+    expect(new Set(snapshot.bottom.rows.map((row) => row.mark)).size).toBe(snapshot.bottom.rows.length);
+  });
+
   it("D/M编号分层生成，综合视图不合并Bottom与Top", () => {
     const input = snapshotInput();
     const content = buildFloorPrintContent(input.plan, input.bottom, input.top);

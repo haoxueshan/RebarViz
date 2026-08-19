@@ -20,6 +20,7 @@ import {
 } from "./floor-print";
 import {
   buildFloorPrintAreaGroups,
+  buildFloorPrintSiteIndex,
   buildFloorPrintSlabRefs,
 } from "./floor-print-layout";
 import {
@@ -428,6 +429,13 @@ describe("Floor Rebar V1.4D.0 Production Golden House", () => {
     const bottomAreas = buildFloorPrintAreaGroups(content.bottom.rows, slabRefs);
     expect(bottomAreas.flatMap((area) => [...area.mainRows, ...area.secondaryRows]).map((row) => row.id).sort())
       .toEqual(content.bottom.rows.map((row) => row.id).sort());
+    const siteIndex = buildFloorPrintSiteIndex(
+      content.bottom.rows.filter((row) => row.source === "normal"),
+      content.top.rows.filter((row) => row.source === "through"),
+      slabRefs,
+    );
+    expect(siteIndex.filter((entry) => entry.kind === "slab")).toHaveLength(plan.slabs.length);
+    expect(siteIndex.filter((entry) => entry.kind === "through")).toHaveLength(1);
     expect(content.bottom.rows.flatMap((row) => row.pieceIds).sort())
       .toEqual(bottom.pieces.map((piece) => piece.id).sort());
     expect(content.top.rows.flatMap((row) => row.pieceIds).sort())
@@ -495,6 +503,7 @@ describe("Floor Rebar V1.4D.0 Production Golden House", () => {
       snapshotId: "production-golden-snapshot",
     }, context.solution);
     expect(snapshot.status).toBe("official");
+    expect(snapshot.options).toMatchObject({ preset: "site", layoutMode: "site" });
     expect(snapshot.parameters.coordinateModel).toBe("clear-space-physical-v2");
     expect(snapshot.source.coordinateModel).toBe("clear-space-physical-v2");
     expect(snapshot.source.coordinateModel).toBe(snapshot.parameters.coordinateModel);

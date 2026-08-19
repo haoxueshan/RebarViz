@@ -1,5 +1,6 @@
 import {
   FLOOR_PRINT_SNAPSHOT_SCHEMA_VERSION,
+  normalizeFloorPrintOptions,
   type FloorPrintOptions,
   type FloorPrintSnapshot,
 } from "./floor-print";
@@ -30,34 +31,9 @@ function isFloorPrintCoordinateModel(value: unknown): value is FloorPrintSnapsho
   return value === "net-layout-v1" || value === "clear-space-physical-v2";
 }
 
-function hasBooleanKeys(value: unknown, keys: readonly string[]): boolean {
-  return isObject(value) && keys.every((key) => typeof value[key] === "boolean");
-}
-
 export function isFloorPrintOptions(value: unknown): value is FloorPrintOptions {
-  if (!isObject(value)) return false;
-  if (!["site", "full", "custom"].includes(String(value.preset))) return false;
-  if (!["A3", "A4"].includes(String(value.paperSize))) return false;
-  if (!["landscape", "portrait"].includes(String(value.orientation))) return false;
-  if (!["mm", "m"].includes(String(value.lengthUnit))) return false;
-  return hasBooleanKeys(value.sections, [
-    "summary",
-    "floorPlan",
-    "bottomPlan",
-    "bottomBom",
-    "topPlan",
-    "topBom",
-    "combinedBom",
-    "diameterSummary",
-    "calculationParameters",
-  ]) && hasBooleanKeys(value.display, [
-    "slabNames",
-    "openingNames",
-    "barMarks",
-    "barSpecification",
-    "weights",
-    "anchorDetails",
-  ]);
+  return isObject(value) && (value.layoutMode === "site" || value.layoutMode === "report") &&
+    normalizeFloorPrintOptions(value) !== null;
 }
 
 function validBomRow(value: unknown): boolean {
@@ -182,7 +158,8 @@ export function parseFloorPrintSnapshot(value: unknown): FloorPrintSnapshot | nu
     value.parameters.topPhysicalDomainCount,
     value.parameters.roleDomainCount,
   ].every(isFiniteNonNegative)) return null;
-  if (!isFloorPrintOptions(value.options)) return null;
+  const options = normalizeFloorPrintOptions(value.options);
+  if (!options) return null;
   if (!isObject(value.source) || value.source.calculator !== "floor-rebar" ||
     !isFloorPrintCoordinateModel(value.source.coordinateModel) ||
     value.source.coordinateModel !== value.parameters.coordinateModel) return null;
@@ -191,7 +168,7 @@ export function parseFloorPrintSnapshot(value: unknown): FloorPrintSnapshot | nu
     const physical = value.geometry.physical as Record<string, unknown>;
     if ((physical.issues as unknown[]).some((issue) => isObject(issue) && issue.level === "error")) return null;
   }
-  return structuredClone(value as FloorPrintSnapshot);
+  return structuredClone({ ...value, options } as FloorPrintSnapshot);
 }
 
 function migrateFloorPrintSnapshotV1(value: Record<string, unknown>): Record<string, unknown> {
@@ -266,14 +243,15 @@ export function createFloorPrintSettingsRecord(
   return {
     schemaVersion: FLOOR_PRINT_SETTINGS_SCHEMA_VERSION,
     savedAt,
-    options: structuredClone(options),
+    options: normalizeFloorPrintOptions(options) ?? structuredClone(options),
   };
 }
 
 export function parseFloorPrintSettingsRecord(value: unknown): FloorPrintSettingsRecord | null {
   if (!isObject(value) || value.schemaVersion !== FLOOR_PRINT_SETTINGS_SCHEMA_VERSION ||
-    typeof value.savedAt !== "string" || !isFloorPrintOptions(value.options)) return null;
-  return structuredClone(value as FloorPrintSettingsRecord);
+    typeof value.savedAt !== "string") return null;
+  const options = normalizeFloorPrintOptions(value.options);
+  return options ? { schemaVersion: FLOOR_PRINT_SETTINGS_SCHEMA_VERSION, savedAt: value.savedAt, options } : null;
 }
 
 export function loadFloorPrintSettings(storage: ReadableStorage): FloorPrintSettingsRecord | null {

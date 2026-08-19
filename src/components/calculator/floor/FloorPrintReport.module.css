@@ -197,6 +197,10 @@
   margin-top: 4px;
 }
 
+.areaIndexGrid[data-area-index-columns="3"] {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .areaIndexGrid span {
   min-width: 0;
   overflow-wrap: anywhere;
@@ -238,9 +242,9 @@
   inset: 42% auto auto 50%;
   z-index: 30;
   transform: translate(-50%, -50%) rotate(-24deg);
-  border: 8px solid rgba(127, 29, 29, 0.16);
+  border: 8px solid rgba(82, 82, 82, 0.16);
   padding: 18px 36px;
-  color: rgba(127, 29, 29, 0.16);
+  color: rgba(82, 82, 82, 0.16);
   font-size: 54px;
   font-weight: 900;
   letter-spacing: 0.12em;
@@ -289,6 +293,10 @@
     max-height: none;
   }
 
+  .paperA4Landscape .planFrame {
+    max-height: 154mm;
+  }
+
   .table {
     font-size: 8pt;
   }
@@ -303,6 +311,8 @@
 
   .areaIndex {
     font-size: 7.5pt;
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
 
   .table th,
@@ -311,11 +321,10 @@
   }
 
   .footer {
-    position: fixed;
-    right: 0;
-    bottom: -6mm;
-    left: 0;
-    margin: 0;
+    position: static;
+    margin: 6mm 0 0;
     background: #fff;
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
 }

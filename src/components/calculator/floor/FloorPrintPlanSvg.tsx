@@ -1,5 +1,14 @@
 import { buildFloorPrintMarkClusters } from "@/lib/floor-2d";
 import {
+  buildAreaCalloutCandidates,
+  buildContainedSlabCandidates,
+  buildExternalSlabCandidates,
+  buildFloorPrintAnnotationLayout,
+  buildMarkCandidates,
+  estimatePrintTextWidth,
+  type FloorPrintAnnotationRequest,
+} from "@/lib/floor-print-annotation-layout";
+import {
   buildFloorPrintAreaGroups,
   buildFloorPrintSlabRebarSummaries,
   buildFloorPrintSlabRefs,
@@ -80,6 +89,48 @@ function labelModeFor(width: number, height: number, detailLineCount: number): L
   return "tiny";
 }
 
+function labelDimensions(lines: readonly string[], labelMode: LabelMode): { width: number; height: number } {
+  const lineHeight = labelMode === "full" ? 15 : 14;
+  const titleSize = labelMode === "tiny" ? 13 : 16;
+  const widest = Math.max(...lines.map((line, index) =>
+    estimatePrintTextWidth(line, index === 0 ? titleSize : labelMode === "full" ? 10 : 11)), 30);
+  return {
+    width: Math.min(220, Math.max(44, widest + 18)),
+    height: Math.max(26, lines.length * lineHeight + 12),
+  };
+}
+
+function slabLabelVariants(
+  ref: { printId: string; name: string },
+  summary: FloorPrintSlabRebarSummary | undefined,
+  mode: FloorPrintPlanSvgProps["mode"],
+  bounds: DrawBox,
+  showName: boolean,
+) {
+  const fullDetails = mode === "bottom"
+    ? [...detailLines(summary?.mainRows ?? [], "main"), ...detailLines(summary?.secondaryRows ?? [], "secondary")]
+    : [];
+  const preferred = labelModeFor(bounds.width, bounds.height, fullDetails.length);
+  const modes: LabelMode[] = preferred === "full"
+    ? ["full", "compact", "tiny"]
+    : preferred === "compact" ? ["compact", "tiny"] : ["tiny"];
+  return modes.map((labelMode) => {
+    const lines = labelLines(ref, summary, mode, labelMode, showName);
+    const { width, height } = labelDimensions(lines, labelMode);
+    const contained = buildContainedSlabCandidates(bounds, width, height);
+    return {
+      id: labelMode,
+      width,
+      height,
+      candidates: contained.length > 0
+        ? contained
+        : labelMode === "tiny"
+          ? buildExternalSlabCandidates(bounds, width, height)
+          : [],
+    };
+  });
+}
+
 function labelLines(
   ref: { printId: string; name: string },
   summary: FloorPrintSlabRebarSummary | undefined,
@@ -131,6 +182,19 @@ function groupCalloutLines(group: FloorPrintAreaGroup, through = false): string[
   ];
 }
 
+function compactGroupCalloutLines(group: FloorPrintAreaGroup, through: boolean): string[] {
+  if (through) {
+    return [
+      floorPrintMarks([...group.mainRows, ...group.secondaryRows]),
+      `${group.slabRefs[0]?.printId ?? ""} → ${group.slabRefs.at(-1)?.printId ?? ""}`,
+    ];
+  }
+  return [
+    `${group.slabRefs.map((ref) => ref.printId).join("+")} 联合`,
+    [floorPrintMarks(group.mainRows), floorPrintMarks(group.secondaryRows)].filter(Boolean).join(" / "),
+  ];
+}
+
 export function FloorPrintPlanSvg({
   geometry,
   coordinateModel,
@@ -175,7 +239,6 @@ export function FloorPrintPlanSvg({
   const throughPieces = visiblePieces.filter((piece) => piece.source === "through");
   const markClusters = buildFloorPrintMarkClusters(visiblePieces);
   const pieceById = new Map(visiblePieces.map((piece) => [piece.id, piece]));
-  const slabsById = new Map(geometry.slabs.map((slab) => [slab.id, slabBox(slab)]));
   const slabRefs = buildFloorPrintSlabRefs(geometry);
   const slabRefsById = new Map(slabRefs.map((ref) => [ref.slabId, ref]));
   const normalRows = rows.filter((row) => row.source === "normal" && row.layer === mode);
@@ -184,6 +247,79 @@ export function FloorPrintPlanSvg({
   const summariesBySlab = new Map(summaries.map((summary) => [summary.slabRef.slabId, summary]));
   const jointGroups = buildFloorPrintAreaGroups(normalRows, slabRefs).filter((group) => group.slabIds.length > 1);
   const throughGroups = buildFloorPrintAreaGroups(throughRows, slabRefs).filter((group) => group.slabIds.length > 1);
+  const screenSlabsById = new Map(geometry.slabs.map((slab) => {
+    const box = slabBox(slab);
+    return [slab.id, {
+      x: toX(box.x),
+      y: toY(box.y + box.height),
+      width: box.width * scale,
+      height: box.height * scale,
+    }] as const;
+  }));
+  const annotationRequests: FloorPrintAnnotationRequest[] = [];
+  slabRefs.forEach((ref) => {
+    const bounds = screenSlabsById.get(ref.slabId);
+    if (!bounds) return;
+    annotationRequests.push({
+      id: `slab-label:${ref.slabId}`,
+      kind: "slab-label",
+      priority: 1,
+      variants: slabLabelVariants(ref, summariesBySlab.get(ref.slabId), mode, bounds, display.slabNames),
+    });
+  });
+  if (display.barMarks) {
+    markClusters.forEach((cluster) => {
+      const piece = cluster.pieceIds.flatMap((id) => {
+        const found = pieceById.get(id);
+        return found ? [found] : [];
+      })[0];
+      if (!piece) return;
+      const text = display.barSpecification ? `${cluster.mark}  桅${piece.diameter}@${piece.spacing}` : cluster.mark;
+      const width = Math.max(48, estimatePrintTextWidth(text, 13) + 16);
+      const height = 25;
+      annotationRequests.push({
+        id: `mark:${cluster.mark}:${cluster.pieceIds.join("|")}`,
+        kind: "bar-mark",
+        priority: 2,
+        variants: [{
+          id: "standard",
+          width,
+          height,
+          candidates: buildMarkCandidates({
+            x: toX(mapCoordinate("x", cluster.centerX, piece.slabIds)),
+            y: toY(mapCoordinate("y", cluster.centerY, piece.slabIds)),
+          }, piece.direction, width, height),
+        }],
+      });
+    });
+  }
+  [...jointGroups.map((group) => ({ group, through: false })), ...throughGroups.map((group) => ({ group, through: true }))]
+    .forEach(({ group, through }) => {
+      const bounds = groupBounds(group.slabIds, screenSlabsById);
+      if (!bounds) return;
+      const variants = [false, true].map((compact) => {
+        const lines = compact ? compactGroupCalloutLines(group, through) : groupCalloutLines(group, through);
+        const width = Math.min(205, Math.max(92, Math.max(...lines.map((line) => estimatePrintTextWidth(line, compact ? 10 : 11))) + 18));
+        const height = lines.length * 14 + 10;
+        return {
+          id: compact ? "compact" : "full",
+          width,
+          height,
+          candidates: buildAreaCalloutCandidates(bounds, width, height),
+        };
+      });
+      annotationRequests.push({
+        id: `${through ? "through" : "joint"}:${group.areaKey}`,
+        kind: through ? "through-callout" : "joint-callout",
+        priority: through ? 4 : 3,
+        variants,
+      });
+    });
+  const annotationLayout = buildFloorPrintAnnotationLayout(
+    annotationRequests,
+    { x: 0, y: 0, width: VIEW_WIDTH, height: VIEW_HEIGHT },
+  );
+  const annotationsById = new Map(annotationLayout.boxes.map((box) => [box.id, box]));
   const openingPatternId = `floor-print-opening-${mode}`;
   const innerWallPatternId = `floor-print-inner-wall-${mode}`;
   const outerWallPatternId = `floor-print-outer-wall-${mode}`;
@@ -242,30 +378,15 @@ export function FloorPrintPlanSvg({
       {geometry.slabs.map((slab) => {
         const ref = slabRefsById.get(slab.id);
         if (!ref) return null;
-        const box = slabBox(slab);
-        const screenBox = { x: toX(box.x), y: toY(box.y + box.height), width: box.width * scale, height: box.height * scale };
+        const annotation = annotationsById.get(`slab-label:${slab.id}`);
+        if (!annotation) return null;
         const summary = summariesBySlab.get(slab.id);
-        const allDetails = mode === "bottom" ? [...detailLines(summary?.mainRows ?? [], "main"), ...detailLines(summary?.secondaryRows ?? [], "secondary")] : [];
-        const variant = labelModeFor(screenBox.width, screenBox.height, allDetails.length);
+        const variant = annotation.variant as LabelMode;
         const lines = labelLines(ref, summary, mode, variant, display.slabNames);
         const lineHeight = variant === "full" ? 15 : 14;
-        const labelHeight = Math.max(26, lines.length * lineHeight + 12);
-        const labelWidth = Math.min(220, Math.max(44, screenBox.width - 10));
-        const centerX = screenBox.x + screenBox.width / 2;
-        const centerY = screenBox.y + screenBox.height / 2;
-        const yCandidates = [centerY, screenBox.y + labelHeight / 2 + 4, screenBox.y + screenBox.height - labelHeight / 2 - 4];
-        const occupied = markClusters.flatMap((cluster) => {
-          const piece = cluster.pieceIds.flatMap((id) => {
-            const found = pieceById.get(id);
-            return found ? [found] : [];
-          })[0];
-          return piece ? [{ x: toX(mapCoordinate("x", cluster.centerX, piece.slabIds)), y: toY(mapCoordinate("y", cluster.centerY, piece.slabIds)) }] : [];
-        });
-        const labelY = [...yCandidates].sort((left, right) => {
-          const overlapCount = (y: number) => occupied.filter((point) => Math.abs(point.x - centerX) < labelWidth / 2 && Math.abs(point.y - y) < labelHeight / 2).length;
-          return overlapCount(left) - overlapCount(right);
-        })[0];
-        return <g key={`slab-label:${slab.id}`} data-slab-label={ref.printId} data-slab-label-mode={variant} data-slab-construction-summary={mode === "bottom" ? "true" : undefined} pointerEvents="none"><rect x={centerX - labelWidth / 2} y={labelY - labelHeight / 2} width={labelWidth} height={labelHeight} rx="2" fill="#fff" fillOpacity="0.9" stroke="#737373" strokeWidth={variant === "tiny" ? "0.8" : "1"} />{lines.map((line, index) => <text key={`${line}:${index}`} x={centerX} y={labelY - labelHeight / 2 + 15 + index * lineHeight} textAnchor="middle" fontSize={index === 0 ? (variant === "tiny" ? 13 : 16) : variant === "full" ? 10 : 11} fontWeight={index === 0 ? 900 : index === 1 ? 700 : 600} fill="#171717">{line}</text>)}</g>;
+        const centerX = annotation.x + annotation.width / 2;
+        const centerY = annotation.y + annotation.height / 2;
+        return <g key={`slab-label:${slab.id}`} data-slab-label={ref.printId} data-slab-label-mode={variant} data-slab-construction-summary={mode === "bottom" ? "true" : undefined} data-annotation-x={annotation.x} data-annotation-y={annotation.y} data-annotation-width={annotation.width} data-annotation-height={annotation.height} pointerEvents="none">{annotation.external && annotation.leaderTo && <line x1={annotation.leaderTo.x} y1={annotation.leaderTo.y} x2={centerX} y2={centerY} stroke="#525252" strokeWidth="1" />}{<rect x={annotation.x} y={annotation.y} width={annotation.width} height={annotation.height} rx="2" fill="#fff" fillOpacity="0.9" stroke="#737373" strokeWidth={variant === "tiny" ? "0.8" : "1"} />}{lines.map((line, index) => <text key={`${line}:${index}`} x={centerX} y={annotation.y + 15 + index * lineHeight} textAnchor="middle" fontSize={index === 0 ? (variant === "tiny" ? 13 : 16) : variant === "full" ? 10 : 11} fontWeight={index === 0 ? 900 : index === 1 ? 700 : 600} fill="#171717">{line}</text>)}</g>;
       })}
 
       {display.openingNames && geometry.openings.map((opening) => {
@@ -274,13 +395,12 @@ export function FloorPrintPlanSvg({
       })}
 
       {[...jointGroups.map((group) => ({ group, through: false })), ...throughGroups.map((group) => ({ group, through: true }))].map(({ group, through }) => {
-        const bounds = groupBounds(group.slabIds, slabsById);
-        if (!bounds) return null;
-        const lines = groupCalloutLines(group, through);
-        const x = toX(bounds.x + bounds.width / 2);
-        const y = toY(bounds.y + bounds.height / 2);
-        const height = lines.length * 14 + 10;
-        return <g key={`${through ? "through" : "joint"}:${group.areaKey}`} data-area-callout={group.areaKey} data-area-callout-kind={through ? "through" : "joint"} pointerEvents="none"><rect x={x - 84} y={y - height / 2} width="168" height={height} rx="2" fill="#fff" fillOpacity="0.94" stroke="#171717" strokeWidth="1.2" strokeDasharray={through ? "4 2" : undefined} />{lines.map((line, index) => <text key={`${line}:${index}`} x={x} y={y - height / 2 + 15 + index * 14} textAnchor="middle" fontSize={index === 0 ? 11 : 10} fontWeight={index === 0 ? 900 : 700} fill="#171717">{line}</text>)}</g>;
+        const annotation = annotationsById.get(`${through ? "through" : "joint"}:${group.areaKey}`);
+        if (!annotation) return null;
+        const compact = annotation.variant === "compact";
+        const lines = compact ? compactGroupCalloutLines(group, through) : groupCalloutLines(group, through);
+        const x = annotation.x + annotation.width / 2;
+        return <g key={`${through ? "through" : "joint"}:${group.areaKey}`} data-area-callout={group.areaKey} data-area-callout-kind={through ? "through" : "joint"} data-annotation-x={annotation.x} data-annotation-y={annotation.y} data-annotation-width={annotation.width} data-annotation-height={annotation.height} pointerEvents="none"><rect x={annotation.x} y={annotation.y} width={annotation.width} height={annotation.height} rx="2" fill="#fff" fillOpacity="0.94" stroke="#171717" strokeWidth="1.2" strokeDasharray={through ? "4 2" : undefined} />{lines.map((line, index) => <text key={`${line}:${index}`} x={x} y={annotation.y + 15 + index * 14} textAnchor="middle" fontSize={index === 0 ? 11 : 10} fontWeight={index === 0 ? 900 : 700} fill="#171717">{line}</text>)}</g>;
       })}
 
       {display.barMarks && markClusters.map((cluster) => {
@@ -289,10 +409,12 @@ export function FloorPrintPlanSvg({
           return found ? [found] : [];
         })[0];
         if (!piece) return null;
-        const x = toX(mapCoordinate("x", cluster.centerX, piece.slabIds));
-        const y = toY(mapCoordinate("y", cluster.centerY, piece.slabIds));
+        const annotation = annotationsById.get(`mark:${cluster.mark}:${cluster.pieceIds.join("|")}`);
+        if (!annotation) return null;
+        const x = annotation.x + annotation.width / 2;
+        const y = annotation.y + annotation.height / 2;
         const text = display.barSpecification ? `${cluster.mark}  Φ${piece.diameter}@${piece.spacing}` : cluster.mark;
-        return <g key={`mark:${cluster.mark}:${cluster.pieceIds.join("|")}`} data-mark-label={cluster.mark} data-mark-cluster-size={cluster.pieceIds.length} pointerEvents="none"><rect x={x - 55} y={y - 13} width="110" height="25" rx="2" fill="#fff" stroke="#171717" strokeWidth="1" /><text x={x} y={y + 5} textAnchor="middle" fontSize="13" fontWeight="800" fill="#171717">{text}</text></g>;
+        return <g key={`mark:${cluster.mark}:${cluster.pieceIds.join("|")}`} data-mark-label={cluster.mark} data-mark-cluster-size={cluster.pieceIds.length} data-annotation-x={annotation.x} data-annotation-y={annotation.y} data-annotation-width={annotation.width} data-annotation-height={annotation.height} pointerEvents="none"><rect x={annotation.x} y={annotation.y} width={annotation.width} height={annotation.height} rx="2" fill="#fff" stroke="#171717" strokeWidth="1" /><text x={x} y={y + 5} textAnchor="middle" fontSize="13" fontWeight="800" fill="#171717">{text}</text></g>;
       })}
 
       <g transform={`translate(${VIEW_PADDING} ${VIEW_HEIGHT - 28})`} fontSize="11" fill="#262626"><rect x="0" y="-8" width="34" height="10" fill={`url(#${outerWallPatternId})`} stroke="#171717" strokeWidth="2" /><text x="41" y="4">外墙</text><rect x="90" y="-8" width="34" height="10" fill={`url(#${innerWallPatternId})`} stroke="#171717" strokeWidth="1.2" /><text x="131" y="4">内墙</text><line x1="180" y1="0" x2="214" y2="0" stroke="#171717" strokeWidth="1.7" strokeDasharray="10 7" /><text x="221" y="4">连续板边</text>{mode !== "geometry" && <><line x1="310" y1="0" x2="344" y2="0" stroke="#171717" strokeWidth="2.3" /><text x="351" y="4">主筋Piece</text><line x1="445" y1="0" x2="479" y2="0" stroke="#171717" strokeWidth="1.45" strokeDasharray="6 3" /><text x="486" y="4">副筋Piece</text>{mode === "top" && <><g data-through-legend="true"><line x1="580" y1="0" x2="614" y2="0" stroke="#171717" strokeWidth="5" /><line x1="580" y1="0" x2="614" y2="0" stroke="#fff" strokeWidth="1.5" /></g><text x="621" y="4">通墙Piece（双轨）</text></>}</>}</g>

@@ -40,6 +40,7 @@ export type FloorPrintStatus = "draft" | "official";
 export type FloorPrintLayerName = "bottom" | "top";
 export type FloorPrintDirection = "x" | "y";
 export type FloorPrintCoordinateModel = FloorPlanState["coordinateModel"];
+export type FloorPrintLayoutMode = "site" | "report";
 
 export type FloorPrintEligibilityIssue = {
   code: string;
@@ -60,6 +61,8 @@ export type FloorPrintProjectInfo = {
 
 export type FloorPrintOptions = {
   preset: "site" | "full" | "custom";
+  /** Page composition is independent from the defaults selected by a preset. */
+  layoutMode: FloorPrintLayoutMode;
   paperSize: "A3" | "A4";
   orientation: "landscape" | "portrait";
   lengthUnit: "mm" | "m";
@@ -110,6 +113,7 @@ const FULL_SECTIONS: FloorPrintOptions["sections"] = {
 
 export const DEFAULT_FLOOR_PRINT_OPTIONS: FloorPrintOptions = {
   preset: "site",
+  layoutMode: "site",
   paperSize: "A4",
   orientation: "landscape",
   lengthUnit: "mm",
@@ -131,6 +135,7 @@ export function floorPrintOptionsForPreset(
   return {
     ...structuredClone(DEFAULT_FLOOR_PRINT_OPTIONS),
     preset: "full",
+    layoutMode: "report",
     paperSize: "A3",
     orientation: "landscape",
     lengthUnit: "mm",
@@ -151,6 +156,7 @@ export function detectFloorPrintPreset(
 ): FloorPrintOptions["preset"] {
   const comparable = (options: Omit<FloorPrintOptions, "preset"> | FloorPrintOptions) =>
     JSON.stringify({
+      layoutMode: options.layoutMode,
       paperSize: options.paperSize,
       orientation: options.orientation,
       lengthUnit: options.lengthUnit,
@@ -160,6 +166,63 @@ export function detectFloorPrintPreset(
   if (comparable(value) === comparable(floorPrintOptionsForPreset("site"))) return "site";
   if (comparable(value) === comparable(floorPrintOptionsForPreset("full"))) return "full";
   return "custom";
+}
+
+const FLOOR_PRINT_SECTION_KEYS = [
+  "summary",
+  "floorPlan",
+  "bottomPlan",
+  "bottomBom",
+  "topPlan",
+  "topBom",
+  "combinedBom",
+  "diameterSummary",
+  "calculationParameters",
+] as const;
+
+const FLOOR_PRINT_DISPLAY_KEYS = [
+  "slabNames",
+  "openingNames",
+  "barMarks",
+  "barSpecification",
+  "weights",
+  "anchorDetails",
+] as const;
+
+function isFloorPrintOptionsRecord(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  const booleanMap = (candidate: unknown, keys: readonly string[]) =>
+    Boolean(candidate && typeof candidate === "object" && !Array.isArray(candidate)) &&
+    keys.every((key) => typeof (candidate as Record<string, unknown>)[key] === "boolean");
+  return ["site", "full", "custom"].includes(String(record.preset)) &&
+    ["A3", "A4"].includes(String(record.paperSize)) &&
+    ["landscape", "portrait"].includes(String(record.orientation)) &&
+    ["mm", "m"].includes(String(record.lengthUnit)) &&
+    booleanMap(record.sections, FLOOR_PRINT_SECTION_KEYS) &&
+    booleanMap(record.display, FLOOR_PRINT_DISPLAY_KEYS);
+}
+
+/**
+ * Normalizes both current options and V3/V4 persisted options that predate
+ * layoutMode. Keep this as the only legacy fallback so settings and snapshots
+ * cannot disagree about which page composition they should render.
+ */
+export function normalizeFloorPrintOptions(value: unknown): FloorPrintOptions | null {
+  if (!isFloorPrintOptionsRecord(value)) return null;
+  const layoutMode = value.layoutMode === undefined
+    ? value.preset === "site" ? "site" : "report"
+    : value.layoutMode;
+  if (layoutMode !== "site" && layoutMode !== "report") return null;
+  return {
+    preset: value.preset as FloorPrintOptions["preset"],
+    layoutMode,
+    paperSize: value.paperSize as FloorPrintOptions["paperSize"],
+    orientation: value.orientation as FloorPrintOptions["orientation"],
+    lengthUnit: value.lengthUnit as FloorPrintOptions["lengthUnit"],
+    sections: structuredClone(value.sections) as FloorPrintOptions["sections"],
+    display: structuredClone(value.display) as FloorPrintOptions["display"],
+  };
 }
 
 export type FloorPrintBoundary = {
@@ -924,7 +987,7 @@ export function buildFloorPrintSnapshot(
       remark: input.project.remark.trim(),
     },
     ...content,
-    options: structuredClone(input.options),
+    options: normalizeFloorPrintOptions(input.options) ?? structuredClone(DEFAULT_FLOOR_PRINT_OPTIONS),
     source: {
       calculator: "floor-rebar",
       coordinateModel: input.plan.coordinateModel,
