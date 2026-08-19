@@ -149,7 +149,9 @@ import {
   type FloorHistoryState,
 } from "@/lib/floor-history";
 import { getFloorPrintEligibility } from "@/lib/floor-print";
+import { buildFloorRebarCalculationContextV3 } from "@/lib/floor-rebar-calculation-context-v3";
 import { resolveFloorTopThroughPathGeometry } from "@/lib/floor-top-through";
+import { resolveFloorTopThroughPathGeometryV3 } from "@/lib/floor-top-through-v3";
 
 const SLAB_TYPE_OPTIONS: Array<{ value: FloorSlabType; label: string }> = [
   { value: "room", label: "房间" }, { value: "corridor", label: "内走廊" }, { value: "hall", label: "客厅" },
@@ -658,6 +660,10 @@ export default function FloorRebarCalculator() {
     () => blockTopForDrafts(rawTopCalculation, invalidDrafts.size + invalidTopDrafts.size),
     [invalidDrafts.size, invalidTopDrafts.size, rawTopCalculation],
   );
+  const throughGeometryContextV3 = useMemo(() =>
+    canonicalPlan.coordinateModel === "clear-space-physical-v2"
+      ? buildFloorRebarCalculationContextV3(canonicalPlan)
+      : null, [canonicalPlan]);
   const selectedSlab = selection?.kind === "slab" ? state.slabs.find((slab) => slab.id === selection.id) ?? null : null;
   const selectedRoleDomain = selectedSlab
     ? roleDomains.find((domain) => domain.slabIds.includes(selectedSlab.id)) ?? null
@@ -686,7 +692,9 @@ export default function FloorRebarCalculator() {
     };
   }), [issues, roleDomains, roleState]);
   const throughItems = useMemo<FloorWorkspaceThroughItem[]>(() => topState.throughPaths.map((path) => {
-    const geometry = resolveFloorTopThroughPathGeometry(canonicalPlan, path);
+    const geometry = throughGeometryContextV3
+      ? resolveFloorTopThroughPathGeometryV3(throughGeometryContextV3, path)
+      : resolveFloorTopThroughPathGeometry(canonicalPlan, path);
     const pathErrors = topCalculation.errors.filter((issue) => issue.code.startsWith("through-") && (issue.objectIds?.includes(path.id) || issue.message.includes(path.name)));
     const names = geometry.orderedSlabIds.map((id) => canonicalPlan.slabs.find((slab) => slab.id === id)?.name ?? id);
     const hasWarning = path.slabIds.some((id) => issues.some((issue) => issue.level === "warning" && WORKSPACE_NAV_WARNING_CODES.has(issue.code) && issue.objectIds?.includes(id)));
@@ -696,7 +704,7 @@ export default function FloorRebarCalculator() {
       detail: names.length > 0 ? names.join(" → ") : path.slabIds.map((id) => canonicalPlan.slabs.find((slab) => slab.id === id)?.name ?? id).join(" → ") || "尚未选择板区",
       status: !path.enabled ? "disabled" : pathErrors.length > 0 || geometry.errors.length > 0 ? "invalid" : hasWarning ? "warning" : "valid",
     };
-  }), [canonicalPlan, issues, topCalculation.errors, topState.throughPaths]);
+  }), [canonicalPlan, issues, throughGeometryContextV3, topCalculation.errors, topState.throughPaths]);
   const workflowStatuses: Record<FloorWorkflowStage, FloorWorkflowStatus> = {
     plan: errors.length > 0 || invalidDrafts.size > 0 ? "invalid" : warnings.length > 0 ? "warning" : "valid",
     bottom: bottomCalculation.isValid && !bottomRoleReviewRequired && invalidDrafts.size + invalidBottomDrafts.size === 0 ? "valid" : "invalid",

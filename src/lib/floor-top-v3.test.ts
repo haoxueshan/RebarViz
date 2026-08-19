@@ -684,7 +684,7 @@ describe("Floor Rebar V1.4C.4 Meng, BOM and Through guard", () => {
     );
   });
 
-  it("allows disabled Through but fully blocks enabled Through without legacy alignment/application", () => {
+  it("keeps disabled Through unchanged and routes enabled V3 paths away from Legacy functions", () => {
     const plan = v3Plan([slab("a", 0, 0, 4200, 3600)]);
     const path = {
       id: "path",
@@ -715,7 +715,8 @@ describe("Floor Rebar V1.4C.4 Meng, BOM and Through guard", () => {
     enabled.throughPaths[0].enabled = true;
     const blocked = calculateFloorTopRebar(plan, enabled);
     expect(blocked.isValid).toBe(false);
-    expect(blocked.errors.map((issue) => issue.code)).toContain("top-v3-through-not-ready");
+    expect(blocked.errors.map((issue) => issue.code)).toContain("through-path-chain-invalid");
+    expect(blocked.errors.map((issue) => issue.code)).not.toContain("top-v3-through-not-ready");
     expect(blocked).toMatchObject({
       lines: [],
       pieces: [],

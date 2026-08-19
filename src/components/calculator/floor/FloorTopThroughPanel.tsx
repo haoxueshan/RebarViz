@@ -1,15 +1,17 @@
 "use client";
 
 import { ArrowRight, Check, Link2, Plus, Search, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type {
   FloorTopCalculation,
   FloorTopState,
   FloorTopThroughPath,
 } from "@/lib/floor-top-calculator";
 import type { FloorPlanState } from "@/lib/floor-plan";
+import { buildFloorRebarCalculationContextV3 } from "@/lib/floor-rebar-calculation-context-v3";
 import { floorBarRoleLabel } from "@/lib/floor-rebar-role";
 import { resolveFloorTopThroughPathGeometry } from "@/lib/floor-top-through";
+import { resolveFloorTopThroughPathGeometryV3 } from "@/lib/floor-top-through-v3";
 import { directionLabel } from "@/lib/slab-calculator";
 
 function nextPathName(paths: readonly FloorTopThroughPath[]): string {
@@ -86,6 +88,13 @@ export function FloorTopThroughPanel({
 }) {
   const [editingSlabsFor, setEditingSlabsFor] = useState<string | null>(null);
   const [slabQuery, setSlabQuery] = useState("");
+  const throughContextV3 = useMemo(() =>
+    plan.coordinateModel === "clear-space-physical-v2"
+      ? buildFloorRebarCalculationContextV3(plan)
+      : null, [plan]);
+  const resolveGeometry = (path: FloorTopThroughPath) => throughContextV3
+    ? resolveFloorTopThroughPathGeometryV3(throughContextV3, path)
+    : resolveFloorTopThroughPathGeometry(plan, path);
   const updatePath = (id: string, patch: Partial<FloorTopThroughPath>) => {
     onChange({
       ...top,
@@ -108,7 +117,7 @@ export function FloorTopThroughPanel({
       bandEndMm: 0,
       enabled: false,
     };
-    const geometry = resolveFloorTopThroughPathGeometry(plan, draft);
+    const geometry = resolveGeometry(draft);
     if (geometry.maxBandStartMm !== null && geometry.maxBandEndMm !== null) {
       draft.bandStartMm = geometry.maxBandStartMm;
       draft.bandEndMm = geometry.maxBandEndMm;
@@ -139,7 +148,7 @@ export function FloorTopThroughPanel({
       {top.throughPaths.length > 1 && visiblePaths.length === 0 && <p className="mt-4 rounded-xl bg-cyan-50 p-4 text-sm text-cyan-900">请从左侧“通墙路径”列表选择一条路径进行编辑。</p>}
       <div className="mt-4 space-y-4">
         {visiblePaths.map((path) => {
-          const geometry = resolveFloorTopThroughPathGeometry(plan, path);
+          const geometry = resolveGeometry(path);
           const resolved = calculation.resolvedThroughPaths.find((item) => item.id === path.id);
           const pathIssues = calculation.errors.filter((item) =>
             item.code.startsWith("through-") && (item.objectIds?.includes(path.id) ?? item.message.includes(path.name)));
