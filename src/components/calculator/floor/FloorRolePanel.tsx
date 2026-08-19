@@ -94,7 +94,7 @@ export function FloorRolePanel({
                     onClick={clearOverride}
                     className={`flex min-h-14 items-center justify-center gap-2 rounded-xl border-2 px-3 text-sm font-bold transition ${resolved.source === "auto" ? "border-emerald-600 bg-emerald-600 text-white shadow-sm" : "border-amber-300 bg-white text-slate-800"}`}
                   >
-                    自動
+                    自动
                   </button>
                 )}
                 {(["x", "y"] as const).map((direction) => {
@@ -115,7 +115,7 @@ export function FloorRolePanel({
               <p className="mt-3 text-xs leading-5 text-amber-900">
                 {domain.shape === "rectangle"
                   ? resolved.source === "manual"
-                    ? "当前已人工覆盖自动判断；该主筋方向同时用于底筋、普通面筋和通墙面筋。"
+                    ? "当前已人工覆盖自动判断；该主筋方向同时用于地筋、普通面筋和通墙面筋。"
                     : "系统按短跨方向自动判断主筋；如实际施工规则不同，可人工覆盖。"
                   : domain.shape === "square"
                   ? "当前连续板区域两个方向净跨相同，请人工指定主筋方向。该选择同时用于地筋和面筋。"

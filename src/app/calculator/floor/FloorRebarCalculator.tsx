@@ -572,7 +572,14 @@ export default function FloorRebarCalculator() {
 
   const toleranceResult = useMemo(() => resolveFloorGeometryTolerance(state), [state]);
   const canonicalPlan = toleranceResult.plan;
-  const roleDomains = useMemo(() => buildFloorRebarRoleDomains(canonicalPlan), [canonicalPlan]);
+  const calculationContextV3 = useMemo(() =>
+    canonicalPlan.coordinateModel === "clear-space-physical-v2"
+      ? buildFloorRebarCalculationContextV3(canonicalPlan)
+      : null, [canonicalPlan]);
+  const roleDomains = useMemo(
+    () => buildFloorRebarRoleDomains(canonicalPlan, calculationContextV3?.solution),
+    [calculationContextV3?.solution, canonicalPlan],
+  );
 
   useEffect(() => {
     if (!hydrated || dragActive) return;
@@ -639,7 +646,10 @@ export default function FloorRebarCalculator() {
   }, [hydrated, roleDomains, roleState]);
 
   const atomic = useMemo(() => buildCanonicalFloorAtomicBoundarySegments(canonicalPlan), [canonicalPlan]);
-  const issues = useMemo(() => validateFloorPlanState(canonicalPlan), [canonicalPlan]);
+  const issues = useMemo(
+    () => validateFloorPlanState(canonicalPlan, calculationContextV3?.solution),
+    [calculationContextV3?.solution, canonicalPlan],
+  );
   // Floor Assembly V1.3.1：整层拓扑连接分析（Derived only，不写任何 Storage/Schema）。
   const assembly = useMemo(() => buildFloorAssembly(canonicalPlan), [canonicalPlan]);
   const repairDetection = useMemo(() => detectFloorTopologyRepairCandidates(canonicalPlan), [canonicalPlan]);
@@ -653,15 +663,11 @@ export default function FloorRebarCalculator() {
     () => blockBottomForDrafts(rawBottomCalculation, invalidDrafts.size + invalidBottomDrafts.size),
     [invalidBottomDrafts.size, invalidDrafts.size, rawBottomCalculation],
   );
-  const throughGeometryContextV3 = useMemo(() =>
-    canonicalPlan.coordinateModel === "clear-space-physical-v2"
-      ? buildFloorRebarCalculationContextV3(canonicalPlan)
-      : null, [canonicalPlan]);
   const rawTopCalculation = useMemo(
-    () => throughGeometryContextV3
-      ? calculateFloorTopRebarV3FromContext(throughGeometryContextV3, topState, roleState, topRoleReviewRequired)
+    () => calculationContextV3
+      ? calculateFloorTopRebarV3FromContext(calculationContextV3, topState, roleState, topRoleReviewRequired)
       : calculateFloorTopRebar(canonicalPlan, topState, roleState, topRoleReviewRequired),
-    [canonicalPlan, roleState, throughGeometryContextV3, topRoleReviewRequired, topState],
+    [calculationContextV3, canonicalPlan, roleState, topRoleReviewRequired, topState],
   );
   const topCalculation = useMemo(
     () => blockTopForDrafts(rawTopCalculation, invalidDrafts.size + invalidTopDrafts.size),
@@ -695,8 +701,8 @@ export default function FloorRebarCalculator() {
     };
   }), [issues, roleDomains, roleState]);
   const throughItems = useMemo<FloorWorkspaceThroughItem[]>(() => topState.throughPaths.map((path) => {
-    const geometry = throughGeometryContextV3
-      ? resolveFloorTopThroughPathGeometryV3(throughGeometryContextV3, path)
+    const geometry = calculationContextV3
+      ? resolveFloorTopThroughPathGeometryV3(calculationContextV3, path)
       : resolveFloorTopThroughPathGeometry(canonicalPlan, path);
     const pathErrors = topCalculation.errors.filter((issue) => issue.code.startsWith("through-") && (issue.objectIds?.includes(path.id) || issue.message.includes(path.name)));
     const names = geometry.orderedSlabIds.map((id) => canonicalPlan.slabs.find((slab) => slab.id === id)?.name ?? id);
@@ -707,7 +713,7 @@ export default function FloorRebarCalculator() {
       detail: names.length > 0 ? names.join(" → ") : path.slabIds.map((id) => canonicalPlan.slabs.find((slab) => slab.id === id)?.name ?? id).join(" → ") || "尚未选择板区",
       status: !path.enabled ? "disabled" : pathErrors.length > 0 || geometry.errors.length > 0 ? "invalid" : hasWarning ? "warning" : "valid",
     };
-  }), [canonicalPlan, issues, throughGeometryContextV3, topCalculation.errors, topState.throughPaths]);
+  }), [calculationContextV3, canonicalPlan, issues, topCalculation.errors, topState.throughPaths]);
   const workflowStatuses: Record<FloorWorkflowStage, FloorWorkflowStatus> = {
     plan: errors.length > 0 || invalidDrafts.size > 0 ? "invalid" : warnings.length > 0 ? "warning" : "valid",
     bottom: bottomCalculation.isValid && !bottomRoleReviewRequired && invalidDrafts.size + invalidBottomDrafts.size === 0 ? "valid" : "invalid",
@@ -1606,7 +1612,7 @@ export default function FloorRebarCalculator() {
     </div>
   ) : (
     <div className="space-y-5">
-      {effectiveInspectorTab === "role" ? <FloorTopSettingsPanel plan={state} top={topState} selectedSlab={selectedSlab} selectedRoleDomain={selectedRoleDomain} roleState={roleState} roleReviewRequired={topRoleReviewRequired} calculation={topCalculation} onChange={setTopState} onRoleStateChange={setRoleState} onConfirmRoleReview={() => setTopRoleReviewRequired(false)} onValidityChange={setTopDraftValidity} section="role" selectedThroughPathId={selectedThroughPathId} onSelectThroughPath={setSelectedThroughPathId} calculationContextV3={throughGeometryContextV3} /> : effectiveInspectorTab === "through" ? <FloorTopSettingsPanel plan={state} top={topState} selectedSlab={selectedSlab} selectedRoleDomain={selectedRoleDomain} roleState={roleState} roleReviewRequired={topRoleReviewRequired} calculation={topCalculation} onChange={setTopState} onRoleStateChange={setRoleState} onConfirmRoleReview={() => setTopRoleReviewRequired(false)} onValidityChange={setTopDraftValidity} section="through" selectedThroughPathId={selectedThroughPathId} onSelectThroughPath={setSelectedThroughPathId} calculationContextV3={throughGeometryContextV3} /> : <><FloorTopSettingsPanel plan={state} top={topState} selectedSlab={selectedSlab} selectedRoleDomain={selectedRoleDomain} roleState={roleState} roleReviewRequired={topRoleReviewRequired} calculation={topCalculation} onChange={setTopState} onRoleStateChange={setRoleState} onConfirmRoleReview={() => setTopRoleReviewRequired(false)} onValidityChange={setTopDraftValidity} section="defaults" selectedThroughPathId={selectedThroughPathId} onSelectThroughPath={setSelectedThroughPathId} calculationContextV3={throughGeometryContextV3} /><section className="border-t border-slate-200 pt-4"><FloorTopSettingsPanel plan={state} top={topState} selectedSlab={selectedSlab} selectedRoleDomain={selectedRoleDomain} roleState={roleState} roleReviewRequired={topRoleReviewRequired} calculation={topCalculation} onChange={setTopState} onRoleStateChange={setRoleState} onConfirmRoleReview={() => setTopRoleReviewRequired(false)} onValidityChange={setTopDraftValidity} section="slab" selectedThroughPathId={selectedThroughPathId} onSelectThroughPath={setSelectedThroughPathId} calculationContextV3={throughGeometryContextV3} /></section></>}
+      {effectiveInspectorTab === "role" ? <FloorTopSettingsPanel plan={state} top={topState} selectedSlab={selectedSlab} selectedRoleDomain={selectedRoleDomain} roleState={roleState} roleReviewRequired={topRoleReviewRequired} calculation={topCalculation} onChange={setTopState} onRoleStateChange={setRoleState} onConfirmRoleReview={() => setTopRoleReviewRequired(false)} onValidityChange={setTopDraftValidity} section="role" selectedThroughPathId={selectedThroughPathId} onSelectThroughPath={setSelectedThroughPathId} calculationContextV3={calculationContextV3} /> : effectiveInspectorTab === "through" ? <FloorTopSettingsPanel plan={state} top={topState} selectedSlab={selectedSlab} selectedRoleDomain={selectedRoleDomain} roleState={roleState} roleReviewRequired={topRoleReviewRequired} calculation={topCalculation} onChange={setTopState} onRoleStateChange={setRoleState} onConfirmRoleReview={() => setTopRoleReviewRequired(false)} onValidityChange={setTopDraftValidity} section="through" selectedThroughPathId={selectedThroughPathId} onSelectThroughPath={setSelectedThroughPathId} calculationContextV3={calculationContextV3} /> : <><FloorTopSettingsPanel plan={state} top={topState} selectedSlab={selectedSlab} selectedRoleDomain={selectedRoleDomain} roleState={roleState} roleReviewRequired={topRoleReviewRequired} calculation={topCalculation} onChange={setTopState} onRoleStateChange={setRoleState} onConfirmRoleReview={() => setTopRoleReviewRequired(false)} onValidityChange={setTopDraftValidity} section="defaults" selectedThroughPathId={selectedThroughPathId} onSelectThroughPath={setSelectedThroughPathId} calculationContextV3={calculationContextV3} /><section className="border-t border-slate-200 pt-4"><FloorTopSettingsPanel plan={state} top={topState} selectedSlab={selectedSlab} selectedRoleDomain={selectedRoleDomain} roleState={roleState} roleReviewRequired={topRoleReviewRequired} calculation={topCalculation} onChange={setTopState} onRoleStateChange={setRoleState} onConfirmRoleReview={() => setTopRoleReviewRequired(false)} onValidityChange={setTopDraftValidity} section="slab" selectedThroughPathId={selectedThroughPathId} onSelectThroughPath={setSelectedThroughPathId} calculationContextV3={calculationContextV3} /></section></>}
     </div>
   );
 
