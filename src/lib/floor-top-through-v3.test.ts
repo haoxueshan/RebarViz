@@ -6,6 +6,7 @@ import { floorRoleDomainKey, type FloorRebarRoleState } from "./floor-rebar-role
 import {
   calculateFloorTopNormalRebar,
   calculateFloorTopRebar,
+  calculateFloorTopRebarV3FromContext,
   DEFAULT_FLOOR_TOP_STATE,
   type FloorTopState,
   type FloorTopThroughPath,
@@ -145,6 +146,15 @@ describe("Floor Rebar V1.4C.5 connection-aware Top Through", () => {
       enabled: true,
     };
     const context = buildFloorRebarCalculationContextV3(plan);
+    const dc = context.solution.solvedConnections.find((connection) =>
+      connection.slabIds.includes("meng-d") && connection.slabIds.includes("meng-c"));
+    expect(dc).toMatchObject({
+      valid: true,
+      support: "inner-wall",
+      rangeStartMm: 13370,
+      rangeEndMm: 16400,
+      gapMm: 240,
+    });
     const draftGeometry = resolveFloorTopThroughPathGeometryV3(context, draft);
     expect(draftGeometry.orderedSlabIds).toEqual(["meng-b", "meng-d", "meng-c"]);
     expect(draftGeometry.validBandIntervals).not.toEqual([]);
@@ -170,6 +180,9 @@ describe("Floor Rebar V1.4C.5 connection-aware Top Through", () => {
 
     const solve = vi.spyOn(floorTopologySolver, "solveFloorTopology");
     solve.mockClear();
+    const fromContext = calculateFloorTopRebarV3FromContext(context, input, mengRoles());
+    expect(fromContext.errors).toEqual([]);
+    expect(solve).toHaveBeenCalledTimes(0);
     const result = calculateFloorTopRebar(plan, input, mengRoles());
     expect(solve).toHaveBeenCalledTimes(1);
     solve.mockRestore();

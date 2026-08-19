@@ -147,7 +147,7 @@ function normalizeToFormalBoundary(value: number, start: number, end: number): n
   return value;
 }
 
-function containsHalfOpen(value: number, start: number, end: number): boolean {
+export function containsHalfOpen(value: number, start: number, end: number): boolean {
   if (!(end - start > EPSILON)) return false;
   const normalized = normalizeToFormalBoundary(value, start, end);
   return normalized >= start && normalized < end;

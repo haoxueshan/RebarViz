@@ -17,6 +17,7 @@ import type {
   FloorTopThroughPath,
 } from "./floor-top-calculator";
 import type { TopExtraMode } from "./slab-calculator";
+import { containsHalfOpen } from "./floor-rebar-path";
 
 const THROUGH_GEOMETRY_EPSILON_MM = 1e-7;
 export const THROUGH_LINE_POSITION_EPSILON_MM = 1e-6;
@@ -264,11 +265,6 @@ export function resolveFloorTopThroughPathGeometry(
   };
 }
 
-function inHalfOpenBand(position: number, start: number, end: number): boolean {
-  return position >= start - THROUGH_LINE_POSITION_EPSILON_MM &&
-    position < end - THROUGH_LINE_POSITION_EPSILON_MM;
-}
-
 function positionsEqual(left: readonly number[], right: readonly number[]): boolean {
   return left.length === right.length && left.every((value, index) =>
     Math.abs(value - right[index]) <= THROUGH_LINE_POSITION_EPSILON_MM);
@@ -347,7 +343,7 @@ function candidatePositionsForSlab(
   return uniquePositions(normalPieces.flatMap((piece) => {
     if (piece.source !== "normal" || piece.direction !== direction || !piece.slabIds.includes(slabId)) return [];
     const position = positionsByLine.get(piece.lineId);
-    return position !== undefined && inHalfOpenBand(position, bandStart, bandEnd) ? [position] : [];
+    return position !== undefined && containsHalfOpen(position, bandStart, bandEnd) ? [position] : [];
   }));
 }
 

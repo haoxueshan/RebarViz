@@ -2,6 +2,7 @@ import type { FloorRebarCalculationContextV3 } from "./floor-rebar-calculation-c
 import type { FloorRebarDomain } from "./floor-rebar-domain";
 import {
   buildFloorRebarScanlineFromContextV3,
+  containsHalfOpen,
   type FloorRebarScanlineChain,
 } from "./floor-rebar-path";
 import type { FloorBarLine, FloorBarPiece } from "./floor-rebar-types";
@@ -459,11 +460,6 @@ export function resolveFloorTopThroughPathGeometryV3(
   return { ...geometry, errors: sortIssues(errors) };
 }
 
-function inHalfOpenBand(position: number, start: number, end: number): boolean {
-  return position >= start - THROUGH_V3_LINE_POSITION_EPSILON_MM
-    && position < end - THROUGH_V3_LINE_POSITION_EPSILON_MM;
-}
-
 function uniquePositions(values: readonly number[]): number[] {
   const sorted = [...values].sort((left, right) => left - right);
   return sorted.filter((value, index) =>
@@ -611,7 +607,7 @@ export function applyFloorTopThroughPathsV3(
         line.source === "normal"
         && line.domainId === domainId
         && line.direction === path.direction
-        && inHalfOpenBand(line.positionMm, path.bandStartMm, path.bandEndMm)
+        && containsHalfOpen(line.positionMm, path.bandStartMm, path.bandEndMm)
           ? [line.positionMm]
           : []),
     ));

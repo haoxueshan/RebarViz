@@ -1,14 +1,14 @@
 "use client";
 
 import { ArrowRight, Check, Link2, Plus, Search, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import type {
   FloorTopCalculation,
   FloorTopState,
   FloorTopThroughPath,
 } from "@/lib/floor-top-calculator";
 import type { FloorPlanState } from "@/lib/floor-plan";
-import { buildFloorRebarCalculationContextV3 } from "@/lib/floor-rebar-calculation-context-v3";
+import type { FloorRebarCalculationContextV3 } from "@/lib/floor-rebar-calculation-context-v3";
 import { floorBarRoleLabel } from "@/lib/floor-rebar-role";
 import { resolveFloorTopThroughPathGeometry } from "@/lib/floor-top-through";
 import { resolveFloorTopThroughPathGeometryV3 } from "@/lib/floor-top-through-v3";
@@ -76,6 +76,7 @@ export function FloorTopThroughPanel({
   selectedPathId,
   selectedSlabId,
   onSelectPath,
+  calculationContextV3,
 }: {
   plan: FloorPlanState;
   top: FloorTopState;
@@ -85,15 +86,12 @@ export function FloorTopThroughPanel({
   selectedPathId?: string | null;
   selectedSlabId?: string;
   onSelectPath?: (id: string | null) => void;
+  calculationContextV3?: FloorRebarCalculationContextV3 | null;
 }) {
   const [editingSlabsFor, setEditingSlabsFor] = useState<string | null>(null);
   const [slabQuery, setSlabQuery] = useState("");
-  const throughContextV3 = useMemo(() =>
-    plan.coordinateModel === "clear-space-physical-v2"
-      ? buildFloorRebarCalculationContextV3(plan)
-      : null, [plan]);
-  const resolveGeometry = (path: FloorTopThroughPath) => throughContextV3
-    ? resolveFloorTopThroughPathGeometryV3(throughContextV3, path)
+  const resolveGeometry = (path: FloorTopThroughPath) => calculationContextV3
+    ? resolveFloorTopThroughPathGeometryV3(calculationContextV3, path)
     : resolveFloorTopThroughPathGeometry(plan, path);
   const updatePath = (id: string, patch: Partial<FloorTopThroughPath>) => {
     onChange({

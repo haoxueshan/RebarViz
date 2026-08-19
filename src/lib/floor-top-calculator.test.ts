@@ -208,6 +208,13 @@ describe("Floor Top主副筋角色", () => {
     const yShort = calculateFloorTopRebar(plan([slab("a", 0, 0, 6000, 4000)]), settings);
     expect(yShort.groups.find((group) => group.direction === "x")).toMatchObject({ role: "secondary", diameter: 8 });
     expect(yShort.groups.find((group) => group.direction === "y")).toMatchObject({ role: "main", diameter: 12 });
+    const forcedX = calculateFloorTopRebar(
+      plan([slab("a", 0, 0, 6000, 4000)]),
+      settings,
+      roleState([[['a'], "x"]]),
+    );
+    expect(forcedX.groups.find((group) => group.direction === "x")).toMatchObject({ role: "main", diameter: 12 });
+    expect(forcedX.groups.find((group) => group.direction === "y")).toMatchObject({ role: "secondary", diameter: 8 });
   });
 
   it("贯穿Opening只拆Physical Domain，不改变Role Domain与角色", () => {

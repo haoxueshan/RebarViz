@@ -70,11 +70,11 @@ describe("Floor Rebar Role Domain", () => {
     expect(resolveFloorRoleDomainMainDirection(domain, emptyRoleState)).toMatchObject({ mainDirection, source });
   });
 
-  it("非正方形矩形始终自动判断，不接受遗留人工覆盖改变方向", () => {
+  it("矩形正式接受人工覆盖并返回manual来源", () => {
     const domain = buildFloorRebarRoleDomains(plan([slab("a", 0, 0, 4000, 6000)]))[0];
     expect(resolveFloorRoleDomainMainDirection(domain, {
       mainDirectionOverrides: { [domain.id]: "y" },
-    })).toMatchObject({ mainDirection: "x", source: "auto" });
+    })).toMatchObject({ mainDirection: "y", source: "manual" });
   });
 
   it("L/T型continuous Role Domain不按外包框猜测，人工方向作用于整个参考域", () => {

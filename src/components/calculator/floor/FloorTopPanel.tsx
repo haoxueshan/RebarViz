@@ -11,6 +11,7 @@ import {
   type FloorTopState,
 } from "@/lib/floor-top-calculator";
 import type { FloorPlanState, FloorSlab } from "@/lib/floor-plan";
+import type { FloorRebarCalculationContextV3 } from "@/lib/floor-rebar-calculation-context-v3";
 import {
   floorBarRoleLabel,
   type FloorRebarRoleDomain,
@@ -116,6 +117,7 @@ export function FloorTopSettingsPanel({
   section = "all",
   selectedThroughPathId,
   onSelectThroughPath,
+  calculationContextV3,
 }: {
   plan: FloorPlanState;
   top: FloorTopState;
@@ -131,6 +133,7 @@ export function FloorTopSettingsPanel({
   section?: "all" | "role" | "defaults" | "slab" | "through";
   selectedThroughPathId?: string | null;
   onSelectThroughPath?: (id: string | null) => void;
+  calculationContextV3?: FloorRebarCalculationContextV3 | null;
 }) {
   const updateDefault = (patch: Partial<FloorTopDefaults>) => onChange({ ...top, defaults: { ...top.defaults, ...patch } });
   const setOverrideEnabled = (enabled: boolean) => {
@@ -196,6 +199,7 @@ export function FloorTopSettingsPanel({
         selectedPathId={selectedThroughPathId}
         selectedSlabId={selectedSlab?.id}
         onSelectPath={onSelectThroughPath}
+        calculationContextV3={calculationContextV3}
       />}
     </div>
   );

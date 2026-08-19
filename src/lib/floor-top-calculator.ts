@@ -492,25 +492,6 @@ function calculateFloorTopNormalRebarV3FromContext(
     roleState,
     geometryContext.solution,
   );
-  // Honor an explicit V3 Through role without changing frozen Legacy rectangle
-  // auto-direction semantics for calculations that do not enable Through.
-  const generationRoleContext = top.throughPaths.some((path) => path.enabled)
-    ? {
-        ...roleContext,
-        mainDirectionByPhysicalDomain: new Map(
-          roleContext.mainDirectionByPhysicalDomain,
-        ),
-      }
-    : roleContext;
-  if (generationRoleContext !== roleContext) {
-    domains.forEach((domain) => {
-      const roleDomain = roleContext.roleDomains.find((candidate) =>
-        candidate.slabIds.length === domain.slabIds.length
-        && candidate.slabIds.every((slabId) => domain.slabIds.includes(slabId)));
-      const override = roleDomain ? roleState.mainDirectionOverrides[roleDomain.id] : undefined;
-      if (override) generationRoleContext.mainDirectionByPhysicalDomain.set(domain.id, override);
-    });
-  }
   const reviewErrors: FloorTopIssue[] = roleReviewRequired ? [{
     code: "top-role-review-required",
     message: "旧版本的东西/南北向直径已迁移为主/副筋语义，请确认当前面筋主筋、副筋直径后再生成正式料单。",
@@ -567,7 +548,7 @@ function calculateFloorTopNormalRebarV3FromContext(
         top,
         domains,
         top.throughPaths,
-        generationRoleContext,
+        roleContext,
       )
     : { plan: EMPTY_FLOOR_TOP_ALIGNMENT_PLAN, geometries: [] };
   if (artifacts) artifacts.geometries = alignmentV3.geometries;
@@ -587,7 +568,7 @@ function calculateFloorTopNormalRebarV3FromContext(
   const calculationErrors: FloorTopIssue[] = [];
   const settingsByDomainDirection = new Map<string, FloorTopBarSettings>();
   domains.forEach((domain) => {
-    const mainDirection = generationRoleContext.mainDirectionByPhysicalDomain.get(domain.id);
+    const mainDirection = roleContext.mainDirectionByPhysicalDomain.get(domain.id);
     if (!mainDirection) return;
     (["x", "y"] as const).forEach((direction) => {
       const role = resolveFloorBarRole(mainDirection, direction);
@@ -961,13 +942,12 @@ export function calculateFloorTopNormalRebar(
  * 普通面筋是唯一相位与根数来源；通墙层只做路径校验、普通Piece认领与替换。
  * throughPaths为空或全部禁用时直接返回普通结果，确保冻结结果不发生重排或重算。
  */
-function calculateFloorTopRebarV3(
-  plan: FloorPlanState,
+export function calculateFloorTopRebarV3FromContext(
+  context: FloorRebarCalculationContextV3,
   input: FloorTopState,
-  roleState: FloorRebarRoleState,
-  roleReviewRequired: boolean,
+  roleState: FloorRebarRoleState = DEFAULT_FLOOR_REBAR_ROLE_STATE,
+  roleReviewRequired = false,
 ): FloorTopCalculation {
-  const context = buildFloorRebarCalculationContextV3(plan);
   const artifacts: FloorTopNormalV3Artifacts = { geometries: [] };
   const normal = calculateFloorTopNormalRebarV3FromContext(
     context,
@@ -1056,6 +1036,20 @@ function calculateFloorTopRebarV3(
     warnings: normal.warnings,
     isValid: true,
   };
+}
+
+function calculateFloorTopRebarV3(
+  plan: FloorPlanState,
+  input: FloorTopState,
+  roleState: FloorRebarRoleState,
+  roleReviewRequired: boolean,
+): FloorTopCalculation {
+  return calculateFloorTopRebarV3FromContext(
+    buildFloorRebarCalculationContextV3(plan),
+    input,
+    roleState,
+    roleReviewRequired,
+  );
 }
 
 export function calculateFloorTopRebar(

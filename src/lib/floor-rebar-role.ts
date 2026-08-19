@@ -110,6 +110,10 @@ export function resolveFloorRoleDomainMainDirection(
   domain: FloorRebarRoleDomain,
   state: FloorRebarRoleState,
 ): ResolvedFloorRole {
+  const manual = state.mainDirectionOverrides[domain.id];
+  if (manual === "x" || manual === "y") {
+    return { mainDirection: manual, source: "manual", shape: domain.shape };
+  }
   if (domain.shape === "rectangle") {
     const spanX = domain.maxX - domain.minX;
     const spanY = domain.maxY - domain.minY;
@@ -118,10 +122,6 @@ export function resolveFloorRoleDomainMainDirection(
       source: "auto",
       shape: domain.shape,
     };
-  }
-  const manual = state.mainDirectionOverrides[domain.id];
-  if (manual === "x" || manual === "y") {
-    return { mainDirection: manual, source: "manual", shape: domain.shape };
   }
   return { mainDirection: null, source: "required", shape: domain.shape };
 }

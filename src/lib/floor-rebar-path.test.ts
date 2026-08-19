@@ -3,6 +3,7 @@ import type { FloorPlanState } from "./floor-plan";
 import {
   buildFloorRebarPathContextV3,
   buildFloorRebarScanlineV3,
+  containsHalfOpen,
 } from "./floor-rebar-path";
 import { incompleteMengPlan3 } from "./__fixtures__/floor-topology-plan3-incomplete-meng";
 import { stableFloorConnectionId, type FloorConnectionRange, type FloorEdgeConnection } from "./floor-topology";
@@ -90,6 +91,12 @@ function fakeVerticalConnection(
 }
 
 describe("Floor Rebar V1.4C.1 path engine", () => {
+  it("uses one half-open membership rule at touching boundaries", () => {
+    expect(containsHalfOpen(0, 0, 1000)).toBe(true);
+    expect(containsHalfOpen(999.9999, 0, 1000)).toBe(true);
+    expect(containsHalfOpen(1000, 0, 1000)).toBe(false);
+    expect(containsHalfOpen(1000, 1000, 2000)).toBe(true);
+  });
   it("builds a reusable context and single-slab X/Y paths", () => {
     const plan = simplePlan();
     const context = buildFloorRebarPathContextV3(plan);

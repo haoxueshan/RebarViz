@@ -74,6 +74,13 @@ describe("Floor Bottom单板与根数算法", () => {
       piece.topExtraValueMm === 0)).toBe(true);
     const pieceWeight = calculation.pieces.reduce((sum, piece) => sum + piece.singleLengthMm / 1000 * theoreticalUnitWeight(piece.diameter), 0);
     expect(calculation.totalWeightKg).toBeCloseTo(pieceWeight, 10);
+    const forcedX = calculateFloorBottomRebar(
+      plan([slab("a", 0, 0, 4200, 3600)]),
+      bottom(),
+      roleState([[['a'], "x"]]),
+    );
+    expect(forcedX.groups.find((group) => group.direction === "x")).toMatchObject({ role: "main", diameter: 12 });
+    expect(forcedX.groups.find((group) => group.direction === "y")).toMatchObject({ role: "secondary", diameter: 10 });
     expect(calculation.groups.reduce((sum, group) => sum + group.weightKg, 0)).toBeCloseTo(pieceWeight, 10);
   });
 

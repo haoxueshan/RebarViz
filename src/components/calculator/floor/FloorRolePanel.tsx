@@ -45,6 +45,12 @@ export function FloorRolePanel({
       },
     });
   };
+  const clearOverride = () => {
+    if (!domain) return;
+    const next = { ...roleState.mainDirectionOverrides };
+    delete next[domain.id];
+    onChange({ mainDirectionOverrides: next });
+  };
 
   return (
     <section className="rounded-2xl border border-indigo-200 bg-white p-5 shadow-sm">
@@ -72,7 +78,7 @@ export function FloorRolePanel({
       )}
       {domain && resolved && (
         <div className="mt-3 space-y-3">
-          {resolved.source === "auto" ? (
+          {resolved.source === "auto" && domain.shape !== "rectangle" ? (
             <p className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
               自动判断：{directionLabel(resolved.mainDirection!)}为主筋，
               {directionLabel(resolved.mainDirection === "x" ? "y" : "x")}为副筋。
@@ -81,8 +87,18 @@ export function FloorRolePanel({
             <fieldset className="rounded-xl border border-amber-200 bg-amber-50 p-3">
               <legend className="px-1 text-sm font-semibold text-amber-950">主筋方向</legend>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {domain.shape === "rectangle" && (
+                  <button
+                    type="button"
+                    aria-pressed={resolved.source === "auto"}
+                    onClick={clearOverride}
+                    className={`flex min-h-14 items-center justify-center gap-2 rounded-xl border-2 px-3 text-sm font-bold transition ${resolved.source === "auto" ? "border-emerald-600 bg-emerald-600 text-white shadow-sm" : "border-amber-300 bg-white text-slate-800"}`}
+                  >
+                    自動
+                  </button>
+                )}
                 {(["x", "y"] as const).map((direction) => {
-                  const selected = resolved.mainDirection === direction;
+                  const selected = resolved.source === "manual" && resolved.mainDirection === direction;
                   return (
                     <button
                       key={direction}
@@ -97,7 +113,11 @@ export function FloorRolePanel({
                 })}
               </div>
               <p className="mt-3 text-xs leading-5 text-amber-900">
-                {domain.shape === "square"
+                {domain.shape === "rectangle"
+                  ? resolved.source === "manual"
+                    ? "当前已人工覆盖自动判断；该主筋方向同时用于底筋、普通面筋和通墙面筋。"
+                    : "系统按短跨方向自动判断主筋；如实际施工规则不同，可人工覆盖。"
+                  : domain.shape === "square"
                   ? "当前连续板区域两个方向净跨相同，请人工指定主筋方向。该选择同时用于地筋和面筋。"
                   : "当前连续板区域为 L/T 或其他非矩形形状，无法可靠通过外包尺寸判断主副筋，请人工指定。"}
               </p>
