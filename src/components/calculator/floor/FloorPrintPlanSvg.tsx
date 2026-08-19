@@ -5,6 +5,7 @@ import {
   buildExternalSlabCandidates,
   buildFloorPrintAnnotationLayout,
   buildMarkCandidates,
+  buildOpeningLabelCandidates,
   estimatePrintTextWidth,
   type FloorPrintAnnotationRequest,
 } from "@/lib/floor-print-annotation-layout";
@@ -29,6 +30,13 @@ import type {
 const VIEW_WIDTH = 1200;
 const VIEW_HEIGHT = 720;
 const VIEW_PADDING = 70;
+const LEGEND_RESERVED_HEIGHT = 48;
+const LEGEND_RESERVED_BOX = {
+  x: VIEW_PADDING - 8,
+  y: VIEW_HEIGHT - LEGEND_RESERVED_HEIGHT,
+  width: VIEW_WIDTH - VIEW_PADDING * 2 + 16,
+  height: LEGEND_RESERVED_HEIGHT,
+};
 
 type FloorPrintPlanSvgProps = {
   geometry: FloorPrintGeometry;
@@ -41,6 +49,23 @@ type FloorPrintPlanSvgProps = {
 
 type LabelMode = "full" | "compact" | "tiny";
 type DrawBox = { x: number; y: number; width: number; height: number };
+
+function printBarMarkLabel(
+  mark: string,
+  diameter: number,
+  spacing: number,
+  showSpecification: boolean,
+): string {
+  return showSpecification ? `${mark}  Φ${diameter}@${spacing}` : mark;
+}
+
+function openingLabelDimensions(name: string): { width: number; height: number } {
+  const textWidth = Math.max(estimatePrintTextWidth(name, 13), estimatePrintTextWidth("VOID", 11));
+  return {
+    width: Math.min(180, Math.max(80, textWidth + 18)),
+    height: 44,
+  };
+}
 
 function boundaryStyle(support: FloorPrintGeometry["boundaries"][number]["support"]) {
   if (support === "outer-wall") return { width: 2.4, dash: undefined };
@@ -267,6 +292,29 @@ export function FloorPrintPlanSvg({
       variants: slabLabelVariants(ref, summariesBySlab.get(ref.slabId), mode, bounds, display.slabNames),
     });
   });
+  if (display.openingNames) {
+    geometry.openings.forEach((opening) => {
+      const draw = openingDraw(opening);
+      const bounds = {
+        x: toX(draw.x),
+        y: toY(draw.y + opening.height),
+        width: opening.width * scale,
+        height: opening.height * scale,
+      };
+      const { width, height } = openingLabelDimensions(opening.name);
+      annotationRequests.push({
+        id: `opening-label:${opening.id}`,
+        kind: "opening-label",
+        priority: 2,
+        variants: [{
+          id: "standard",
+          width,
+          height,
+          candidates: buildOpeningLabelCandidates(bounds, width, height),
+        }],
+      });
+    });
+  }
   if (display.barMarks) {
     markClusters.forEach((cluster) => {
       const piece = cluster.pieceIds.flatMap((id) => {
@@ -274,13 +322,13 @@ export function FloorPrintPlanSvg({
         return found ? [found] : [];
       })[0];
       if (!piece) return;
-      const text = display.barSpecification ? `${cluster.mark}  桅${piece.diameter}@${piece.spacing}` : cluster.mark;
+      const text = printBarMarkLabel(cluster.mark, piece.diameter, piece.spacing, display.barSpecification);
       const width = Math.max(48, estimatePrintTextWidth(text, 13) + 16);
       const height = 25;
       annotationRequests.push({
         id: `mark:${cluster.mark}:${cluster.pieceIds.join("|")}`,
         kind: "bar-mark",
-        priority: 2,
+        priority: 3,
         variants: [{
           id: "standard",
           width,
@@ -311,13 +359,14 @@ export function FloorPrintPlanSvg({
       annotationRequests.push({
         id: `${through ? "through" : "joint"}:${group.areaKey}`,
         kind: through ? "through-callout" : "joint-callout",
-        priority: through ? 4 : 3,
+        priority: through ? 5 : 4,
         variants,
       });
     });
   const annotationLayout = buildFloorPrintAnnotationLayout(
     annotationRequests,
     { x: 0, y: 0, width: VIEW_WIDTH, height: VIEW_HEIGHT },
+    { reservedBoxes: [LEGEND_RESERVED_BOX] },
   );
   const annotationsById = new Map(annotationLayout.boxes.map((box) => [box.id, box]));
   const openingPatternId = `floor-print-opening-${mode}`;
@@ -386,12 +435,15 @@ export function FloorPrintPlanSvg({
         const lineHeight = variant === "full" ? 15 : 14;
         const centerX = annotation.x + annotation.width / 2;
         const centerY = annotation.y + annotation.height / 2;
-        return <g key={`slab-label:${slab.id}`} data-slab-label={ref.printId} data-slab-label-mode={variant} data-slab-construction-summary={mode === "bottom" ? "true" : undefined} data-annotation-x={annotation.x} data-annotation-y={annotation.y} data-annotation-width={annotation.width} data-annotation-height={annotation.height} pointerEvents="none">{annotation.external && annotation.leaderTo && <line x1={annotation.leaderTo.x} y1={annotation.leaderTo.y} x2={centerX} y2={centerY} stroke="#525252" strokeWidth="1" />}{<rect x={annotation.x} y={annotation.y} width={annotation.width} height={annotation.height} rx="2" fill="#fff" fillOpacity="0.9" stroke="#737373" strokeWidth={variant === "tiny" ? "0.8" : "1"} />}{lines.map((line, index) => <text key={`${line}:${index}`} x={centerX} y={annotation.y + 15 + index * lineHeight} textAnchor="middle" fontSize={index === 0 ? (variant === "tiny" ? 13 : 16) : variant === "full" ? 10 : 11} fontWeight={index === 0 ? 900 : index === 1 ? 700 : 600} fill="#171717">{line}</text>)}</g>;
+        return <g key={`slab-label:${slab.id}`} data-slab-label={ref.printId} data-slab-label-mode={variant} data-slab-construction-summary={mode === "bottom" ? "true" : undefined} data-annotation-kind="slab-label" data-annotation-external={annotation.external ? "true" : undefined} data-annotation-fallback={annotation.fallback ? "true" : undefined} data-annotation-x={annotation.x} data-annotation-y={annotation.y} data-annotation-width={annotation.width} data-annotation-height={annotation.height} pointerEvents="none">{annotation.external && annotation.leaderTo && <line x1={annotation.leaderTo.x} y1={annotation.leaderTo.y} x2={centerX} y2={centerY} stroke="#525252" strokeWidth="1" />}{<rect x={annotation.x} y={annotation.y} width={annotation.width} height={annotation.height} rx="2" fill="#fff" fillOpacity="0.9" stroke="#737373" strokeWidth={variant === "tiny" ? "0.8" : "1"} />}{lines.map((line, index) => <text key={`${line}:${index}`} x={centerX} y={annotation.y + 15 + index * lineHeight} textAnchor="middle" fontSize={index === 0 ? (variant === "tiny" ? 13 : 16) : variant === "full" ? 10 : 11} fontWeight={index === 0 ? 900 : index === 1 ? 700 : 600} fill="#171717">{line}</text>)}</g>;
       })}
 
       {display.openingNames && geometry.openings.map((opening) => {
-        const draw = openingDraw(opening);
-        return <g key={`opening-label:${opening.id}`} pointerEvents="none"><rect x={toX(draw.x + opening.width / 2) - 55} y={toY(draw.y + opening.height / 2) - 22} width="110" height="44" rx="2" fill="#fff" fillOpacity="0.92" stroke="#737373" /><text x={toX(draw.x + opening.width / 2)} y={toY(draw.y + opening.height / 2) - 3} textAnchor="middle" fontSize="13" fontWeight="700" fill="#171717">{opening.name}</text><text x={toX(draw.x + opening.width / 2)} y={toY(draw.y + opening.height / 2) + 14} textAnchor="middle" fontSize="11" fill="#525252">VOID</text></g>;
+        const annotation = annotationsById.get(`opening-label:${opening.id}`);
+        if (!annotation) return null;
+        const centerX = annotation.x + annotation.width / 2;
+        const centerY = annotation.y + annotation.height / 2;
+        return <g key={`opening-label:${opening.id}`} data-opening-label={opening.id} data-opening-name={opening.name} data-annotation-kind="opening-label" data-annotation-external={annotation.external ? "true" : undefined} data-annotation-fallback={annotation.fallback ? "true" : undefined} data-annotation-x={annotation.x} data-annotation-y={annotation.y} data-annotation-width={annotation.width} data-annotation-height={annotation.height} pointerEvents="none">{annotation.external && annotation.leaderTo && <line x1={annotation.leaderTo.x} y1={annotation.leaderTo.y} x2={centerX} y2={centerY} stroke="#525252" strokeWidth="1" />}{<rect x={annotation.x} y={annotation.y} width={annotation.width} height={annotation.height} rx="2" fill="#fff" fillOpacity="0.94" stroke="#525252" strokeWidth="1" />}{<text x={centerX} y={annotation.y + 18} textAnchor="middle" fontSize="13" fontWeight="700" fill="#171717">{opening.name}</text>}{<text x={centerX} y={annotation.y + 35} textAnchor="middle" fontSize="11" fill="#525252">VOID</text>}</g>;
       })}
 
       {[...jointGroups.map((group) => ({ group, through: false })), ...throughGroups.map((group) => ({ group, through: true }))].map(({ group, through }) => {
@@ -400,7 +452,7 @@ export function FloorPrintPlanSvg({
         const compact = annotation.variant === "compact";
         const lines = compact ? compactGroupCalloutLines(group, through) : groupCalloutLines(group, through);
         const x = annotation.x + annotation.width / 2;
-        return <g key={`${through ? "through" : "joint"}:${group.areaKey}`} data-area-callout={group.areaKey} data-area-callout-kind={through ? "through" : "joint"} data-annotation-x={annotation.x} data-annotation-y={annotation.y} data-annotation-width={annotation.width} data-annotation-height={annotation.height} pointerEvents="none"><rect x={annotation.x} y={annotation.y} width={annotation.width} height={annotation.height} rx="2" fill="#fff" fillOpacity="0.94" stroke="#171717" strokeWidth="1.2" strokeDasharray={through ? "4 2" : undefined} />{lines.map((line, index) => <text key={`${line}:${index}`} x={x} y={annotation.y + 15 + index * 14} textAnchor="middle" fontSize={index === 0 ? 11 : 10} fontWeight={index === 0 ? 900 : 700} fill="#171717">{line}</text>)}</g>;
+        return <g key={`${through ? "through" : "joint"}:${group.areaKey}`} data-area-callout={group.areaKey} data-area-callout-kind={through ? "through" : "joint"} data-annotation-kind={through ? "through-callout" : "joint-callout"} data-annotation-external={annotation.external ? "true" : undefined} data-annotation-fallback={annotation.fallback ? "true" : undefined} data-annotation-x={annotation.x} data-annotation-y={annotation.y} data-annotation-width={annotation.width} data-annotation-height={annotation.height} pointerEvents="none"><rect x={annotation.x} y={annotation.y} width={annotation.width} height={annotation.height} rx="2" fill="#fff" fillOpacity="0.94" stroke="#171717" strokeWidth="1.2" strokeDasharray={through ? "4 2" : undefined} />{lines.map((line, index) => <text key={`${line}:${index}`} x={x} y={annotation.y + 15 + index * 14} textAnchor="middle" fontSize={index === 0 ? 11 : 10} fontWeight={index === 0 ? 900 : 700} fill="#171717">{line}</text>)}</g>;
       })}
 
       {display.barMarks && markClusters.map((cluster) => {
@@ -413,11 +465,11 @@ export function FloorPrintPlanSvg({
         if (!annotation) return null;
         const x = annotation.x + annotation.width / 2;
         const y = annotation.y + annotation.height / 2;
-        const text = display.barSpecification ? `${cluster.mark}  Φ${piece.diameter}@${piece.spacing}` : cluster.mark;
-        return <g key={`mark:${cluster.mark}:${cluster.pieceIds.join("|")}`} data-mark-label={cluster.mark} data-mark-cluster-size={cluster.pieceIds.length} data-annotation-x={annotation.x} data-annotation-y={annotation.y} data-annotation-width={annotation.width} data-annotation-height={annotation.height} pointerEvents="none"><rect x={annotation.x} y={annotation.y} width={annotation.width} height={annotation.height} rx="2" fill="#fff" stroke="#171717" strokeWidth="1" /><text x={x} y={y + 5} textAnchor="middle" fontSize="13" fontWeight="800" fill="#171717">{text}</text></g>;
+        const text = printBarMarkLabel(cluster.mark, piece.diameter, piece.spacing, display.barSpecification);
+        return <g key={`mark:${cluster.mark}:${cluster.pieceIds.join("|")}`} data-mark-label={cluster.mark} data-mark-cluster-size={cluster.pieceIds.length} data-annotation-kind="bar-mark" data-annotation-external={annotation.external ? "true" : undefined} data-annotation-fallback={annotation.fallback ? "true" : undefined} data-annotation-x={annotation.x} data-annotation-y={annotation.y} data-annotation-width={annotation.width} data-annotation-height={annotation.height} pointerEvents="none"><rect x={annotation.x} y={annotation.y} width={annotation.width} height={annotation.height} rx="2" fill="#fff" stroke="#171717" strokeWidth="1" /><text x={x} y={y + 5} textAnchor="middle" fontSize="13" fontWeight="800" fill="#171717">{text}</text></g>;
       })}
 
-      <g transform={`translate(${VIEW_PADDING} ${VIEW_HEIGHT - 28})`} fontSize="11" fill="#262626"><rect x="0" y="-8" width="34" height="10" fill={`url(#${outerWallPatternId})`} stroke="#171717" strokeWidth="2" /><text x="41" y="4">外墙</text><rect x="90" y="-8" width="34" height="10" fill={`url(#${innerWallPatternId})`} stroke="#171717" strokeWidth="1.2" /><text x="131" y="4">内墙</text><line x1="180" y1="0" x2="214" y2="0" stroke="#171717" strokeWidth="1.7" strokeDasharray="10 7" /><text x="221" y="4">连续板边</text>{mode !== "geometry" && <><line x1="310" y1="0" x2="344" y2="0" stroke="#171717" strokeWidth="2.3" /><text x="351" y="4">主筋Piece</text><line x1="445" y1="0" x2="479" y2="0" stroke="#171717" strokeWidth="1.45" strokeDasharray="6 3" /><text x="486" y="4">副筋Piece</text>{mode === "top" && <><g data-through-legend="true"><line x1="580" y1="0" x2="614" y2="0" stroke="#171717" strokeWidth="5" /><line x1="580" y1="0" x2="614" y2="0" stroke="#fff" strokeWidth="1.5" /></g><text x="621" y="4">通墙Piece（双轨）</text></>}</>}</g>
+      <g transform={`translate(${VIEW_PADDING} ${VIEW_HEIGHT - 28})`} data-print-legend="true" data-legend-reserved-x={LEGEND_RESERVED_BOX.x} data-legend-reserved-y={LEGEND_RESERVED_BOX.y} data-legend-reserved-width={LEGEND_RESERVED_BOX.width} data-legend-reserved-height={LEGEND_RESERVED_BOX.height} fontSize="11" fill="#262626"><rect x="0" y="-8" width="34" height="10" fill={`url(#${outerWallPatternId})`} stroke="#171717" strokeWidth="2" /><text x="41" y="4">外墙</text><rect x="90" y="-8" width="34" height="10" fill={`url(#${innerWallPatternId})`} stroke="#171717" strokeWidth="1.2" /><text x="131" y="4">内墙</text><line x1="180" y1="0" x2="214" y2="0" stroke="#171717" strokeWidth="1.7" strokeDasharray="10 7" /><text x="221" y="4">连续板边</text>{mode !== "geometry" && <><line x1="310" y1="0" x2="344" y2="0" stroke="#171717" strokeWidth="2.3" /><text x="351" y="4">主筋Piece</text><line x1="445" y1="0" x2="479" y2="0" stroke="#171717" strokeWidth="1.45" strokeDasharray="6 3" /><text x="486" y="4">副筋Piece</text>{mode === "top" && <><g data-through-legend="true"><line x1="580" y1="0" x2="614" y2="0" stroke="#171717" strokeWidth="5" /><line x1="580" y1="0" x2="614" y2="0" stroke="#fff" strokeWidth="1.5" /></g><text x="621" y="4">通墙Piece（双轨）</text></>}</>}</g>
     </svg>
   );
 }

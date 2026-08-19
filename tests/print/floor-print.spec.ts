@@ -180,6 +180,45 @@ async function generateSnapshot(page: Page): Promise<string> {
   return id!;
 }
 
+type SvgBounds = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+function boxesOverlap(left: SvgBounds, right: SvgBounds, padding = 0): boolean {
+  return left.x < right.x + right.width + padding &&
+    left.x + left.width + padding > right.x &&
+    left.y < right.y + right.height + padding &&
+    left.y + left.height + padding > right.y;
+}
+
+async function readPlanAnnotations(page: Page, mode: "bottom" | "top") {
+  return page.locator(`svg[data-floor-print-plan="${mode}"]`).evaluate((svg) => {
+    const numberAttribute = (element: Element, name: string) => Number(element.getAttribute(name));
+    const annotations = [...svg.querySelectorAll("[data-annotation-x]")].map((element) => ({
+      kind: element.getAttribute("data-annotation-kind") ?? "",
+      fallback: element.getAttribute("data-annotation-fallback") === "true",
+      x: numberAttribute(element, "data-annotation-x"),
+      y: numberAttribute(element, "data-annotation-y"),
+      width: numberAttribute(element, "data-annotation-width"),
+      height: numberAttribute(element, "data-annotation-height"),
+    }));
+    const legend = svg.querySelector("[data-print-legend]");
+    if (!legend) throw new Error("print legend is missing");
+    return {
+      annotations,
+      legend: {
+        x: numberAttribute(legend, "data-legend-reserved-x"),
+        y: numberAttribute(legend, "data-legend-reserved-y"),
+        width: numberAttribute(legend, "data-legend-reserved-width"),
+        height: numberAttribute(legend, "data-legend-reserved-height"),
+      },
+    };
+  });
+}
+
 async function makeA4LandscapePdf(page: Page, testInfo: TestInfo): Promise<void> {
   await page.emulateMedia({ media: "print" });
   const bytes = await page.pdf({
@@ -216,6 +255,9 @@ test.describe("Floor Print V1整层冻结快照打印", () => {
     await expect(page.locator('tr[data-print-mark="D01"]').first()).toBeVisible();
     await expect(page.locator('svg[data-floor-print-plan="top"] [data-mark="M01"]')).not.toHaveCount(0);
     await expect(page.locator('tr[data-print-mark="M01"]').first()).toBeVisible();
+    const markLabel = page.locator('svg[data-floor-print-plan="bottom"] [data-mark-label]').first();
+    await expect(markLabel).toContainText("Φ");
+    await expect(markLabel).not.toContainText("桅");
     await expect(page.locator('svg[data-floor-print-plan="geometry"] [data-slab-label="S01"]')).toHaveCount(1);
     const bottomSlabLabel = page.locator('svg[data-floor-print-plan="bottom"] [data-slab-label="S01"]');
     await expect(bottomSlabLabel).toContainText("主");
@@ -285,6 +327,43 @@ test.describe("Floor Print V1整层冻结快照打印", () => {
     await openFrozenSnapshot(page, snapshot);
     await expect(page.locator('svg[data-floor-print-plan="bottom"] [data-slab-label]')).toHaveCount(12);
     await expect(page.locator('svg[data-floor-print-plan="top"] [data-area-callout-kind="through"]')).toHaveCount(1);
+    for (const mode of ["bottom", "top"] as const) {
+      const { annotations, legend } = await readPlanAnnotations(page, mode);
+      expect(annotations).not.toHaveLength(0);
+      expect(annotations.filter((annotation) => annotation.kind === "slab-label")).toHaveLength(12);
+      expect(annotations.filter((annotation) => annotation.kind === "opening-label")).toHaveLength(1);
+      annotations.forEach((annotation) => {
+        expect(annotation.kind).not.toBe("");
+        expect(Number.isFinite(annotation.x)).toBe(true);
+        expect(Number.isFinite(annotation.y)).toBe(true);
+        expect(Number.isFinite(annotation.width)).toBe(true);
+        expect(Number.isFinite(annotation.height)).toBe(true);
+        expect(annotation.x).toBeGreaterThanOrEqual(0);
+        expect(annotation.y).toBeGreaterThanOrEqual(0);
+        expect(annotation.x + annotation.width).toBeLessThanOrEqual(1200);
+        expect(annotation.y + annotation.height).toBeLessThanOrEqual(720);
+        expect(boxesOverlap(annotation, legend)).toBe(false);
+      });
+      const slabLabels = annotations.filter((annotation) => annotation.kind === "slab-label");
+      for (let index = 0; index < slabLabels.length; index += 1) {
+        for (let other = index + 1; other < slabLabels.length; other += 1) {
+          expect(boxesOverlap(slabLabels[index], slabLabels[other])).toBe(false);
+        }
+      }
+      for (const slab of slabLabels) {
+        for (const annotation of annotations.filter((item) => item.kind !== "slab-label")) {
+          if (!annotation.fallback) {
+            expect(boxesOverlap(slab, annotation), `${mode}: ${JSON.stringify({ slab, annotation })}`).toBe(false);
+          }
+        }
+      }
+    }
+    const overflow = await page.locator('[data-testid="floor-print-report"]').evaluate((report) => ({
+      report: report.scrollWidth - report.clientWidth,
+      document: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    }));
+    expect(overflow.report).toBeLessThanOrEqual(1);
+    expect(overflow.document).toBeLessThanOrEqual(1);
     await makeA4LandscapePdf(page, testInfo);
   });
 
@@ -345,6 +424,10 @@ test.describe("Floor Print V1整层冻结快照打印", () => {
     const printedPieceIds = await page.locator("[data-print-piece-id]").evaluateAll((elements) =>
       elements.map((element) => element.getAttribute("data-print-piece-id")));
     expect(printedPieceIds).toEqual(expect.arrayContaining((clipped ?? []).map((piece) => piece.id)));
+    const openingLabel = page.locator('svg[data-floor-print-plan="bottom"] [data-opening-label="print-opening-a"]');
+    await expect(openingLabel).toHaveCount(1);
+    await expect(openingLabel).toHaveAttribute("data-annotation-kind", "opening-label");
+    await expect(openingLabel).toContainText("VOID");
     await expect(page.getByText("楼梯间").first()).toBeVisible();
   });
 

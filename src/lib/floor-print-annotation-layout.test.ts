@@ -6,6 +6,7 @@ import {
   buildExternalSlabCandidates,
   buildFloorPrintAnnotationLayout,
   buildMarkCandidates,
+  buildOpeningLabelCandidates,
   type FloorPrintAnnotationRequest,
 } from "./floor-print-annotation-layout";
 
@@ -106,5 +107,98 @@ describe("Floor Print annotation layout", () => {
     expect(layout.slabLabels[0]).toMatchObject({ id: "slab:S12", external: true });
     expect(layout.jointCallouts[0].variant).toBe("compact");
     expect(layout.throughCallouts).toHaveLength(1);
+  });
+
+  it("places an opening label away from an already placed slab label when an internal candidate is available", () => {
+    const openingBounds = { x: 100, y: 100, width: 240, height: 100 };
+    const requests: FloorPrintAnnotationRequest[] = [
+      {
+        id: "slab:S01",
+        kind: "slab-label",
+        priority: 1,
+        variants: [{ id: "tiny", width: 60, height: 30, candidates: [{ x: 170, y: 135 }] }],
+      },
+      {
+        id: "opening:stair",
+        kind: "opening-label",
+        priority: 2,
+        variants: [{
+          id: "standard",
+          width: 80,
+          height: 44,
+          candidates: buildOpeningLabelCandidates(openingBounds, 80, 44),
+        }],
+      },
+    ];
+    const layout = buildFloorPrintAnnotationLayout(requests, canvas, { padding: 0 });
+    expect(layout.openingLabels).toHaveLength(1);
+    expect(boxesOverlapWithPadding(layout.slabLabels[0], layout.openingLabels[0], 0)).toBe(false);
+  });
+
+  it("externalizes a label for a small opening and retains a leader target", () => {
+    const openingBounds = { x: 300, y: 300, width: 40, height: 30 };
+    const layout = buildFloorPrintAnnotationLayout([{
+      id: "opening:tiny-stair",
+      kind: "opening-label",
+      priority: 2,
+      variants: [{
+        id: "standard",
+        width: 80,
+        height: 44,
+        candidates: buildOpeningLabelCandidates(openingBounds, 80, 44),
+      }],
+    }], canvas);
+    expect(layout.openingLabels[0]).toMatchObject({
+      id: "opening:tiny-stair",
+      external: true,
+      leaderTo: { x: 320, y: 315 },
+    });
+  });
+
+  it("treats reserved boxes as placement blockers without returning them as annotations", () => {
+    const reserved = { x: 280, y: 660, width: 640, height: 60 };
+    const layout = buildFloorPrintAnnotationLayout([{
+      id: "mark:D01",
+      kind: "bar-mark",
+      priority: 3,
+      variants: [{
+        id: "standard",
+        width: 70,
+        height: 25,
+        candidates: [{ x: 320, y: 675 }, { x: 320, y: 620 }],
+      }],
+    }], canvas, { padding: 0, reservedBoxes: [reserved] });
+    expect(layout.boxes).toHaveLength(1);
+    expect(layout.markLabels[0]).toMatchObject({ x: 320, y: 620 });
+    expect(boxesOverlapWithPadding(layout.markLabels[0], reserved, 0)).toBe(false);
+  });
+
+  it("keeps a tiny external slab label out of the legend reservation deterministically", () => {
+    const tinyBounds = { x: 500, y: 640, width: 24, height: 20 };
+    const labelWidth = 44;
+    const labelHeight = 26;
+    const externalCandidates = buildExternalSlabCandidates(tinyBounds, labelWidth, labelHeight);
+    const blockers: FloorPrintAnnotationRequest[] = externalCandidates.slice(0, 3).map((candidate, index) => ({
+      id: `slab:blocker-${index}`,
+      kind: "slab-label",
+      priority: 1,
+      variants: [{ id: "tiny", width: labelWidth, height: labelHeight, candidates: [candidate] }],
+    }));
+    const requests: FloorPrintAnnotationRequest[] = [
+      ...blockers,
+      {
+        id: "slab:tiny",
+        kind: "slab-label",
+        priority: 1,
+        variants: [{ id: "tiny", width: labelWidth, height: labelHeight, candidates: externalCandidates }],
+      },
+    ];
+    const legend = { x: 62, y: 672, width: 1076, height: 48 };
+    const first = buildFloorPrintAnnotationLayout(requests, canvas, { reservedBoxes: [legend] });
+    const second = buildFloorPrintAnnotationLayout(requests, canvas, { reservedBoxes: [legend] });
+    const tiny = first.slabLabels.find((label) => label.id === "slab:tiny")!;
+    expect(second).toEqual(first);
+    expect(boxesOverlapWithPadding(tiny, legend, 0)).toBe(false);
+    expect(tiny.y).not.toBe(tinyBounds.y + tinyBounds.height + 7);
   });
 });

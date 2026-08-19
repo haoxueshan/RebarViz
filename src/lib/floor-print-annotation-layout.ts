@@ -1,5 +1,6 @@
 export type FloorPrintAnnotationKind =
   | "slab-label"
+  | "opening-label"
   | "bar-mark"
   | "joint-callout"
   | "through-callout";
@@ -14,6 +15,7 @@ export type FloorPrintAnnotationBox = {
   priority: number;
   variant: string;
   external?: boolean;
+  fallback?: boolean;
   leaderTo?: { x: number; y: number };
 };
 
@@ -43,9 +45,15 @@ export type FloorPrintAnnotationRequest = {
 export type FloorPrintAnnotationLayout = {
   boxes: FloorPrintAnnotationBox[];
   slabLabels: FloorPrintAnnotationBox[];
+  openingLabels: FloorPrintAnnotationBox[];
   markLabels: FloorPrintAnnotationBox[];
   jointCallouts: FloorPrintAnnotationBox[];
   throughCallouts: FloorPrintAnnotationBox[];
+};
+
+export type FloorPrintAnnotationLayoutOptions = {
+  padding?: number;
+  reservedBoxes?: readonly FloorPrintAnnotationBounds[];
 };
 
 const MARK_OFFSETS = [0, -12, 12, -24, 24, -36, 36] as const;
@@ -96,12 +104,43 @@ export function buildExternalSlabCandidates(
   height: number,
   gap = 7,
 ): FloorPrintAnnotationCandidate[] {
+  return buildExternalRectCandidates(bounds, width, height, gap);
+}
+
+function buildExternalRectCandidates(
+  bounds: FloorPrintAnnotationBounds,
+  width: number,
+  height: number,
+  gap: number,
+): FloorPrintAnnotationCandidate[] {
   const leaderTo = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
   return [
     { x: bounds.x + bounds.width + gap, y: leaderTo.y - height / 2, external: true, leaderTo },
     { x: bounds.x - width - gap, y: leaderTo.y - height / 2, external: true, leaderTo },
     { x: leaderTo.x - width / 2, y: bounds.y - height - gap, external: true, leaderTo },
     { x: leaderTo.x - width / 2, y: bounds.y + bounds.height + gap, external: true, leaderTo },
+  ];
+}
+
+/** Opening labels favor their center, then the four contained edge positions. */
+export function buildOpeningLabelCandidates(
+  bounds: FloorPrintAnnotationBounds,
+  width: number,
+  height: number,
+  inset = 5,
+  gap = 7,
+): FloorPrintAnnotationCandidate[] {
+  if (width + inset * 2 > bounds.width || height + inset * 2 > bounds.height) {
+    return buildExternalRectCandidates(bounds, width, height, gap);
+  }
+  const centerX = bounds.x + bounds.width / 2;
+  const centerY = bounds.y + bounds.height / 2;
+  return [
+    { x: centerX - width / 2, y: centerY - height / 2 },
+    { x: centerX - width / 2, y: bounds.y + inset },
+    { x: centerX - width / 2, y: bounds.y + bounds.height - height - inset },
+    { x: bounds.x + inset, y: centerY - height / 2 },
+    { x: bounds.x + bounds.width - width - inset, y: centerY - height / 2 },
   ];
 }
 
@@ -159,7 +198,7 @@ function candidateBox(
   };
 }
 
-function overlapScore(box: FloorPrintAnnotationBox, occupied: readonly FloorPrintAnnotationBox[], padding: number): number {
+function overlapScore(box: FloorPrintAnnotationBox, occupied: readonly FloorPrintAnnotationBounds[], padding: number): number {
   return occupied.reduce((score, item) => score + (boxesOverlapWithPadding(box, item, padding) ? 1 : 0), 0);
 }
 
@@ -170,9 +209,13 @@ function overlapScore(box: FloorPrintAnnotationBox, occupied: readonly FloorPrin
 export function buildFloorPrintAnnotationLayout(
   requests: readonly FloorPrintAnnotationRequest[],
   canvas: FloorPrintAnnotationBounds,
-  padding = 5,
+  options: number | FloorPrintAnnotationLayoutOptions = 5,
 ): FloorPrintAnnotationLayout {
+  const { padding, reservedBoxes = [] } = typeof options === "number"
+    ? { padding: options, reservedBoxes: [] }
+    : { padding: options.padding ?? 5, reservedBoxes: options.reservedBoxes ?? [] };
   const boxes: FloorPrintAnnotationBox[] = [];
+  const occupied: FloorPrintAnnotationBounds[] = [...reservedBoxes];
   const ordered = requests
     .map((request, index) => ({ request, index }))
     .sort((left, right) => left.request.priority - right.request.priority || left.index - right.index);
@@ -184,9 +227,10 @@ export function buildFloorPrintAnnotationLayout(
       for (const candidate of variant.candidates) {
         if (!fitsWithin(candidate, variant, canvas)) continue;
         const box = candidateBox(request, variant, candidate);
-        const score = overlapScore(box, boxes, padding);
+        const score = overlapScore(box, occupied, padding);
         if (score === 0) {
           boxes.push(box);
+          occupied.push(box);
           return;
         }
         if (score < fallbackScore) {
@@ -196,13 +240,18 @@ export function buildFloorPrintAnnotationLayout(
       }
     }
     // Invalid/overlapping source geometry should not make an S/D/M/T identifier disappear.
-    if (fallback) boxes.push(fallback);
+    if (fallback) {
+      const fallbackBox = { ...fallback, fallback: true };
+      boxes.push(fallbackBox);
+      occupied.push(fallbackBox);
+    }
   });
 
   const byKind = (kind: FloorPrintAnnotationKind) => boxes.filter((box) => box.kind === kind);
   return {
     boxes,
     slabLabels: byKind("slab-label"),
+    openingLabels: byKind("opening-label"),
     markLabels: byKind("bar-mark"),
     jointCallouts: byKind("joint-callout"),
     throughCallouts: byKind("through-callout"),

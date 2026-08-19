@@ -140,6 +140,10 @@ describe("Floor Print V4 layout derivation", () => {
       "joint:a|b",
       "through:through-a-c",
     ]);
+    expect(index.find((entry) => entry.key === "slab:a")?.displayName).toBe("S01 · 板区1");
+    expect(index.find((entry) => entry.key === "joint:a|b")?.displayName).toBe("S01 + S02 · 联合区域");
+    expect(index.find((entry) => entry.key === "through:through-a-c")?.displayName).toBe("通墙01 路 S01→S02→S03");
+    expect(index.filter((entry) => entry.kind === "slab").every((entry) => !entry.displayName.includes("路"))).toBe(true);
     expect(index.find((entry) => entry.key === "slab:c")).toMatchObject({ mainMarks: "-", secondaryMarks: "-" });
   });
 });

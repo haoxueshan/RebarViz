@@ -205,7 +205,7 @@ export function buildFloorPrintSiteIndex(
     return {
       key: `slab:${ref.slabId}`,
       kind: "slab" as const,
-      displayName: `${ref.printId} 路 ${ref.name}`,
+      displayName: `${ref.printId} · ${ref.name}`,
       mainMarks: floorPrintMarks(group?.mainRows ?? []) || "-",
       secondaryMarks: floorPrintMarks(group?.secondaryRows ?? []) || "-",
       sortIndex: ref.sortIndex,
